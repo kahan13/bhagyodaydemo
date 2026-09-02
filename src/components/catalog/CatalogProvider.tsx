@@ -30,20 +30,26 @@ async function load(force = false): Promise<Sku[]> {
   if (cache && !force) return cache;
   if (inflight && !force) return inflight;
 
-  inflight = supabaseBrowser()
-    .from('v_sku_status')
-    .select(COLUMNS)
-    .eq('is_active', true)
-    .order('product_type')
-    .order('hier_l1')
-    .order('hier_l2')
-    .order('hier_l3')
-    .then(({ data, error }) => {
-      inflight = null;
+  // Awaited rather than chained with .then(): the query builder's thenable
+  // leaves its callback parameters untyped, which strict mode rejects.
+  inflight = (async () => {
+    try {
+      const { data, error } = await supabaseBrowser()
+        .from('v_sku_status')
+        .select(COLUMNS)
+        .eq('is_active', true)
+        .order('product_type')
+        .order('hier_l1')
+        .order('hier_l2')
+        .order('hier_l3');
+
       if (error) throw new Error(error.message);
       cache = (data ?? []) as unknown as Sku[];
       return cache;
-    });
+    } finally {
+      inflight = null;
+    }
+  })();
 
   return inflight;
 }

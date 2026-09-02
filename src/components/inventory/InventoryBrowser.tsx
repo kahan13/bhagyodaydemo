@@ -322,17 +322,20 @@ function DetailPanel({
     if (!sku) { setHistory([]); return; }
     let cancelled = false;
     setBusy(true);
-    supabaseBrowser()
-      .from('v_movements')
-      .select('id,txn_no,occurred_at,txn_type,txn_mode,quantity,unit_code,previous_stock,new_stock,reference,notes,channel,user_name,is_reversed')
-      .eq('sku_code', sku.sku_code)
-      .order('occurred_at', { ascending: false })
-      .limit(20)
-      .then(({ data }) => {
-        if (cancelled) return;
-        setHistory((data ?? []) as unknown as Movement[]);
-        setBusy(false);
-      });
+
+    void (async () => {
+      const { data } = await supabaseBrowser()
+        .from('v_movements')
+        .select('id,txn_no,occurred_at,txn_type,txn_mode,quantity,unit_code,previous_stock,new_stock,reference,notes,channel,user_name,is_reversed')
+        .eq('sku_code', sku.sku_code)
+        .order('occurred_at', { ascending: false })
+        .limit(20);
+
+      if (cancelled) return;
+      setHistory((data ?? []) as unknown as Movement[]);
+      setBusy(false);
+    })();
+
     return () => { cancelled = true; };
   }, [sku]);
 
