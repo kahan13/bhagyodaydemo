@@ -1,17 +1,16 @@
 /**
- * Display formatting. Deliberately free of server imports so both the web app
- * and the mobile PWA client components can use it.
- *
- * All timestamps are rendered in IST regardless of the device timezone, so a
- * movement recorded on the shop floor reads the same on every screen.
+ * Display helpers. Free of server imports so client components can use them.
+ * Timestamps always render in IST regardless of device timezone, so a movement
+ * recorded on the shop floor reads identically on every screen.
  */
 
 const IST = 'Asia/Kolkata';
 
-export function fmtQty(value: number | string | null | undefined, unit?: string): string {
+export function fmtQty(value: number | string | null | undefined, unit?: string | null): string {
   const n = Number(value ?? 0);
   const text = Number.isInteger(n) ? String(n) : n.toFixed(2);
-  return unit ? `${text} ${unit.toLowerCase() === 'mtr' ? 'm' : unit.toLowerCase()}` : text;
+  if (!unit) return text;
+  return `${text} ${unit.toUpperCase() === 'MTR' ? 'm' : unit.toLowerCase()}`;
 }
 
 export function fmtDateTime(iso: string): string {
@@ -29,11 +28,23 @@ export function fmtDate(iso: string): string {
 
 export function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-IN', {
-    timeZone: IST, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    timeZone: IST, hour: '2-digit', minute: '2-digit', hour12: false,
   });
 }
 
-/** Where a movement was recorded. Shown on every transaction row. */
+/** "3 min ago" for recent activity, absolute time once it stops being useful. */
+export function fmtRelative(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hr ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days} d ago`;
+  return fmtDate(iso);
+}
+
 export const CHANNEL_LABEL: Record<string, string> = {
   WEB: 'Desktop',
   MOBILE_PWA: 'Phone',
@@ -45,6 +56,16 @@ export const CHANNEL_LABEL: Record<string, string> = {
 export const ROLE_LABEL: Record<string, string> = {
   SUPER_ADMIN: 'Super Admin',
   MANAGER: 'Manager',
-  INVENTORY_OPERATOR: 'Inventory Operator',
+  INVENTORY_OPERATOR: 'Operator',
   VIEWER: 'Viewer',
 };
+
+export const TYPE_LABEL: Record<string, string> = {
+  INWARD: 'In',
+  OUTWARD: 'Out',
+  ADJUSTMENT: 'Adjust',
+};
+
+export function initials(name: string): string {
+  return name.split(' ').filter(Boolean).map((p) => p[0]).slice(0, 2).join('').toUpperCase();
+}

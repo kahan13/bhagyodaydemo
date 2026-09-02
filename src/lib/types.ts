@@ -1,7 +1,7 @@
-/**
- * Contracts shared by the web app and the mobile PWA.
- * These describe the shape of database rows - they never contain product data.
- */
+/* =============================================================================
+   Contracts shared by the web app and the mobile PWA.
+   These describe database row shapes. No product data lives here.
+   ========================================================================== */
 
 export type ProductType = 'TIMING_BELT' | 'V_BELT';
 export type TxnType = 'INWARD' | 'OUTWARD' | 'ADJUSTMENT';
@@ -14,19 +14,17 @@ export type Permission =
   | 'inventory.view' | 'inventory.create' | 'inventory.edit' | 'inventory.adjust'
   | 'transactions.view' | 'transactions.create' | 'transactions.reverse'
   | 'reports.view' | 'reports.export'
-  | 'products.view' | 'products.create' | 'products.edit' | 'products.disable'
+  | 'products.view' | 'products.create' | 'products.edit'
   | 'users.view' | 'users.create' | 'users.edit' | 'users.disable'
   | 'settings.view' | 'settings.edit' | 'settings.import' | 'settings.backup'
   | 'audit.view';
 
 export interface AppUser {
   id: string;
-  auth_user_id: string | null;
   user_code: string | null;
   full_name: string;
   username: string;
   email: string | null;
-  mobile: string | null;
   role_code: RoleCode;
   primary_device: 'WEB' | 'MOBILE_PWA';
   is_active: boolean;
@@ -37,23 +35,21 @@ export interface Session {
   permissions: Permission[];
 }
 
-/** One row of v_sku_status - everything the browse tree and drawer need. */
-export interface SkuStatus {
+export interface Sku {
   id: string;
   sku_code: string;
   product_type: ProductType;
   display_name: string;
   exact_size: string;
-  /** TIMING_BELT: family / exact size / brand.  V_BELT: brand / profile / exact size. */
   hier_l1: string;
   hier_l2: string;
   hier_l3: string;
+  search_text: string;
   brand_code: string;
   brand_name: string;
   family_code: string;
   family_name: string;
   profile_group: string | null;
-  size_designation: string | null;
   belt_form: string | null;
   construction: string | null;
   standard: string | null;
@@ -101,8 +97,6 @@ export interface Movement {
   exact_size: string;
   brand_name: string;
   family_code: string;
-  family_name: string;
-  role_code: RoleCode | null;
 }
 
 export interface DashboardSummary {
@@ -113,12 +107,17 @@ export interface DashboardSummary {
   out_of_stock: number;
   today_inward: number;
   today_outward: number;
-  today_adjustments: number;
-  month_movements: number;
+  today_adjust: number;
+  month_moves: number;
+  total_moves: number;
 }
 
-/** How each product type is browsed. Labels come from the data, not from code. */
-export const HIERARCHY: Record<ProductType, { label: string; levels: [string, string, string] }> = {
-  TIMING_BELT: { label: 'Timing Belts', levels: ['Family', 'Size', 'Brand'] },
-  V_BELT: { label: 'V-Belts', levels: ['Brand', 'Profile', 'Size'] },
+/**
+ * How each product type is browsed. Only the level *labels* are hard-coded;
+ * the values come from hier_l1/l2/l3 on each row, so the tree follows whatever
+ * master file was imported.
+ */
+export const HIERARCHY: Record<ProductType, { label: string; short: string; levels: [string, string, string] }> = {
+  TIMING_BELT: { label: 'Timing Belts', short: 'Timing', levels: ['Family', 'Size', 'Brand'] },
+  V_BELT: { label: 'V-Belts', short: 'V-Belt', levels: ['Brand', 'Profile', 'Size'] },
 };

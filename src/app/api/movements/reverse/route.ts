@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
-import { supabaseServer } from '@/lib/supabase';
+import { supabaseServer } from '@/lib/supabase-server';
 import { getSession } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * Creates a linked reversing entry. There is no delete endpoint anywhere in
- * this application, and the database refuses deletes on inventory_movements,
- * so a wrong entry is always corrected in the open.
+ * this application, and the database refuses deletes on movements outright, so
+ * a wrong entry is always corrected in the open.
  */
 export async function POST(request: Request) {
   const session = await getSession();
@@ -31,7 +31,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Give a reason for the reversal.' }, { status: 400 });
   }
 
-  const { data, error } = await supabaseServer().rpc('reverse_movement', {
+  const db = await supabaseServer();
+  const { data, error } = await db.rpc('reverse_movement', {
     p_movement_id: movement_id,
     p_reason: reason.slice(0, 500),
     p_channel: ['WEB', 'MOBILE_PWA', 'MOBILE_VOICE'].includes(channel) ? channel : 'WEB',

@@ -1,14 +1,14 @@
 import { requirePermission } from '@/lib/auth';
-import { supabaseServer } from '@/lib/supabase';
+import { supabaseServer } from '@/lib/supabase-server';
 import TransactionsView from '@/components/transactions/TransactionsView';
 import type { Movement } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
 const PAGE_SIZE = 50;
-const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+const IST = 5.5 * 60 * 60 * 1000;
 
-/** Start/end of a named range, expressed in IST and returned as ISO instants. */
+/** Named ranges resolved against IST, returned as ISO instants. */
 function resolveRange(range: string, from?: string, to?: string) {
   if (range === 'custom' && (from || to)) {
     return {
@@ -16,83 +16,82 @@ function resolveRange(range: string, from?: string, to?: string) {
       end: to ? new Date(`${to}T23:59:59.999+05:30`).toISOString() : undefined,
     };
   }
+  if (range === 'all') return { start: undefined, end: undefined };
 
-  const istNow = new Date(Date.now() + IST_OFFSET);
-  const y = istNow.getUTCFullYear();
-  const m = istNow.getUTCMonth();
-  const d = istNow.getUTCDate();
-  const istMidnight = (yy: number, mm: number, dd: number) => new Date(Date.UTC(yy, mm, dd) - IST_OFFSET);
+  const ist = new Date(Date.now() + IST);
+  const y = ist.getUTCFullYear();
+  const m = ist.getUTCMonth();
+  const d = ist.getUTCDate();
+  const midnight = (yy: number, mm: number, dd: number) => new Date(Date.UTC(yy, mm, dd) - IST);
 
-  const startOfToday = istMidnight(y, m, d);
-  const endOfToday = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000 - 1);
+  const today = midnight(y, m, d);
+  const endToday = new Date(today.getTime() + 86_400_000 - 1);
 
   switch (range) {
     case 'today':
-      return { start: startOfToday.toISOString(), end: endOfToday.toISOString() };
-    case 'yesterday': {
-      const s = new Date(startOfToday.getTime() - 24 * 60 * 60 * 1000);
-      return { start: s.toISOString(), end: new Date(startOfToday.getTime() - 1).toISOString() };
-    }
-    case 'week': {
-      const weekday = new Date(startOfToday.getTime() + IST_OFFSET).getUTCDay(); // 0 = Sunday
-      const back = (weekday + 6) % 7;                                            // week starts Monday
+      return { start: today.toISOString(), end: endToday.toISOString() };
+    case 'yesterday':
       return {
-        start: new Date(startOfToday.getTime() - back * 24 * 60 * 60 * 1000).toISOString(),
-        end: endOfToday.toISOString(),
+        start: new Date(today.getTime() - 86_400_000).toISOString(),
+        end: new Date(today.getTime() - 1).toISOString(),
       };
+    case 'week': {
+      const weekday = new Date(today.getTime() + IST).getUTCDay();
+      const back = (weekday + 6) % 7; // week starts Monday
+      return { start: new Date(today.getTime() - back * 86_400_000).toISOString(), end: endToday.toISOString() };
     }
-    case 'month':
-      return { start: istMidnight(y, m, 1).toISOString(), end: endOfToday.toISOString() };
     case 'year':
-      return { start: istMidnight(y, 0, 1).toISOString(), end: endOfToday.toISOString() };
+      return { start: midnight(y, 0, 1).toISOString(), end: endToday.toISOString() };
+    case 'month':
     default:
-      return { start: undefined, end: undefined };
+      return { start: midnight(y, m, 1).toISOString(), end: endToday.toISOString() };
   }
 }
 
 export default async function TransactionsPage({
   searchParams,
 }: {
-  searchParams: Record<string, string | undefined>;
+  searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const session = await requirePermission('transactions.view');
-  const db = supabaseServer();
+  const sp = await searchParams;
+  const db = await supabaseServer();
 
-  const range = searchParams.range ?? 'month';
-  const { start, end } = resolveRange(range, searchParams.from, searchParams.to);
-  const page = Math.max(1, Number(searchParams.page ?? 1));
+  const range = sp.range ?? 'month';
+  const { start, end } = resolveRange(range, sp.from, sp.to);
+  const page = Math.max(1, Number(sp.page ?? 1));
 
   let q = db
     .from('v_movements')
     .select(
-      'id, txn_no, occurred_at, txn_type, txn_mode, quantity, unit_code, previous_stock, new_stock, reference, notes, channel, user_name, sku_code, display_name, product_type, exact_size, brand_name, family_code, is_reversed, reversal_of',
+      'id,txn_no,occurred_at,txn_type,txn_mode,quantity,unit_code,previous_stock,new_stock,' +
+      'reference,notes,channel,user_name,sku_code,display_name,product_type,exact_size,' +
+      'brand_name,family_code,is_reversed,reversal_of',
       { count: 'exact' },
     )
     .order('occurred_at', { ascending: false });
 
   if (start) q = q.gte('occurred_at', start);
   if (end) q = q.lte('occurred_at', end);
-  if (searchParams.type) q = q.eq('txn_type', searchParams.type);
-  if (searchParams.mode) q = q.eq('txn_mode', searchParams.mode);
-  if (searchParams.product) q = q.eq('product_type', searchParams.product);
-  if (searchParams.brand) q = q.eq('brand_name', searchParams.brand);
-  if (searchParams.family) q = q.eq('family_code', searchParams.family);
-  if (searchParams.user) q = q.eq('user_name', searchParams.user);
-  if (searchParams.channel) q = q.eq('channel', searchParams.channel);
-  if (searchParams.sku) q = q.ilike('display_name', `%${searchParams.sku}%`);
+  if (sp.type) q = q.eq('txn_type', sp.type);
+  if (sp.mode) q = q.eq('txn_mode', sp.mode);
+  if (sp.product) q = q.eq('product_type', sp.product);
+  if (sp.brand) q = q.eq('brand_name', sp.brand);
+  if (sp.family) q = q.eq('family_code', sp.family);
+  if (sp.user) q = q.eq('user_name', sp.user);
+  if (sp.channel) q = q.eq('channel', sp.channel);
+  if (sp.search) q = q.ilike('display_name', `%${sp.search}%`);
 
-  const { data, count, error } = await q.range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
-
-  // filter choices come from the data, so they follow whatever master file was imported
-  const [{ data: brands }, { data: families }, { data: users }] = await Promise.all([
+  const [{ data, count, error }, brands, families, users] = await Promise.all([
+    q.range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1),
     db.from('brands').select('name').eq('is_active', true).order('name'),
-    db.from('product_families').select('code, product_type').eq('is_active', true).order('code'),
+    db.from('product_families').select('code').eq('is_active', true).order('code'),
     db.from('app_users').select('full_name').eq('is_active', true).order('full_name'),
   ]);
 
   return (
     <TransactionsView
-      rows={(data ?? []) as Movement[]}
+      rows={(data ?? []) as unknown as Movement[]}
       total={count ?? 0}
       page={page}
       pageSize={PAGE_SIZE}
@@ -100,21 +99,14 @@ export default async function TransactionsPage({
       canReverse={session.permissions.includes('transactions.reverse')}
       filters={{
         range,
-        from: searchParams.from ?? '',
-        to: searchParams.to ?? '',
-        type: searchParams.type ?? '',
-        mode: searchParams.mode ?? '',
-        product: searchParams.product ?? '',
-        brand: searchParams.brand ?? '',
-        family: searchParams.family ?? '',
-        user: searchParams.user ?? '',
-        channel: searchParams.channel ?? '',
-        sku: searchParams.sku ?? '',
+        from: sp.from ?? '', to: sp.to ?? '', type: sp.type ?? '', mode: sp.mode ?? '',
+        product: sp.product ?? '', brand: sp.brand ?? '', family: sp.family ?? '',
+        user: sp.user ?? '', channel: sp.channel ?? '', search: sp.search ?? '',
       }}
       facets={{
-        brands: (brands ?? []).map((b) => b.name),
-        families: (families ?? []).map((f) => f.code),
-        users: (users ?? []).map((u) => u.full_name),
+        brands: (brands.data ?? []).map((b) => b.name as string),
+        families: (families.data ?? []).map((f) => f.code as string),
+        users: (users.data ?? []).map((u) => u.full_name as string),
       }}
     />
   );

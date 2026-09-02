@@ -1,45 +1,59 @@
 import { redirect } from 'next/navigation';
-import { supabaseServer } from '@/lib/supabase';
-import type { AppUser, Permission, Session } from '@/lib/types';
+import { supabaseServer } from '@/lib/supabase-server';
+import type { Permission, Session } from '@/lib/types';
 
-// Server side only - it reads cookies. Client components should import the
-// formatting helpers from '@/lib/format' directly.
+// Server only — reads cookies. Client components import '@/lib/format'.
 export * from '@/lib/format';
 
 /**
- * Reads the signed-in user and the permissions their role grants.
- * The list is only used to decide what to show. Every write is checked again
- * inside the database functions, so hiding a button is never the security
- * boundary.
+ * Three outcomes, kept distinct on purpose. Folding "signed in but no profile"
+ * into "signed out" is what produces a sign-in loop: middleware sees a valid
+ * session and pushes to the dashboard, the dashboard finds no profile and
+ * pushes back, forever.
  */
-export async function getSession(): Promise<Session | null> {
-  const db = supabaseServer();
+type AuthState =
+  | { status: 'signed-out' }
+  | { status: 'no-profile'; email: string | null }
+  | { status: 'ok'; session: Session };
+
+export async function getAuthState(): Promise<AuthState> {
+  const db = await supabaseServer();
   const { data: auth } = await db.auth.getUser();
-  if (!auth?.user) return null;
+  if (!auth?.user) return { status: 'signed-out' };
 
-  const { data: user } = await db
-    .from('app_users')
-    .select('id, auth_user_id, user_code, full_name, username, email, mobile, role_code, primary_device, is_active')
-    .eq('auth_user_id', auth.user.id)
-    .maybeSingle();
+  // Profile and permissions in one round trip.
+  let { data } = await db.rpc('my_session');
 
-  if (!user || !user.is_active) return null;
+  // No profile yet. Supabase Auth owns identity but has no concept of a role,
+  // so the app keeps its own record. Rather than making an admin create that by
+  // hand for every account, provision it here on first sign-in: an existing
+  // profile with the same email is adopted, otherwise a new one is created.
+  if (!data) {
+    const provisioned = await db.rpc('ensure_app_user');
+    data = provisioned.data;
+  }
 
-  const { data: perms } = await db.rpc('my_permissions');
-  const permissions = (perms ?? []).map((p: { permission_code: Permission }) => p.permission_code);
+  if (!data) return { status: 'no-profile', email: auth.user.email ?? null };
 
-  return { user: user as AppUser, permissions };
+  const row = data as Session['user'] & { permissions: Permission[] };
+  const { permissions, ...user } = row;
+  return { status: 'ok', session: { user, permissions: permissions ?? [] } };
+}
+
+export async function getSession(): Promise<Session | null> {
+  const state = await getAuthState();
+  return state.status === 'ok' ? state.session : null;
 }
 
 export async function requireSession(): Promise<Session> {
-  const session = await getSession();
-  if (!session) redirect('/login');
-  return session;
+  const state = await getAuthState();
+  if (state.status === 'ok') return state.session;
+  redirect(state.status === 'no-profile' ? '/no-access' : '/login');
 }
 
 export async function requirePermission(permission: Permission): Promise<Session> {
   const session = await requireSession();
-  if (!session.permissions.includes(permission)) redirect('/?denied=' + permission);
+  if (!session.permissions.includes(permission)) redirect(`/?denied=${permission}`);
   return session;
 }
 
