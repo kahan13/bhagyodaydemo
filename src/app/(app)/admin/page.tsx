@@ -9,7 +9,7 @@ export default async function AdminPage() {
   const db = await supabaseServer();
 
   const [users, roles, brands, settings, imports, counts] = await Promise.all([
-    db.from('app_users').select('id,user_code,full_name,username,email,mobile,role_code,primary_device,is_active,last_login_at').order('role_code'),
+    db.from('app_users').select('id,role_code,is_active').order('role_code'),
     db.from('roles').select('code,name,description,rank').order('rank'),
     db.from('brands').select('id,code,name,country_origin,is_active').order('name'),
     db.from('app_settings').select('key,value'),

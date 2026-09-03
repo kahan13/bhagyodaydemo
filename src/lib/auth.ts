@@ -1,6 +1,21 @@
 import { redirect } from 'next/navigation';
-import { supabaseServer } from '@/lib/supabase-server';
+import { supabaseServer, supabaseService } from '@/lib/supabase-server';
 import type { Permission, Session } from '@/lib/types';
+
+/**
+ * The one account guaranteed Super Admin, read from the environment so it is
+ * configured per deployment rather than written into the code or decided by a
+ * rule like "whoever signs in first". Server-only: the browser never sees it,
+ * and the comparison is against the email Supabase already verified.
+ */
+function adminEmail(): string | null {
+  return process.env.ADMIN_EMAIL?.trim().toLowerCase() || null;
+}
+
+export function isAdminEmail(email: string | null | undefined): boolean {
+  const configured = adminEmail();
+  return !!configured && !!email && email.trim().toLowerCase() === configured;
+}
 
 // Server only — reads cookies. Client components import '@/lib/format'.
 export * from '@/lib/format';
@@ -27,16 +42,41 @@ export async function getAuthState(): Promise<AuthState> {
   // No profile yet. Supabase Auth owns identity but has no concept of a role,
   // so the app keeps its own record. Rather than making an admin create that by
   // hand for every account, provision it here on first sign-in: an existing
-  // profile with the same email is adopted, otherwise a new one is created.
+  // profile with the same email is adopted, otherwise a new one is created with
+  // the lowest privilege available.
   if (!data) {
     const provisioned = await db.rpc('ensure_app_user');
     data = provisioned.data;
   }
 
+  // Reconcile the configured admin on every sign-in, not just the first, so a
+  // deleted or demoted admin account recovers by signing in again. Runs through
+  // the service role, so a browser cannot invoke it.
+  const row = data as (Session['user'] & { permissions: Permission[] }) | null;
+  if (isAdminEmail(auth.user.email) && row?.role_code !== 'SUPER_ADMIN') {
+    try {
+      const admin = await supabaseService();
+      const { error } = await admin.rpc('promote_admin', { p_email: auth.user.email });
+      if (error) throw new Error(error.message);
+      const refreshed = await db.rpc('my_session');
+      data = refreshed.data ?? data;
+    } catch (e) {
+      // Never fail the request over this, but say so loudly in the server log —
+      // silently leaving the admin on Viewer is impossible to diagnose from the
+      // interface, which is exactly the trap this used to create.
+      console.error(
+        '[auth] ADMIN_EMAIL matched but the account was not promoted:',
+        (e as Error).message,
+        '\n  Check: 003_team_management.sql has been run, and',
+        'SUPABASE_SERVICE_ROLE_KEY is set for this environment.',
+      );
+    }
+  }
+
   if (!data) return { status: 'no-profile', email: auth.user.email ?? null };
 
-  const row = data as Session['user'] & { permissions: Permission[] };
-  const { permissions, ...user } = row;
+  const resolved = data as Session['user'] & { permissions: Permission[] };
+  const { permissions, ...user } = resolved;
   return { status: 'ok', session: { user, permissions: permissions ?? [] } };
 }
 

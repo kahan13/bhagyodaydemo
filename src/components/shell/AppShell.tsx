@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   LayoutDashboard, Boxes, ArrowLeftRight, FileText, Settings,
-  ShieldCheck, Smartphone, Menu, X, Search, ChevronDown,
+  ShieldCheck, Smartphone, Menu, X, Search, ChevronDown, Users,
 } from 'lucide-react';
 import { ROLE_LABEL, initials } from '@/lib/format';
 import type { Permission, Session } from '@/lib/types';
@@ -22,6 +22,7 @@ const MAIN: Item[] = [
 ];
 
 const ADMIN: Item[] = [
+  { href: '/admin/team', label: 'Teams & Users', icon: Users, needs: 'users.edit' },
   { href: '/admin', label: 'Admin', icon: Settings, needs: 'settings.view' },
   { href: '/admin/activity', label: 'Activity', icon: ShieldCheck, needs: 'audit.view' },
 ];

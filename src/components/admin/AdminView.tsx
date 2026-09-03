@@ -2,25 +2,20 @@
 
 import { useState } from 'react';
 import {
-  Users, Tag, SlidersHorizontal, Upload, Download, Check, X, ShieldCheck,
+  Tag, SlidersHorizontal, Upload, Download, Check, ShieldCheck,
 } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { fmtDateTime, ROLE_LABEL } from '@/lib/format';
 import type { Permission } from '@/lib/types';
 
-interface UserRow {
-  id: string; user_code: string | null; full_name: string; username: string;
-  email: string | null; mobile: string | null; role_code: string;
-  primary_device: string; is_active: boolean; last_login_at: string | null;
-}
+interface UserRow { id: string; role_code: string; is_active: boolean }
 interface RoleRow { code: string; name: string; description: string | null; rank: number }
 interface BrandRow { id: string; code: string; name: string; country_origin: string | null; is_active: boolean }
 interface ImportRow { file_name: string; imported_at: string; mode: string; counts: Record<string, number> }
 
-type Tab = 'users' | 'roles' | 'brands' | 'settings' | 'data';
+type Tab = 'roles' | 'brands' | 'settings' | 'data';
 
-const TABS: { id: Tab; label: string; icon: typeof Users; needs?: Permission }[] = [
-  { id: 'users', label: 'Users', icon: Users, needs: 'users.view' },
+const TABS: { id: Tab; label: string; icon: typeof Tag; needs?: Permission }[] = [
   { id: 'roles', label: 'Roles', icon: ShieldCheck },
   { id: 'brands', label: 'Brands', icon: Tag },
   { id: 'settings', label: 'Settings', icon: SlidersHorizontal },
@@ -38,7 +33,7 @@ export default function AdminView({
   imports: ImportRow[];
   skuCount: number;
 }) {
-  const [tab, setTab] = useState<Tab>('users');
+  const [tab, setTab] = useState<Tab>('roles');
   const [negative, setNegative] = useState(
     Boolean((settings.allow_negative_stock as { enabled?: boolean })?.enabled),
   );
@@ -118,49 +113,6 @@ export default function AdminView({
         ))}
       </div>
 
-      {/* --------------------------------------------------------- users */}
-      {tab === 'users' && (
-        <section className="card overflow-hidden">
-          <div className="card-head">
-            <h2 className="card-title">User accounts</h2>
-            <span className="text-[12px] text-ink-3 num">{users.length}</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Name</th><th>Username</th><th>Email</th><th>Role</th>
-                  <th>Primary device</th><th>Status</th><th>Last sign-in</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((u) => (
-                  <tr key={u.id}>
-                    <td className="font-medium">{u.full_name}</td>
-                    <td className="font-mono text-[12px] text-ink-2">{u.username}</td>
-                    <td className="text-ink-3">{u.email ?? '—'}</td>
-                    <td><span className="badge badge-brand">{ROLE_LABEL[u.role_code] ?? u.role_code}</span></td>
-                    <td className="text-ink-2">{u.primary_device === 'MOBILE_PWA' ? 'Phone' : 'Desktop'}</td>
-                    <td>
-                      <span className={`badge ${u.is_active ? 'badge-ok' : 'badge-neutral'}`}>
-                        {u.is_active ? 'Active' : 'Disabled'}
-                      </span>
-                    </td>
-                    <td className="num text-ink-3">
-                      {u.last_login_at ? fmtDateTime(u.last_login_at) : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="px-5 py-3 text-[12px] text-ink-3 border-t border-line">
-            Passwords are managed by Supabase Auth and are never stored in this application or in
-            any spreadsheet. Create accounts from Supabase → Authentication, then link them here.
-          </p>
-        </section>
-      )}
-
       {/* --------------------------------------------------------- roles */}
       {tab === 'roles' && (
         <section className="grid gap-3 md:grid-cols-2">
@@ -178,7 +130,8 @@ export default function AdminView({
           ))}
           <p className="md:col-span-2 text-[12px] text-ink-3">
             Permissions are enforced inside the database, not by hiding buttons. An operator who
-            calls the API directly is still refused.
+            calls the API directly is still refused. Assign these roles to people in{' '}
+            <a href="/admin/team" className="text-brand hover:underline">Teams &amp; Users</a>.
           </p>
         </section>
       )}

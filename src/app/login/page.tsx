@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowRight, Boxes } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
@@ -13,6 +13,16 @@ function SignIn() {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ready, setReady] = useState<string | null>(null);
+
+  // Creates the ADMIN_EMAIL account on a brand new deployment. Does nothing
+  // once that account exists, and nothing at all if the variables are unset.
+  useEffect(() => {
+    fetch('/api/admin/bootstrap', { method: 'POST' })
+      .then((r) => r.json())
+      .then((j) => { if (j.status === 'created') setReady(j.email as string); })
+      .catch(() => {});
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -123,6 +133,12 @@ function SignIn() {
                 value={password} onChange={(e) => setPassword(e.target.value)}
               />
             </div>
+
+            {ready && (
+              <p className="text-[12px] text-ok bg-ok-soft rounded-lg px-3 py-2">
+                Admin account created for {ready}. Sign in with the password from ADMIN_PASSWORD.
+              </p>
+            )}
 
             {error && (
               <p className="text-[12px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>
