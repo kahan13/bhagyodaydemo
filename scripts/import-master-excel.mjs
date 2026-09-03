@@ -310,16 +310,12 @@ const { data: supRows } = await db.from('suppliers').select('id, supplier_code')
 const supId = new Map(supRows.map((s) => [s.supplier_code, s.id]));
 console.log('  suppliers ✓');
 
-await upsert('app_users', S.users.map((r) => ({
-  user_code: str(r.User_ID), full_name: str(r.Full_Name), username: str(r.Username),
-  email: (str(r.Email) || `${str(r.Username)}@${DOMAIN}`).toLowerCase(),
-  mobile: str(r.Mobile), role_code: str(r.Role),
-  primary_device: str(r.Primary_Device) === 'MOBILE_PWA' ? 'MOBILE_PWA' : 'WEB',
-  is_active: yes(r.Active),
-})), 'username');
+// Deliberately not imported as accounts. Supabase Auth is the only register of
+// who exists; a spreadsheet row cannot sign in and should not look like someone
+// who can. Movements keep the spoken name in user_name, so history is unchanged.
 const { data: userRows } = await db.from('app_users').select('id, user_code, email');
-const userId = new Map(userRows.map((u) => [u.user_code, u.id]));
-console.log('  users ✓');
+const userId = new Map((userRows ?? []).filter((u) => u.user_code).map((u) => [u.user_code, u.id]));
+console.log(`  users — skipped (${S.users.length} name(s) kept on history only)`);
 
 await upsert('skus', skuRows.map((s) => ({
   sku_code: s.sku_code, product_type: s.product_type,
@@ -418,31 +414,7 @@ for (const row of check) {
 console.log(`  reconciliation: ${mismatch === 0 ? 'stock matches the ledger exactly' : `${mismatch} MISMATCH(ES)`}`);
 
 if (CREATE_AUTH) {
-  const password = process.env.DEMO_USER_PASSWORD || 'Bhagyoday@2026';
-  const { data: list } = await db.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  const existing = new Map((list?.users ?? []).map((u) => [u.email?.toLowerCase(), u.id]));
-
-  for (const u of userRows) {
-    const email = u.email.toLowerCase();
-    let authId = existing.get(email);
-
-    if (!authId) {
-      const { data: created, error } = await db.auth.admin.createUser({
-        email, password, email_confirm: true,
-      });
-      if (error) { console.log(`  ! ${email}: ${error.message}`); continue; }
-      authId = created?.user?.id;
-    } else {
-      // Keep the demo password in step with .env.local on every re-import.
-      await db.auth.admin.updateUserById(authId, { password });
-    }
-
-    if (authId) await db.from('app_users').update({ auth_user_id: authId }).eq('id', u.id);
-  }
-
-  const { count: unlinked } = await db.from('app_users')
-    .select('id', { count: 'exact', head: true }).is('auth_user_id', null);
-  console.log(`  sign-in accounts ✓ (password: ${password}${unlinked ? `, ${unlinked} unlinked` : ''})`);
+  console.log('  --create-auth-users no longer applies: accounts are created in Supabase');
 }
 
 await db.from('import_batches').insert({
