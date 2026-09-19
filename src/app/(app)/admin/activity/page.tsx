@@ -65,7 +65,7 @@ export default async function ActivityPage({
           </p>
         </div>
         <span className="ml-auto text-[12px] text-ink-3 num">
-          {(count ?? 0).toLocaleString('en-IN')} entries
+          {count ?? 0} entries
         </span>
       </div>
 
@@ -83,7 +83,7 @@ export default async function ActivityPage({
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td className="num text-ink-2">{fmtDateTime(r.occurred_at)}</td>
+                  <td className="num text-ink-2" suppressHydrationWarning>{fmtDateTime(r.occurred_at)}</td>
                   <td>{r.user_name ?? '—'}</td>
                   <td className="text-ink-3">{r.role_code ? ROLE_LABEL[r.role_code] ?? r.role_code : '—'}</td>
                   <td>

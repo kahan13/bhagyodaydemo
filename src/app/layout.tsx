@@ -1,35 +1,20 @@
-import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
+﻿import type { Metadata } from 'next';
 import './globals.css';
-import RegisterSW from '@/components/pwa/RegisterSW';
-
-const inter = Inter({
-  subsets: ['latin'],
-  variable: '--font-inter',
-  display: 'swap',
-});
 
 export const metadata: Metadata = {
-  title: 'Bhagyoday Belts — Inventory',
-  description: 'Stock, movements and reporting for Bhagyoday Belt Company, Ahmedabad.',
-  manifest: '/manifest.webmanifest',
-  appleWebApp: { capable: true, statusBarStyle: 'default', title: 'Belt Stock' },
-  formatDetection: { telephone: false },
+  title: 'Bhagyoday Belts - Inventory Management',
+  description: 'Enterprise inventory control and order tracking system',
 };
 
-export const viewport: Viewport = {
-  themeColor: '#5b5bd6',
-  width: 'device-width',
-  initialScale: 1,
-  viewportFit: 'cover',
-};
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <html lang="en" className={inter.variable}>
-      <body>
+    <html lang="en">
+      <body className="antialiased bg-slate-50 text-slate-900">
         {children}
-        <RegisterSW />
       </body>
     </html>
   );

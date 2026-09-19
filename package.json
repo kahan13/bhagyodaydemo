@@ -9,8 +9,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "import:validate": "node scripts/import-master-excel.mjs",
-    "import:demo": "node scripts/import-master-excel.mjs --commit --with-history",
-    "import:replace": "node scripts/import-master-excel.mjs --commit --with-history --replace"
+    "import:demo": "node scripts/import-master-excel.mjs --commit",
+    "import:replace": "node scripts/import-master-excel.mjs --commit --replace"
   },
   "dependencies": {
     "@supabase/ssr": "^0.7.0",

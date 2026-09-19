@@ -177,7 +177,7 @@ S.vbelts.forEach((r, i) => {
   pushSku({
     sku_code: sku, product_type: 'V_BELT', family_code: profile, brand_code: brand,
     exact_size: size, display_name: str(r.Display_Name) || `${size} ${str(r.Brand)}`,
-    hier_l1: str(r.Brand), hier_l2: profile, hier_l3: size,   // brand -> profile -> size
+    hier_l1: profile, hier_l2: size, hier_l3: str(r.Brand),   // profile -> size -> brand
     search_text: `${size} ${str(r.Brand)} ${profile} ${sku}`.toLowerCase(),
     belt_form: 'ENDLESS', construction: str(r.Construction) || null, standard: null,
     pitch_mm: null, pitch_length_mm: null, width_mm: null, teeth: null,

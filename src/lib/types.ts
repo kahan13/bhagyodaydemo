@@ -1,8 +1,3 @@
-/* =============================================================================
-   Contracts shared by the web app and the mobile PWA.
-   These describe database row shapes. No product data lives here.
-   ========================================================================== */
-
 export type ProductType = 'TIMING_BELT' | 'V_BELT';
 export type TxnType = 'INWARD' | 'OUTWARD' | 'ADJUSTMENT';
 export type TxnMode = 'NORMAL' | 'REVERSAL';
@@ -18,6 +13,10 @@ export type Permission =
   | 'users.view' | 'users.create' | 'users.edit' | 'users.disable'
   | 'settings.view' | 'settings.edit' | 'settings.import' | 'settings.backup'
   | 'audit.view';
+
+export type PurchaseOrderStatus = 'PLACED' | 'PARTIAL' | 'FULFILLED';
+export type PurchaseOrderItemStatus = 'PENDING' | 'PARTIAL' | 'FULFILLED';
+export type ProductionOrderStatus = 'CREATED' | 'SENT' | 'IN_PROGRESS' | 'COMPLETED';
 
 export interface AppUser {
   id: string;
@@ -84,6 +83,7 @@ export interface Movement {
   previous_stock: number;
   new_stock: number;
   reference: string | null;
+  invoice_no: string | null;
   notes: string | null;
   channel: Channel;
   user_id: string | null;
@@ -91,6 +91,8 @@ export interface Movement {
   reversal_of: string | null;
   reversed_by: string | null;
   is_reversed: boolean;
+  operated_by_user_id: string | null;
+  operated_by_name: string | null;
   sku_code: string;
   display_name: string;
   product_type: ProductType;
@@ -112,12 +114,67 @@ export interface DashboardSummary {
   total_moves: number;
 }
 
+export interface PurchaseOrder {
+  id: string;
+  order_no: string;
+  supplier_name: string | null;
+  notes: string | null;
+  status: PurchaseOrderStatus;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PurchaseOrderItem {
+  id: string;
+  order_id: string;
+  sku_id: string;
+  ordered_qty: number;
+  received_qty: number;
+  status: PurchaseOrderItemStatus;
+  notes: string | null;
+  created_at: string;
+  // joined fields
+  sku_code?: string;
+  exact_size?: string;
+  brand_name?: string;
+  unit_code?: string;
+  current_stock?: number;
+}
+
+export interface PurchaseOrderReceipt {
+  id: string;
+  order_item_id: string;
+  qty_received: number;
+  movement_id: string | null;
+  received_at: string;
+  received_by: string | null;
+  notes: string | null;
+}
+
+export interface ProductionOrder {
+  id: string;
+  order_no: string;
+  customer_name: string | null;
+  product_description: string;
+  quantity: number | null;
+  unit_code: string | null;
+  due_date: string | null;
+  notes: string | null;
+  whatsapp_number: string | null;
+  whatsapp_message: string | null;
+  status: ProductionOrderStatus;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /**
- * How each product type is browsed. Only the level *labels* are hard-coded;
- * the values come from hier_l1/l2/l3 on each row, so the tree follows whatever
- * master file was imported.
+ * Both product types now follow the same three-level drill pattern:
+ *   Category/Profile  →  Size  →  Brand
+ * hier_l1/l2/l3 are resolved at import time per this mapping.
  */
 export const HIERARCHY: Record<ProductType, { label: string; short: string; levels: [string, string, string] }> = {
-  TIMING_BELT: { label: 'Timing Belts', short: 'Timing', levels: ['Family', 'Size', 'Brand'] },
-  V_BELT: { label: 'V-Belts', short: 'V-Belt', levels: ['Brand', 'Profile', 'Size'] },
+  TIMING_BELT: { label: 'Timing Belts', short: 'Timing', levels: ['Family',  'Size', 'Brand'] },
+  V_BELT:      { label: 'V-Belts',      short: 'V-Belt', levels: ['Profile', 'Size', 'Brand'] },
 };
