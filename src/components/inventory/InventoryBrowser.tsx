@@ -11,12 +11,13 @@ import MovementDialog from '@/components/inventory/MovementDialog';
 const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
 
 export default function InventoryBrowser({
-  permissions, initialSku, initialAction, initialType,
+  permissions, initialSku, initialAction, initialType, labelOverrides,
 }: {
   permissions: Permission[];
   initialSku?: string;
   initialAction?: 'inward' | 'outward';
   initialType: ProductType;
+  labelOverrides?: Partial<Record<ProductType, [string, string, string]>>;
 }) {
   const { skus, loading, error, applyStock } = useCatalog();
   const [type, setType] = useState<ProductType>(initialType);
@@ -28,7 +29,7 @@ export default function InventoryBrowser({
   const [action, setAction] = useState<'inward' | 'outward' | 'adjust' | null>(null);
 
   const can = (p: Permission) => permissions.includes(p);
-  const levels = HIERARCHY[type].levels;
+  const levels: [string, string, string] = labelOverrides?.[type] ?? HIERARCHY[type].levels;
 
   // Deep link from the dashboard or command palette.
   useEffect(() => {
