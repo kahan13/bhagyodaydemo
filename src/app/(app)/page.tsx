@@ -1,16 +1,13 @@
 import { Suspense } from 'react';
-import { ArrowDownLeft, ArrowUpRight, AlertTriangle } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, ShoppingCart } from 'lucide-react';
 import { requireSession, can } from '@/lib/auth';
 import { supabaseServer } from '@/lib/supabase-server';
-import { fmtQty, fmtRelative, CHANNEL_LABEL } from '@/lib/format';
+import { fmtQty, fmtRelative, fmtDate } from '@/lib/format';
 import type { DashboardSummary, Movement, Sku } from '@/lib/types';
 import DashboardActions from '@/components/dashboard/DashboardActions';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
-
-/* Each block streams in on its own, so the page frame is visible instantly
-   instead of waiting on the slowest query. */
 
 function Stat({ label, value, sub, tone }: { label: string; value: string | number; sub?: string; tone?: 'warn' | 'danger' }) {
   return (
@@ -136,57 +133,197 @@ async function LowStock() {
   );
 }
 
-async function Recent() {
-  const db = await supabaseServer();
-  const { data } = await db
-    .from('v_movements')
-    .select('id,txn_no,occurred_at,txn_type,txn_mode,quantity,unit_code,new_stock,exact_size,brand_name,user_name,channel')
-    .order('occurred_at', { ascending: false })
-    .limit(9);
+/* ── Latest Transactions Panel ────────────────────────────────────────────── */
 
-  const rows = (data ?? []) as Movement[];
+type PurchaseOrderRow = {
+  id: string;
+  order_no: string;
+  supplier_name: string | null;
+  status: string;
+  created_at: string;
+  total_ordered: number;
+  total_received: number;
+  items_partial: number;
+};
+
+async function LatestTransactions() {
+  const db = await supabaseServer();
+
+  const [inwardRes, outwardRes, ordersRes] = await Promise.all([
+    db
+      .from('v_movements')
+      .select('id,occurred_at,txn_type,quantity,unit_code,exact_size,brand_name,user_name,invoice_no,operated_by_name')
+      .eq('txn_type', 'INWARD')
+      .order('occurred_at', { ascending: false })
+      .limit(5),
+    db
+      .from('v_movements')
+      .select('id,occurred_at,txn_type,quantity,unit_code,exact_size,brand_name,user_name,invoice_no,operated_by_name')
+      .eq('txn_type', 'OUTWARD')
+      .order('occurred_at', { ascending: false })
+      .limit(5),
+    // Aggregate per order via items table
+    db
+      .from('purchase_orders')
+      .select('id,order_no,supplier_name,status,created_at')
+      .order('created_at', { ascending: false })
+      .limit(5),
+  ]);
+
+  const inward = (inwardRes.data ?? []) as Movement[];
+  const outward = (outwardRes.data ?? []) as Movement[];
+  const rawOrders = (ordersRes.data ?? []) as Omit<PurchaseOrderRow, 'total_ordered' | 'total_received' | 'items_partial'>[];
+
+  // Fetch item aggregates for those orders
+  let orders: PurchaseOrderRow[] = [];
+  if (rawOrders.length > 0) {
+    const orderIds = rawOrders.map((o) => o.id);
+    const { data: itemsData } = await db
+      .from('purchase_order_items')
+      .select('order_id,ordered_qty,received_qty,status')
+      .in('order_id', orderIds);
+
+    const items = (itemsData ?? []) as { order_id: string; ordered_qty: number; received_qty: number; status: string }[];
+
+    orders = rawOrders.map((o) => {
+      const its = items.filter((i) => i.order_id === o.id);
+      return {
+        ...o,
+        total_ordered: its.reduce((s, i) => s + (i.ordered_qty ?? 0), 0),
+        total_received: its.reduce((s, i) => s + (i.received_qty ?? 0), 0),
+        items_partial: its.filter((i) => i.status === 'PARTIAL').length,
+      };
+    });
+  }
 
   return (
     <section className="card">
       <div className="card-head">
-        <h2 className="card-title">Latest activity</h2>
+        <h2 className="card-title">Latest transactions</h2>
         <Link href="/transactions" className="text-[12px] text-brand hover:underline">View all</Link>
       </div>
 
-      {rows.length === 0 ? (
-        <p className="px-5 py-8 text-[13px] text-ink-3 text-center">No movements recorded yet.</p>
-      ) : (
-        <ul className="divide-y divide-line">
-          {rows.map((m) => (
-            <li key={m.id} className="flex items-center gap-3 px-5 py-2.5">
-              <span className={`grid place-items-center h-7 w-7 rounded-lg shrink-0 ${
-                m.txn_type === 'INWARD' ? 'bg-ok-soft text-ok'
-                  : m.txn_type === 'OUTWARD' ? 'bg-brand-soft text-brand'
-                  : 'bg-warn-soft text-warn'
-              }`}>
-                {m.txn_type === 'INWARD' ? <ArrowDownLeft size={14} />
-                  : m.txn_type === 'OUTWARD' ? <ArrowUpRight size={14} />
-                  : <AlertTriangle size={13} />}
-              </span>
+      <div className="divide-y divide-line">
 
-              <span className="min-w-0 flex-1">
-                <span className="block text-[13px] truncate">
-                  <span className="font-medium">{m.exact_size}</span>
-                  <span className="text-ink-3"> · {m.brand_name}</span>
-                </span>
-                <span className="block text-[11px] text-ink-3 truncate">
-                  {m.user_name} · {CHANNEL_LABEL[m.channel] ?? m.channel} · {fmtRelative(m.occurred_at)}
-                </span>
-              </span>
+        {/* ── INWARD ── */}
+        <div className="p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="grid place-items-center h-6 w-6 rounded-md bg-ok-soft text-ok shrink-0">
+              <ArrowDownLeft size={13} />
+            </span>
+            <span className="text-[13px] font-semibold text-ink-1">Inward</span>
+          </div>
 
-              <span className="num text-[13px] font-medium shrink-0">
-                {m.txn_type === 'OUTWARD' ? '−' : m.txn_type === 'INWARD' ? '+' : '±'}
-                {fmtQty(Math.abs(m.quantity), m.unit_code)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
+          {/* Purchase order fulfillment sub-pane */}
+          {orders.length > 0 && (
+            <div className="rounded-lg border border-line overflow-hidden">
+              <div className="px-3 py-1.5 bg-surface-2 border-b border-line flex items-center justify-between">
+                <span className="text-[11px] font-medium text-ink-2 flex items-center gap-1.5">
+                  <ShoppingCart size={11} />
+                  Purchase orders
+                </span>
+                <Link href="/purchase-orders" className="text-[11px] text-brand hover:underline">View all</Link>
+              </div>
+              {orders.map((o) => {
+                const remaining = o.total_ordered - o.total_received;
+                return (
+                  <div key={o.id} className="flex items-center gap-3 px-3 py-2.5 border-b border-line last:border-0">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[12px] font-medium text-ink-1">{o.order_no}</span>
+                        {o.supplier_name && (
+                          <span className="text-[11px] text-ink-3 truncate">· {o.supplier_name}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 mt-0.5">
+                        <span className="text-[11px] text-ink-3">{fmtDate(o.created_at)}</span>
+                        {o.items_partial > 0 && (
+                          <span className="text-[11px] text-warn">{o.items_partial} item{o.items_partial > 1 ? 's' : ''} in progress</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-[12px] font-semibold text-ink-1">
+                        {o.total_received}<span className="text-ink-3 font-normal"> / {o.total_ordered}</span>
+                      </div>
+                      <div className="text-[10px] text-ink-3 mt-0.5">
+                        {remaining > 0 ? `${remaining} remaining` : 'fulfilled'}
+                      </div>
+                    </div>
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${
+                      o.status === 'FULFILLED' ? 'bg-ok-soft text-ok'
+                      : o.status === 'PARTIAL' ? 'bg-warn-soft text-warn'
+                      : 'bg-brand-soft text-brand'
+                    }`}>
+                      {o.status === 'FULFILLED' ? 'Done' : o.status === 'PARTIAL' ? 'Partial' : 'Placed'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Recent inward movements */}
+          {inward.length === 0 ? (
+            <p className="text-[12px] text-ink-3 text-center py-2">No inward movements yet.</p>
+          ) : (
+            <ul className="space-y-0.5">
+              {inward.map((m) => (
+                <li key={m.id} className="flex items-center gap-3 py-1.5">
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[12px] truncate">
+                      <span className="font-medium">{m.exact_size}</span>
+                      <span className="text-ink-3"> · {m.brand_name}</span>
+                    </span>
+                    <span className="block text-[11px] text-ink-3 truncate">
+                      {m.operated_by_name ?? m.user_name} · {fmtRelative(m.occurred_at)}
+                      {m.invoice_no && <> · <span className="font-mono">{m.invoice_no}</span></>}
+                    </span>
+                  </span>
+                  <span className="num text-[12px] font-semibold text-ok shrink-0">
+                    +{fmtQty(Math.abs(m.quantity), m.unit_code)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* ── OUTWARD ── */}
+        <div className="p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="grid place-items-center h-6 w-6 rounded-md bg-brand-soft text-brand shrink-0">
+              <ArrowUpRight size={13} />
+            </span>
+            <span className="text-[13px] font-semibold text-ink-1">Outward</span>
+          </div>
+
+          {outward.length === 0 ? (
+            <p className="text-[12px] text-ink-3 text-center py-2">No outward movements yet.</p>
+          ) : (
+            <ul className="space-y-0.5">
+              {outward.map((m) => (
+                <li key={m.id} className="flex items-center gap-3 py-1.5">
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[12px] truncate">
+                      <span className="font-medium">{m.exact_size}</span>
+                      <span className="text-ink-3"> · {m.brand_name}</span>
+                    </span>
+                    <span className="block text-[11px] text-ink-3 truncate">
+                      {m.operated_by_name ?? m.user_name} · {fmtRelative(m.occurred_at)}
+                      {m.invoice_no && <> · <span className="font-mono">{m.invoice_no}</span></>}
+                    </span>
+                  </span>
+                  <span className="num text-[12px] font-semibold text-brand shrink-0">
+                    −{fmtQty(Math.abs(m.quantity), m.unit_code)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+      </div>
     </section>
   );
 }
@@ -255,7 +392,7 @@ export default async function DashboardPage({
           <LowStock />
         </Suspense>
         <Suspense fallback={<div className="card h-[380px] skeleton" />}>
-          <Recent />
+          <LatestTransactions />
         </Suspense>
       </div>
     </div>
