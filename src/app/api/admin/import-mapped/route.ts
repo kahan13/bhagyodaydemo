@@ -208,11 +208,13 @@ export async function POST(req: Request) {
   );
 
   // ── 4. Log import batch ───────────────────────────────────────────────
-  await svc.from('import_batches').insert({
-    file_name: file.name,
-    mode: 'REPLACE',
-    counts: { inserted, updated, errors: errors.length, rows: rows.length },
-  }).catch(() => null); // non-critical
+  try {
+    await svc.from('import_batches').insert({
+      file_name: file.name,
+      mode: 'REPLACE',
+      counts: { inserted, updated, errors: errors.length, rows: rows.length },
+    });
+  } catch { /* non-critical */ }
 
   return NextResponse.json({ inserted, updated, errors });
 }
