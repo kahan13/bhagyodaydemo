@@ -21,7 +21,6 @@ export default function MovementDialog({
   onDone: (newStock: number) => void;
 }) {
   const [qty, setQty] = useState('');
-  const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +54,7 @@ export default function MovementDialog({
         txn_type: action === 'adjust' ? 'ADJUSTMENT' : action.toUpperCase(),
         quantity: action === 'adjust' ? delta : amount,
         unit_code: sku.unit_code,
-        reference: reference || (action === 'adjust' ? 'PHYSICAL COUNT' : null),
+        reference: action === 'adjust' ? 'PHYSICAL COUNT' : null,
         notes: notes || null,
         channel,
       }),
@@ -105,15 +104,6 @@ export default function MovementDialog({
               value={qty}
               onChange={(e) => setQty(e.target.value.replace(/[^0-9.]/g, ''))}
               placeholder="0"
-            />
-          </div>
-
-          <div>
-            <label className="label" htmlFor="ref">Reference</label>
-            <input
-              id="ref" className="field" value={reference}
-              onChange={(e) => setReference(e.target.value)}
-              placeholder={action === 'inward' ? 'PO-1042' : action === 'outward' ? 'SO-4108' : 'Stock count'}
             />
           </div>
 

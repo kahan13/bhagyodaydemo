@@ -50,13 +50,15 @@ export async function POST(request: Request) {
 
   const db = await supabaseServer();
   const { data, error } = await db.rpc('record_movement', {
-    p_sku_code: sku_code,
-    p_txn_type: txn_type,
-    p_quantity: quantity,
-    p_unit_code: body.unit_code ? String(body.unit_code).toUpperCase() : null,
-    p_reference: body.reference ? String(body.reference).slice(0, 120) : null,
-    p_notes: body.notes ? String(body.notes).slice(0, 500) : null,
-    p_channel: channel,
+    p_sku_code:    sku_code,
+    p_txn_type:    txn_type,
+    p_quantity:    quantity,
+    p_unit_code:   body.unit_code ? String(body.unit_code).toUpperCase() : null,
+    p_reference:   body.reference ? String(body.reference).slice(0, 120) : null,
+    p_notes:       body.notes ? String(body.notes).slice(0, 500) : null,
+    p_channel:     channel,
+    p_invoice_no:  body.invoice_no ? String(body.invoice_no).slice(0, 60) : null,
+    p_operated_by: body.operated_by ? String(body.operated_by) : null,
   });
 
   if (error) {

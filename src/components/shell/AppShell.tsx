@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   LayoutDashboard, Boxes, ArrowLeftRight, FileText, Settings,
-  ShieldCheck, Smartphone, Menu, X, Search, ChevronDown, Users, Package, Upload,
+  ShieldCheck, Menu, X, Search, ChevronDown, Users, Package, Upload, ClipboardList,
 } from 'lucide-react';
 import { ROLE_LABEL, initials } from '@/lib/format';
 import type { Permission, Session } from '@/lib/types';
@@ -19,6 +19,7 @@ const MAIN: Item[] = [
   { href: '/inventory', label: 'Inventory', icon: Boxes, needs: 'inventory.view' },
   { href: '/products', label: 'Product Master', icon: Package, needs: 'products.view' },
   { href: '/transactions', label: 'Transactions', icon: ArrowLeftRight, needs: 'transactions.view' },
+  { href: '/production-orders', label: 'Production Orders', icon: ClipboardList, needs: 'transactions.view' },
   { href: '/reports', label: 'Reports', icon: FileText, needs: 'reports.view' },
 ];
 
@@ -126,15 +127,7 @@ export default function AppShell({
           <Group title="Administration" items={ADMIN} />
         </div>
 
-        <div className="p-3 border-t border-line">
-          <Link
-            href="/m"
-            className="flex items-center gap-2.5 h-9 px-3 rounded-lg text-[13px] text-ink-2 hover:bg-hover hover:text-ink transition-colors"
-          >
-            <Smartphone size={16} strokeWidth={1.9} />
-            Phone view
-          </Link>
-        </div>
+
       </aside>
 
       {navOpen && (

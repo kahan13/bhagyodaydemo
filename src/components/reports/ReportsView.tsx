@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { FileSpreadsheet, FileText, RefreshCw } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
-import { fmtDate, fmtQty, fmtDateTime, CHANNEL_LABEL } from '@/lib/format';
+import { fmtDate, fmtQty, fmtDateTime } from '@/lib/format';
 
 type ReportKind =
   | 'current_stock' | 'low_stock' | 'movements' | 'inward' | 'outward'
@@ -134,7 +134,7 @@ export default function ReportsView({
           .sort((a, b) => b.skus - a.skus));
       } else {
         let q = db.from('v_movements')
-          .select('txn_no,occurred_at,txn_type,txn_mode,exact_size,brand_name,family_code,quantity,unit_code,previous_stock,new_stock,user_name,channel,reference');
+          .select('txn_no,occurred_at,txn_type,txn_mode,product_type,exact_size,brand_name,family_code,quantity,unit_code,previous_stock,new_stock,user_name,operated_by_name,invoice_no');
         if (kind === 'inward') q = q.eq('txn_type', 'INWARD');
         if (kind === 'outward') q = q.eq('txn_type', 'OUTWARD');
         if (start) q = q.gte('occurred_at', start);
@@ -146,18 +146,20 @@ export default function ReportsView({
         if (error) throw new Error(error.message);
 
         setColumns([
-          { key: 'txn_no', label: 'Transaction' },
-          { key: 'occurred_at', label: 'Date & time' },
-          { key: 'exact_size', label: 'Size' },
-          { key: 'brand_name', label: 'Brand' },
-          { key: 'txn_type', label: 'Type' },
-          { key: 'quantity', label: 'Qty', numeric: true },
-          { key: 'unit_code', label: 'Unit' },
-          { key: 'previous_stock', label: 'Before', numeric: true },
-          { key: 'new_stock', label: 'After', numeric: true },
-          { key: 'user_name', label: 'User' },
-          { key: 'channel', label: 'Device' },
-          { key: 'reference', label: 'Reference' },
+          { key: 'txn_no',           label: 'Txn No' },
+          { key: 'occurred_at',      label: 'Date & Time' },
+          { key: 'txn_type',         label: 'Type' },
+          { key: 'product_type',     label: 'Product Type' },
+          { key: 'exact_size',       label: 'Size' },
+          { key: 'brand_name',       label: 'Brand' },
+          { key: 'family_code',      label: 'Family' },
+          { key: 'quantity',         label: 'Qty',    numeric: true },
+          { key: 'unit_code',        label: 'Unit' },
+          { key: 'previous_stock',   label: 'Before', numeric: true },
+          { key: 'new_stock',        label: 'After',  numeric: true },
+          { key: 'user_name',        label: 'Entered By' },
+          { key: 'operated_by_name', label: 'Operated By' },
+          { key: 'invoice_no',       label: 'Invoice No' },
         ]);
         setRows((data ?? []) as Record<string, unknown>[]);
       }
@@ -175,7 +177,7 @@ export default function ReportsView({
     const value = row[key];
     if (value === null || value === undefined || value === '') return '—';
     if (key === 'occurred_at') return fmtDateTime(String(value));
-    if (key === 'channel') return CHANNEL_LABEL[String(value)] ?? String(value);
+    if (key === 'product_type') return value === 'TIMING_BELT' ? 'Timing Belt' : value === 'V_BELT' ? 'V-Belt' : String(value ?? '—');
     if (key === 'stock_status') return String(value).replace(/_/g, ' ').toLowerCase();
     if (typeof value === 'number') return fmtQty(value);
     return String(value);

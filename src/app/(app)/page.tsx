@@ -1,10 +1,11 @@
-import Link from 'next/link';
 import { Suspense } from 'react';
-import { ArrowDownLeft, ArrowUpRight, Plus, Mic, AlertTriangle } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, AlertTriangle } from 'lucide-react';
 import { requireSession, can } from '@/lib/auth';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fmtQty, fmtRelative, CHANNEL_LABEL } from '@/lib/format';
 import type { DashboardSummary, Movement, Sku } from '@/lib/types';
+import DashboardActions from '@/components/dashboard/DashboardActions';
+import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
@@ -202,6 +203,18 @@ export default async function DashboardPage({
   const hour = Number(new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }));
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
+  const db = await supabaseServer();
+
+  const [usersRes, lastRefRes, lastInvRes] = await Promise.all([
+    db.from('app_users').select('id,full_name').eq('is_active', true).order('full_name'),
+    db.from('v_movements').select('reference').not('reference', 'is', null).order('occurred_at', { ascending: false }).limit(1).maybeSingle(),
+    db.from('v_movements').select('invoice_no').not('invoice_no', 'is', null).eq('txn_type', 'OUTWARD').order('occurred_at', { ascending: false }).limit(1).maybeSingle(),
+  ]);
+
+  const users = (usersRes.data ?? []) as { id: string; full_name: string }[];
+  const lastRef = (lastRefRes.data as { reference: string } | null)?.reference ?? null;
+  const lastInvoice = (lastInvRes.data as { invoice_no: string } | null)?.invoice_no ?? null;
+
   return (
     <div className="p-4 lg:p-6 max-w-[1360px] mx-auto space-y-4">
       {denied && (
@@ -216,7 +229,7 @@ export default async function DashboardPage({
           <h1 className="text-[19px] font-semibold">
             {greeting}, {session.user.full_name.split(' ')[0]}
           </h1>
-          <p className="text-[13px] text-ink-3 mt-0.5">
+          <p className="text-[13px] text-ink-3 mt-0.5" suppressHydrationWarning>
             {new Date().toLocaleDateString('en-IN', {
               timeZone: 'Asia/Kolkata', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
             })}
@@ -224,13 +237,12 @@ export default async function DashboardPage({
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Link href="/m" className="btn btn-secondary"><Mic size={14} /> Voice entry</Link>
-          {write && (
-            <>
-              <Link href="/inventory?action=inward" className="btn btn-secondary"><Plus size={14} /> Inward</Link>
-              <Link href="/inventory?action=outward" className="btn btn-primary"><Plus size={14} /> Outward</Link>
-            </>
-          )}
+          <DashboardActions
+            canWrite={write}
+            users={users}
+            lastRef={lastRef}
+            lastInvoice={lastInvoice}
+          />
         </div>
       </div>
 

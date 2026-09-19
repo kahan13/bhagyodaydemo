@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { Search, X, ChevronRight, Package, TrendingDown } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Search, X, ChevronRight, Package, TrendingDown, ChevronDown } from 'lucide-react';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { fmtQty, fmtRelative, CHANNEL_LABEL } from '@/lib/format';
@@ -28,10 +28,19 @@ export default function InventoryBrowser({
   const [selected, setSelected] = useState<Sku | null>(null);
   const [action, setAction] = useState<'inward' | 'outward' | 'adjust' | null>(null);
 
+  // expanded row keys per column
+  const [expandedL1, setExpandedL1] = useState<string | null>(null);
+  const [expandedL2, setExpandedL2] = useState<string | null>(null);
+  const [expandedL3, setExpandedL3] = useState<string | null>(null);
+
+  // resizable column widths as percentages [l1, l2, l3]
+  const [widths, setWidths] = useState<[number, number, number]>([33.33, 33.33, 33.34]);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ divider: 0 | 1; startX: number; startWidths: [number, number, number] } | null>(null);
+
   const can = (p: Permission) => permissions.includes(p);
   const levels: [string, string, string] = labelOverrides?.[type] ?? HIERARCHY[type].levels;
 
-  // Deep link from the dashboard or command palette.
   useEffect(() => {
     if (!initialSku || !skus.length) return;
     const hit = skus.find((s) => s.sku_code === initialSku);
@@ -58,9 +67,6 @@ export default function InventoryBrowser({
     });
   }, [skus, type, query, lowOnly]);
 
-  /* The tree is built from hier_l1/l2/l3, which the importer resolved.
-     Timing belts nest family → size → brand; V-belts nest brand → profile →
-     size. Neither path is written anywhere in this component. */
   const tree = useMemo(() => {
     const map = new Map<string, Map<string, Sku[]>>();
     for (const s of pool) {
@@ -92,7 +98,42 @@ export default function InventoryBrowser({
 
   function switchType(next: ProductType) {
     setType(next); setL1(null); setL2(null); setSelected(null);
+    setExpandedL1(null); setExpandedL2(null); setExpandedL3(null);
   }
+
+  // ── drag-to-resize ──────────────────────────────────────────────────────────
+  const onDividerMouseDown = useCallback((divider: 0 | 1, e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = { divider, startX: e.clientX, startWidths: [...widths] as [number, number, number] };
+
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current || !containerRef.current) return;
+      const totalW = containerRef.current.offsetWidth;
+      const dx = ev.clientX - dragRef.current.startX;
+      const dPct = (dx / totalW) * 100;
+      const sw = dragRef.current.startWidths;
+      const MIN = 15;
+
+      if (dragRef.current.divider === 0) {
+        const w0 = Math.max(MIN, Math.min(sw[0] + dPct, 100 - MIN * 2));
+        const w1 = Math.max(MIN, sw[0] + sw[1] - w0);
+        setWidths([w0, w1, 100 - w0 - w1]);
+      } else {
+        const w2 = Math.max(MIN, Math.min(sw[2] - dPct, 100 - MIN * 2));
+        const w1 = Math.max(MIN, sw[1] + sw[2] - w2);
+        setWidths([100 - w1 - w2, w1, w2]);
+      }
+    };
+
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [widths]);
 
   if (error) {
     return (
@@ -121,7 +162,7 @@ export default function InventoryBrowser({
 
   return (
     <div className="flex flex-col h-[calc(100vh-56px)]">
-      {/* --------------------------------------------------------- toolbar */}
+      {/* toolbar */}
       <div className="px-4 lg:px-6 pt-4 pb-0 border-b border-line bg-surface">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-[17px] font-semibold">Inventory</h1>
@@ -174,76 +215,156 @@ export default function InventoryBrowser({
         </div>
       </div>
 
-      {/* ------------------------------------------------------ drill panes */}
+      {/* drill panes */}
       <div className="flex-1 min-h-0 flex">
-        <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-3">
-          <Column
-            label={levels[0]}
-            count={l1Keys.length}
-            empty="Nothing matches."
-            loading={loading}
-          >
-            {l1Keys.map((key) => {
-              const list = branchOf(key);
-              const low = lowIn(list);
-              return (
-                <button key={key} data-active={l1 === key} className="drill-item"
-                  onClick={() => { setL1(key); setL2(null); }}>
-                  <span className="truncate">{key}</span>
-                  <span className="flex items-center gap-1.5 shrink-0">
-                    {low > 0 && <span className="badge badge-warn">{low}</span>}
-                    <span className="text-[11px] text-ink-3 num">{list.length}</span>
-                    <ChevronRight size={13} className="text-ink-3" />
-                  </span>
-                </button>
-              );
-            })}
-          </Column>
+        <div ref={containerRef} className="flex-1 min-w-0 flex select-none">
 
-          <Column
-            label={levels[1]}
-            count={l2Keys.length}
-            empty={`Pick a ${levels[0].toLowerCase()}.`}
-            loading={loading}
-          >
-            {l1 && l2Keys.map((key) => {
-              const list = tree.get(l1)!.get(key)!;
-              const low = lowIn(list);
-              return (
-                <button key={key} data-active={l2 === key} className="drill-item" onClick={() => setL2(key)}>
-                  <span className="truncate">{key}</span>
-                  <span className="flex items-center gap-1.5 shrink-0">
-                    {low > 0 && <span className="badge badge-warn">{low}</span>}
-                    <span className="text-[11px] text-ink-3 num">{list.length}</span>
-                    <ChevronRight size={13} className="text-ink-3" />
-                  </span>
-                </button>
-              );
-            })}
-          </Column>
+          {/* L1 column */}
+          <div className="flex flex-col min-h-0 border-r border-line" style={{ width: `${widths[0]}%` }}>
+            <ColHeader label={levels[0]} right={String(l1Keys.length)} />
+            <div className="flex-1 scroll p-1.5">
+              {loading && <Skelly />}
+              {!loading && l1Keys.length === 0 && <Empty text="Nothing matches." />}
+              {!loading && l1Keys.map((key) => {
+                const list = branchOf(key);
+                const low = lowIn(list);
+                const isActive = l1 === key;
+                const isExpanded = expandedL1 === key;
+                return (
+                  <div key={key}>
+                    <div
+                      data-active={isActive}
+                      className="drill-item cursor-pointer"
+                      onClick={() => { setL1(key); setL2(null); }}
+                    >
+                      <span className="truncate">{key}</span>
+                      <span className="flex items-center gap-1.5 shrink-0">
+                        {low > 0 && <span className="badge badge-warn">{low}</span>}
+                        <span className="text-[11px] text-ink-3 num">{list.length}</span>
+                        <button
+                          className="text-ink-3 hover:text-ink p-0.5"
+                          onClick={(e) => { e.stopPropagation(); setExpandedL1(isExpanded ? null : key); }}
+                          aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                        >
+                          {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                        </button>
+                      </span>
+                    </div>
+                    {isExpanded && (
+                      <div className="mx-1.5 mb-1 px-3 py-2 rounded-md bg-subtle border border-line text-[12px] space-y-1">
+                        <p className="text-ink-3">SKUs: <span className="text-ink font-medium">{list.length}</span></p>
+                        <p className="text-ink-3">Below min: <span className={low > 0 ? 'text-warn font-medium' : 'text-ink'}>{low}</span></p>
+                        <p className="text-ink-3">In stock: <span className="text-ink font-medium">{list.filter(s => s.stock_status === 'OK').length}</span></p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
 
-          <Column
-            label={levels[2]}
-            count={leaves.length}
-            empty={`Pick a ${levels[1].toLowerCase()}.`}
-            loading={loading}
-            right="Stock"
-          >
-            {leaves.map((s) => (
-              <button key={s.sku_code} data-active={selected?.sku_code === s.sku_code}
-                className="drill-item" onClick={() => setSelected(s)}>
-                <span className="truncate">
-                  {s.hier_l3}
-                  {s.rack_location && <span className="ml-2 text-[11px] text-ink-3">{s.rack_location}</span>}
-                </span>
-                <span className="flex items-center gap-2 shrink-0">
-                  {s.stock_status === 'OUT_OF_STOCK' && <span className="badge badge-danger">Out</span>}
-                  {s.stock_status === 'LOW_STOCK' && <span className="badge badge-warn">Low</span>}
-                  <span className="num font-medium">{fmtQty(s.current_stock, s.unit_code)}</span>
-                </span>
-              </button>
-            ))}
-          </Column>
+          {/* divider 0 */}
+          <div
+            className="w-1 shrink-0 cursor-col-resize hover:bg-brand/30 active:bg-brand/50 transition-colors"
+            onMouseDown={(e) => onDividerMouseDown(0, e)}
+          />
+
+          {/* L2 column */}
+          <div className="flex flex-col min-h-0 border-r border-line" style={{ width: `${widths[1]}%` }}>
+            <ColHeader label={levels[1]} right={String(l2Keys.length)} />
+            <div className="flex-1 scroll p-1.5">
+              {loading && <Skelly />}
+              {!loading && !l1 && <Empty text={`Pick a ${levels[0].toLowerCase()}.`} />}
+              {!loading && l1 && l2Keys.map((key) => {
+                const list = tree.get(l1)!.get(key)!;
+                const low = lowIn(list);
+                const isActive = l2 === key;
+                const isExpanded = expandedL2 === key;
+                return (
+                  <div key={key}>
+                    <div
+                      data-active={isActive}
+                      className="drill-item cursor-pointer"
+                      onClick={() => setL2(key)}
+                    >
+                      <span className="truncate">{key}</span>
+                      <span className="flex items-center gap-1.5 shrink-0">
+                        {low > 0 && <span className="badge badge-warn">{low}</span>}
+                        <span className="text-[11px] text-ink-3 num">{list.length}</span>
+                        <button
+                          className="text-ink-3 hover:text-ink p-0.5"
+                          onClick={(e) => { e.stopPropagation(); setExpandedL2(isExpanded ? null : key); }}
+                          aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                        >
+                          {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                        </button>
+                      </span>
+                    </div>
+                    {isExpanded && (
+                      <div className="mx-1.5 mb-1 px-3 py-2 rounded-md bg-subtle border border-line text-[12px] space-y-1">
+                        <p className="text-ink-3">SKUs: <span className="text-ink font-medium">{list.length}</span></p>
+                        <p className="text-ink-3">Below min: <span className={low > 0 ? 'text-warn font-medium' : 'text-ink'}>{low}</span></p>
+                        <p className="text-ink-3">Brands: <span className="text-ink font-medium">{[...new Set(list.map(s => s.brand_name))].join(', ')}</span></p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* divider 1 */}
+          <div
+            className="w-1 shrink-0 cursor-col-resize hover:bg-brand/30 active:bg-brand/50 transition-colors"
+            onMouseDown={(e) => onDividerMouseDown(1, e)}
+          />
+
+          {/* L3 column */}
+          <div className="flex flex-col min-h-0" style={{ width: `${widths[2]}%` }}>
+            <ColHeader label={levels[2]} right="Stock" />
+            <div className="flex-1 scroll p-1.5">
+              {loading && <Skelly />}
+              {!loading && !l2 && <Empty text={`Pick a ${levels[1].toLowerCase()}.`} />}
+              {!loading && l2 && leaves.map((s) => {
+                const isActive = selected?.sku_code === s.sku_code;
+                const isExpanded = expandedL3 === s.sku_code;
+                return (
+                  <div key={s.sku_code}>
+                    <div
+                      data-active={isActive}
+                      className="drill-item cursor-pointer"
+                      onClick={() => setSelected(s)}
+                    >
+                      <span className="truncate">
+                        {s.hier_l3}
+                        {s.rack_location && <span className="ml-2 text-[11px] text-ink-3">{s.rack_location}</span>}
+                      </span>
+                      <span className="flex items-center gap-2 shrink-0">
+                        {s.stock_status === 'OUT_OF_STOCK' && <span className="badge badge-danger">Out</span>}
+                        {s.stock_status === 'LOW_STOCK' && <span className="badge badge-warn">Low</span>}
+                        <span className="num font-medium">{fmtQty(s.current_stock, s.unit_code)}</span>
+                        <button
+                          className="text-ink-3 hover:text-ink p-0.5"
+                          onClick={(e) => { e.stopPropagation(); setExpandedL3(isExpanded ? null : s.sku_code); }}
+                          aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                        >
+                          {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                        </button>
+                      </span>
+                    </div>
+                    {isExpanded && (
+                      <div className="mx-1.5 mb-1 px-3 py-2 rounded-md bg-subtle border border-line text-[12px] space-y-1">
+                        <p className="text-ink-3 font-mono">{s.sku_code}</p>
+                        <p className="text-ink-3">Min: <span className="text-ink font-medium">{fmtQty(s.min_stock_level, s.unit_code)}</span></p>
+                        <p className="text-ink-3">Reorder: <span className="text-ink font-medium">{fmtQty(s.suggested_purchase_qty, s.unit_code)}</span></p>
+                        {s.rack_location && <p className="text-ink-3">Rack: <span className="text-ink font-medium">{s.rack_location}</span></p>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
         <aside className="w-[350px] shrink-0 border-l border-line bg-surface hidden xl:flex flex-col">
@@ -251,7 +372,6 @@ export default function InventoryBrowser({
         </aside>
       </div>
 
-      {/* smaller screens: the panel slides over */}
       {selected && (
         <div className="xl:hidden fixed inset-0 z-50 flex">
           <div className="flex-1 bg-ink/25" onClick={() => setSelected(null)} aria-hidden />
@@ -278,35 +398,30 @@ export default function InventoryBrowser({
   );
 }
 
-/* ------------------------------------------------------------------ column */
+/* ── small helpers ── */
 
-function Column({
-  label, count, empty, children, loading, right,
-}: {
-  label: string; count: number; empty: string; loading: boolean;
-  children: React.ReactNode; right?: string;
-}) {
-  const hasChildren = Array.isArray(children) ? children.length > 0 : !!children;
+function ColHeader({ label, right }: { label: string; right: string }) {
   return (
-    <div className="border-r border-line last:border-r-0 flex flex-col min-h-0">
-      <div className="flex items-baseline justify-between px-4 h-10 border-b border-line shrink-0">
-        <span className="eyebrow">{label}</span>
-        <span className="text-[11px] text-ink-3 num">{right ?? count}</span>
-      </div>
-      <div className="flex-1 scroll p-1.5">
-        {loading && (
-          <div className="space-y-1.5 p-1.5">
-            {[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="h-8 skeleton" />)}
-          </div>
-        )}
-        {!loading && !hasChildren && <p className="px-3 py-4 text-[12px] text-ink-3">{empty}</p>}
-        {!loading && children}
-      </div>
+    <div className="flex items-baseline justify-between px-4 h-10 border-b border-line shrink-0">
+      <span className="eyebrow">{label}</span>
+      <span className="text-[11px] text-ink-3 num">{right}</span>
     </div>
   );
 }
 
-/* ------------------------------------------------------------ detail panel */
+function Empty({ text }: { text: string }) {
+  return <p className="px-3 py-4 text-[12px] text-ink-3">{text}</p>;
+}
+
+function Skelly() {
+  return (
+    <div className="space-y-1.5 p-1.5">
+      {[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="h-8 skeleton" />)}
+    </div>
+  );
+}
+
+/* ── detail panel ── */
 
 function DetailPanel({
   sku, can, onAction, onClose,

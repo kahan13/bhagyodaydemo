@@ -65,7 +65,7 @@ export default async function TransactionsPage({
     .from('v_movements')
     .select(
       'id,txn_no,occurred_at,txn_type,txn_mode,quantity,unit_code,previous_stock,new_stock,' +
-      'reference,notes,channel,user_name,sku_code,display_name,product_type,exact_size,' +
+      'notes,channel,user_name,operated_by_name,invoice_no,sku_code,display_name,product_type,exact_size,' +
       'brand_name,family_code,is_reversed,reversal_of',
       { count: 'exact' },
     )
@@ -79,14 +79,15 @@ export default async function TransactionsPage({
   if (sp.brand) q = q.eq('brand_name', sp.brand);
   if (sp.family) q = q.eq('family_code', sp.family);
   if (sp.user) q = q.eq('user_name', sp.user);
-  if (sp.channel) q = q.eq('channel', sp.channel);
+  if (sp.operated_by) q = q.eq('operated_by_name', sp.operated_by);
   if (sp.search) q = q.ilike('display_name', `%${sp.search}%`);
 
-  const [{ data, count, error }, brands, families, users] = await Promise.all([
+  const [{ data, count, error }, brands, families, users, operators] = await Promise.all([
     q.range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1),
     db.from('brands').select('name').eq('is_active', true).order('name'),
     db.from('product_families').select('code').eq('is_active', true).order('code'),
     db.from('app_users').select('full_name').eq('is_active', true).order('full_name'),
+    db.from('v_movements').select('operated_by_name').not('operated_by_name', 'is', null).limit(500),
   ]);
 
   return (
@@ -101,12 +102,13 @@ export default async function TransactionsPage({
         range,
         from: sp.from ?? '', to: sp.to ?? '', type: sp.type ?? '', mode: sp.mode ?? '',
         product: sp.product ?? '', brand: sp.brand ?? '', family: sp.family ?? '',
-        user: sp.user ?? '', channel: sp.channel ?? '', search: sp.search ?? '',
+        user: sp.user ?? '', operated_by: sp.operated_by ?? '', search: sp.search ?? '',
       }}
       facets={{
         brands: (brands.data ?? []).map((b) => b.name as string),
         families: (families.data ?? []).map((f) => f.code as string),
         users: (users.data ?? []).map((u) => u.full_name as string),
+        operators: [...new Set((operators.data ?? []).map((r) => (r as { operated_by_name: string }).operated_by_name).filter(Boolean))].sort(),
       }}
     />
   );
