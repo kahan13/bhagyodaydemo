@@ -2,7 +2,7 @@ import { Suspense } from 'react';
 import { ArrowDownLeft, ArrowUpRight, ShoppingCart, Check } from 'lucide-react';
 import { requireSession, can } from '@/lib/auth';
 import { supabaseServer } from '@/lib/supabase-server';
-import { supabaseService } from '@/lib/supabase-server';
+
 import { fmtQty, fmtRelative, fmtDate } from '@/lib/format';
 import type { DashboardSummary, Movement, Sku } from '@/lib/types';
 import DashboardActions from '@/components/dashboard/DashboardActions';
@@ -137,7 +137,7 @@ type POItem = {
 };
 
 async function OrdersPane() {
-  const svc = await supabaseService();
+  const svc = await supabaseServer();
 
   const { data: rawOrders } = await svc
     .from('purchase_orders')

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabaseService } from '@/lib/supabase-server';
+import { supabaseService, supabaseServer } from '@/lib/supabase-server';
 import { getSession } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -186,11 +186,13 @@ export async function POST(request: Request) {
       .eq('id', order_id)
       .single();
 
+    // Use the user-authenticated client: record_movement checks auth.uid() internally
+    const userDb = await supabaseServer();
     const errors: string[] = [];
     for (const item of items as { sku_id: string; received_qty: number }[]) {
       const sku = skuMap[item.sku_id];
       if (!sku) continue;
-      const { error } = await svc.rpc('record_movement', {
+      const { error } = await userDb.rpc('record_movement', {
         p_sku_code:    sku.sku_code,
         p_txn_type:    'INWARD',
         p_quantity:    item.received_qty,

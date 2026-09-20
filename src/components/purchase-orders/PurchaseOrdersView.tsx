@@ -188,8 +188,11 @@ function ReceiveDialog({
         </div>
         <div className="p-5 space-y-4">
           <div className="bg-subtle rounded-lg px-3.5 py-2.5 space-y-0.5">
-            <p className="text-[13px] font-medium">{item.skus?.exact_size}</p>
-            <p className="text-[11px] text-ink-3">{item.skus?.brand_name} · {TYPE_LABEL[item.skus?.product_type ?? ''] ?? ''}</p>
+            <p className="text-[13px] font-medium">{item.skus?.exact_size ?? '—'}</p>
+            <p className="text-[11px] text-ink-3">
+              {item.skus?.brand_name ?? '—'}
+              {item.skus?.product_type ? ` · ${TYPE_LABEL[item.skus.product_type] ?? ''}` : ''}
+            </p>
             <div className="flex gap-4 mt-1.5">
               <span className="text-[11px] text-ink-3">Ordered: <strong className="text-ink">{fmtQty(item.ordered_qty, item.skus?.unit_code)}</strong></span>
               <span className="text-[11px] text-ink-3">Received: <strong className="text-ok">{fmtQty(item.received_qty, item.skus?.unit_code)}</strong></span>
@@ -197,7 +200,7 @@ function ReceiveDialog({
             </div>
           </div>
           <div>
-            <label className="label">Quantity receiving ({item.skus?.unit_code}) <span className="text-danger">*</span></label>
+            <label className="label">Quantity receiving ({item.skus?.unit_code ?? 'units'}) <span className="text-danger">*</span></label>
             <input
               className="field num text-[16px] h-11"
               inputMode="decimal"
@@ -224,14 +227,20 @@ function ReceiveDialog({
 }
 
 /* ── Create Order Dialog ──────────────────────────────────────────────────── */
-function CreateOrderDialog({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+function CreateOrderDialog({
+  onClose,
+  onDone,
+}: {
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) {
   const [supplier, setSupplier] = useState('');
   const [notes, setNotes]       = useState('');
   const [lines, setLines]       = useState<{ sku: Sku; qty: string }[]>([]);
   const [busy, setBusy]         = useState(false);
   const [err, setErr]           = useState<string | null>(null);
 
-  const addSku    = (s: Sku) => setLines((prev) => [...prev, { sku: s, qty: '' }]);
+  const addSku     = (s: Sku) => setLines((prev) => [...prev, { sku: s, qty: '' }]);
   const removeLine = (i: number) => setLines((prev) => prev.filter((_, j) => j !== i));
   const setQty     = (i: number, v: string) =>
     setLines((prev) => prev.map((l, j) => j === i ? { ...l, qty: v.replace(/[^0-9.]/g, '') } : l));
@@ -242,6 +251,8 @@ function CreateOrderDialog({ onClose, onDone }: { onClose: () => void; onDone: (
     e.preventDefault();
     if (invalid) return;
     setBusy(true); setErr(null);
+
+    // Send all items — the API will create one PO per item (no clubbing)
     const res = await fetch('/api/purchase-orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -255,7 +266,13 @@ function CreateOrderDialog({ onClose, onDone }: { onClose: () => void; onDone: (
     const json = await res.json();
     setBusy(false);
     if (!res.ok) { setErr(json.error ?? 'Something went wrong.'); return; }
-    onDone();
+
+    const created: { order_no: string }[] = json.orders ?? [];
+    const msg = created.length === 1
+      ? `Order ${created[0].order_no} placed.`
+      : `${created.length} orders placed: ${created.map((o) => o.order_no).join(', ')}`;
+
+    onDone(msg);
   };
 
   const selectedIds = lines.map((l) => l.sku.id);
@@ -290,9 +307,12 @@ function CreateOrderDialog({ onClose, onDone }: { onClose: () => void; onDone: (
 
           {lines.length > 0 && (
             <div className="rounded-lg border border-line overflow-hidden">
-              <div className="px-3 py-2 bg-subtle border-b border-line">
+              <div className="px-3 py-2 bg-subtle border-b border-line flex items-center justify-between">
                 <span className="text-[11px] font-semibold text-ink-2 uppercase tracking-wide">
-                  Order items — {lines.length} product{lines.length !== 1 ? 's' : ''}
+                  Items — {lines.length} product{lines.length !== 1 ? 's' : ''}
+                </span>
+                <span className="text-[10px] text-ink-3">
+                  Each product will get its own PO number
                 </span>
               </div>
               {lines.map((l, i) => (
@@ -329,12 +349,14 @@ function CreateOrderDialog({ onClose, onDone }: { onClose: () => void; onDone: (
 
         <div className="flex items-center justify-between px-6 py-4 border-t border-line bg-subtle rounded-b-xl shrink-0">
           <p className="text-[12px] text-ink-3">
-            {lines.length === 0 ? 'Search and add products above' : `${lines.length} item${lines.length !== 1 ? 's' : ''} · each treated as a separate line`}
+            {lines.length === 0
+              ? 'Search and add products above'
+              : `${lines.length} item${lines.length !== 1 ? 's' : ''} → ${lines.length} separate PO${lines.length !== 1 ? 's' : ''} will be created`}
           </p>
           <div className="flex gap-2">
             <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={busy || invalid}>
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Place Order</>}
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Place Order{lines.length > 1 ? 's' : ''}</>}
             </button>
           </div>
         </div>
@@ -464,15 +486,18 @@ function OrderCard({
           ) : (
             order.items.map((item) => {
               const itemRemaining = item.ordered_qty - item.received_qty;
+              const sizeName  = item.skus?.exact_size  ?? '—';
+              const brandName = item.skus?.brand_name  ?? '—';
+              const pType     = item.skus?.product_type;
               return (
                 <div key={item.id} className="flex items-center gap-3 px-4 py-3 bg-surface-2/40">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[13px] font-medium">{item.skus?.exact_size ?? '—'}</span>
-                      <span className="text-[11px] text-ink-3">{item.skus?.brand_name}</span>
-                      {item.skus?.product_type && (
+                      <span className="text-[13px] font-medium">{sizeName}</span>
+                      <span className="text-[11px] text-ink-3">{brandName}</span>
+                      {pType && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-subtle text-ink-3 font-medium">
-                          {TYPE_LABEL[item.skus.product_type]}
+                          {TYPE_LABEL[pType]}
                         </span>
                       )}
                       <StatusBadge status={item.status} />
@@ -527,6 +552,8 @@ function OrderCard({
 
 /* ── Main ─────────────────────────────────────────────────────────────────── */
 export default function PurchaseOrdersView() {
+  const { skus: catalogSkus } = useCatalog();                    // ← catalog as SKU fallback
+
   const [orders, setOrders]         = useState<Order[]>([]);
   const [loading, setLoading]       = useState(true);
   const [tab, setTab]               = useState<'in_progress' | 'fulfilled'>('in_progress');
@@ -554,15 +581,35 @@ export default function PurchaseOrdersView() {
         if (!itemMap.has(item.order_id)) itemMap.set(item.order_id, []);
         itemMap.get(item.order_id)!.push(item);
       }
+
       const hydrated: Order[] = (json.orders ?? []).map((o: Order) => ({
         ...o,
-        items: itemMap.get(o.id) ?? [],
+        items: (itemMap.get(o.id) ?? []).map((item) => {
+          // If the API already gave us SKU data, use it as-is
+          if (item.skus) return item;
+
+          // Otherwise fall back to the already-loaded catalog (avoids blank names)
+          const cat = catalogSkus.find((s) => s.id === item.sku_id);
+          if (!cat) return item;
+          return {
+            ...item,
+            skus: {
+              sku_code:      cat.sku_code,
+              exact_size:    cat.exact_size,
+              brand_name:    cat.brand_name,
+              unit_code:     cat.unit_code,
+              current_stock: cat.current_stock,
+              product_type:  cat.product_type,
+            },
+          };
+        }),
       }));
+
       setOrders(hydrated);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [catalogSkus]);                                             // ← re-enrich when catalog loads
 
   useEffect(() => { load(); }, [load]);
 
@@ -657,7 +704,7 @@ export default function PurchaseOrdersView() {
       {showCreate && (
         <CreateOrderDialog
           onClose={() => setShowCreate(false)}
-          onDone={() => { setShowCreate(false); load(); showToast('Order placed.'); }}
+          onDone={(msg) => { setShowCreate(false); load(); showToast(msg); }}
         />
       )}
 
@@ -695,8 +742,8 @@ export default function PurchaseOrdersView() {
                 {recordTarget.items.map((item) => (
                   <div key={item.id} className="flex items-center justify-between text-[12px] gap-2">
                     <div className="min-w-0">
-                      <span className="font-medium">{item.skus?.exact_size}</span>
-                      <span className="text-ink-3 ml-1.5">{item.skus?.brand_name}</span>
+                      <span className="font-medium">{item.skus?.exact_size ?? '—'}</span>
+                      <span className="text-ink-3 ml-1.5">{item.skus?.brand_name ?? '—'}</span>
                     </div>
                     <span className="num font-semibold text-ok shrink-0">
                       +{fmtQty(item.received_qty, item.skus?.unit_code)}
