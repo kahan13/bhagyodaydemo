@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import { ArrowDownLeft, ArrowUpRight, ShoppingCart, Check } from 'lucide-react';
 import { requireSession, can } from '@/lib/auth';
-import { supabaseServer } from '@/lib/supabase-server';
+import { supabaseServer, supabaseService } from '@/lib/supabase-server';
 
 import { fmtQty, fmtRelative, fmtDate } from '@/lib/format';
 import type { DashboardSummary, Movement, Sku } from '@/lib/types';
@@ -128,7 +128,7 @@ async function Transactions() {
   );
 }
 
-/* ── Purchase Orders pane (per-line-item rows) ───────────────────────────── */
+/* ── Purchase Orders pane ────────────────────────────────────────────────── */
 type POItem = {
   id: string; order_id: string; sku_id: string;
   ordered_qty: number; received_qty: number; status: string;
@@ -137,7 +137,8 @@ type POItem = {
 };
 
 async function OrdersPane() {
-  const svc = await supabaseServer();
+  // Use service role so SKU names are NEVER blank regardless of RLS policies
+  const svc = await supabaseService();
 
   const { data: rawOrders } = await svc
     .from('purchase_orders')
@@ -162,7 +163,7 @@ async function OrdersPane() {
     if (its.length > 0) {
       const skuIds = [...new Set(its.map((i) => i.sku_id))];
       const { data: skuRows } = await svc
-        .from('skus')
+        .from('v_sku_status')
         .select('id,exact_size,brand_name,unit_code,product_type')
         .in('id', skuIds);
 
@@ -176,14 +177,14 @@ async function OrdersPane() {
 
       lineItems = its.map((i) => ({
         ...i,
-        order_no:      orderMap[i.order_id]?.order_no ?? '',
+        order_no:      orderMap[i.order_id]?.order_no      ?? '',
         supplier_name: orderMap[i.order_id]?.supplier_name ?? null,
-        order_status:  orderMap[i.order_id]?.status ?? '',
-        created_at:    orderMap[i.order_id]?.created_at ?? '',
-        exact_size:    skuMap[i.sku_id]?.exact_size  ?? '—',
-        brand_name:    skuMap[i.sku_id]?.brand_name  ?? '—',
-        unit_code:     skuMap[i.sku_id]?.unit_code   ?? '',
-        product_type:  skuMap[i.sku_id]?.product_type ?? '',
+        order_status:  orderMap[i.order_id]?.status        ?? '',
+        created_at:    orderMap[i.order_id]?.created_at    ?? '',
+        exact_size:    skuMap[i.sku_id]?.exact_size        ?? '—',
+        brand_name:    skuMap[i.sku_id]?.brand_name        ?? '—',
+        unit_code:     skuMap[i.sku_id]?.unit_code         ?? '',
+        product_type:  skuMap[i.sku_id]?.product_type      ?? '',
       }));
     }
   }
@@ -288,7 +289,7 @@ async function OrdersPane() {
   );
 }
 
-/* ── Needs reordering (compact, below the two panes) ────────────────────── */
+/* ── Needs reordering ────────────────────────────────────────────────────── */
 async function LowStock() {
   const db = await supabaseServer();
   const { data } = await db

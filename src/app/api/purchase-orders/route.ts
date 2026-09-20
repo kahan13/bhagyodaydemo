@@ -30,13 +30,12 @@ export async function GET() {
 
     if (iErr) return NextResponse.json({ error: iErr.message }, { status: 500 });
 
-    // Fetch SKU details separately to avoid RLS join issues
     const skuIds = [...new Set((data ?? []).map((i: { sku_id: string }) => i.sku_id))];
     let skuMap: Record<string, { sku_code: string; exact_size: string; brand_name: string; unit_code: string; current_stock: number; product_type: string }> = {};
 
     if (skuIds.length > 0) {
       const { data: skuRows } = await svc
-        .from('skus')
+        .from('v_sku_status')
         .select('id,sku_code,exact_size,brand_name,unit_code,current_stock,product_type')
         .in('id', skuIds);
       for (const s of (skuRows ?? []) as { id: string; sku_code: string; exact_size: string; brand_name: string; unit_code: string; current_stock: number; product_type: string }[]) {
@@ -65,7 +64,7 @@ export async function POST(request: Request) {
   const action = String(body.action ?? '');
   const svc = await supabaseService();
 
-  /* ── create order ── */
+  /* ── create order: ONE PO per item, no clubbing ── */
   if (action === 'create') {
     const supplier = body.supplier ? String(body.supplier).slice(0, 200) : null;
     const notes    = body.notes    ? String(body.notes).slice(0, 500)    : null;
@@ -76,31 +75,39 @@ export async function POST(request: Request) {
     if (rawItems.length === 0)
       return NextResponse.json({ error: 'Add at least one product.' }, { status: 400 });
 
-    const { count } = await svc
+    // Fetch current PO count once, then increment for each new order
+    const { count: currentCount } = await svc
       .from('purchase_orders')
       .select('id', { count: 'exact', head: true });
-    const orderNo = `PO-${String((count ?? 0) + 1).padStart(4, '0')}`;
 
-    const { data: order, error: orderErr } = await svc
-      .from('purchase_orders')
-      .insert({ order_no: orderNo, supplier_name: supplier, notes, status: 'PLACED', created_by: session.user.id })
-      .select('id')
-      .single();
+    const createdOrders: { order_id: string; order_no: string }[] = [];
 
-    if (orderErr) return NextResponse.json({ error: orderErr.message }, { status: 400 });
+    for (let idx = 0; idx < rawItems.length; idx++) {
+      const item   = rawItems[idx];
+      const orderNo = `PO-${String((currentCount ?? 0) + createdOrders.length + 1).padStart(4, '0')}`;
 
-    const lineItems = rawItems.map((i) => ({
-      order_id:     order.id,
-      sku_id:       i.sku_id,
-      ordered_qty:  Number(i.qty),
-      received_qty: 0,
-      status:       'PENDING',
-    }));
+      const { data: order, error: orderErr } = await svc
+        .from('purchase_orders')
+        .insert({ order_no: orderNo, supplier_name: supplier, notes, status: 'PLACED', created_by: session.user.id })
+        .select('id')
+        .single();
 
-    const { error: itemsErr } = await svc.from('purchase_order_items').insert(lineItems);
-    if (itemsErr) return NextResponse.json({ error: itemsErr.message }, { status: 400 });
+      if (orderErr) return NextResponse.json({ error: orderErr.message }, { status: 400 });
 
-    return NextResponse.json({ order_id: order.id, order_no: orderNo }, { status: 201 });
+      const { error: itemsErr } = await svc.from('purchase_order_items').insert({
+        order_id:     order.id,
+        sku_id:       item.sku_id,
+        ordered_qty:  Number(item.qty),
+        received_qty: 0,
+        status:       'PENDING',
+      });
+
+      if (itemsErr) return NextResponse.json({ error: itemsErr.message }, { status: 400 });
+
+      createdOrders.push({ order_id: order.id, order_no: orderNo });
+    }
+
+    return NextResponse.json({ orders: createdOrders }, { status: 201 });
   }
 
   /* ── receive item ── */
@@ -172,7 +179,7 @@ export async function POST(request: Request) {
 
     const skuIds = items.map((i: { sku_id: string }) => i.sku_id);
     const { data: skuRows } = await svc
-      .from('skus')
+      .from('v_sku_status')
       .select('id,sku_code,unit_code')
       .in('id', skuIds);
     const skuMap: Record<string, { sku_code: string; unit_code: string }> = {};
@@ -186,7 +193,6 @@ export async function POST(request: Request) {
       .eq('id', order_id)
       .single();
 
-    // Use the user-authenticated client: record_movement checks auth.uid() internally
     const userDb = await supabaseServer();
     const errors: string[] = [];
     for (const item of items as { sku_id: string; received_qty: number }[]) {
