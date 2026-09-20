@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   LayoutDashboard, Boxes, ArrowLeftRight, FileText, Settings,
-  ShieldCheck, Menu, X, Search, ChevronDown, Users, Package, Upload, ClipboardList,
+  ShieldCheck, Menu, X, Search, ChevronDown, Users, Package, Upload, ClipboardList, ShoppingCart,
 } from 'lucide-react';
 import { ROLE_LABEL, initials } from '@/lib/format';
 import type { Permission, Session } from '@/lib/types';
@@ -19,6 +19,7 @@ const MAIN: Item[] = [
   { href: '/inventory', label: 'Inventory', icon: Boxes, needs: 'inventory.view' },
   { href: '/products', label: 'Product Master', icon: Package, needs: 'products.view' },
   { href: '/transactions', label: 'Transactions', icon: ArrowLeftRight, needs: 'transactions.view' },
+  { href: '/purchase-orders', label: 'Purchase Orders', icon: ShoppingCart, needs: 'transactions.view' },
   { href: '/production-orders', label: 'Production Orders', icon: ClipboardList, needs: 'transactions.view' },
   { href: '/reports', label: 'Reports', icon: FileText, needs: 'reports.view' },
 ];
@@ -56,7 +57,7 @@ export default function AppShell({
   }, []);
 
   const allowed = (i: Item) => !i.needs || session.permissions.includes(i.needs);
-  const active = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
+  const active  = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
 
   const Group = ({ title, items }: { title?: string; items: Item[] }) => {
     const visible = items.filter(allowed);
@@ -88,7 +89,6 @@ export default function AppShell({
 
   return (
     <div className="min-h-screen">
-      {/* --------------------------------------------------------- sidebar */}
       <aside
         className={`fixed inset-y-0 left-0 z-50 w-[228px] bg-surface border-r border-line flex flex-col
                     transition-transform duration-200 lg:translate-x-0
@@ -116,9 +116,7 @@ export default function AppShell({
           >
             <Search size={14} />
             <span>Search</span>
-            <kbd className="ml-auto text-[10px] px-1.5 py-0.5 rounded border border-line bg-subtle text-ink-3">
-              ⌘K
-            </kbd>
+            <kbd className="ml-auto text-[10px] px-1.5 py-0.5 rounded border border-line bg-subtle text-ink-3">⌘K</kbd>
           </button>
         </div>
 
@@ -126,15 +124,12 @@ export default function AppShell({
           <Group items={MAIN} />
           <Group title="Administration" items={ADMIN} />
         </div>
-
-
       </aside>
 
       {navOpen && (
         <div className="fixed inset-0 z-40 bg-ink/25 lg:hidden" onClick={() => setNavOpen(false)} aria-hidden />
       )}
 
-      {/* --------------------------------------------------------- content */}
       <div className="lg:pl-[228px] flex flex-col min-h-screen">
         <header className="sticky top-0 z-30 h-14 bg-canvas/85 backdrop-blur-md border-b border-line flex items-center gap-3 px-4 lg:px-6">
           <button className="btn btn-ghost lg:hidden h-8 w-8 p-0" onClick={() => setNavOpen(true)} aria-label="Menu">

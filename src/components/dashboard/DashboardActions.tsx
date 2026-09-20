@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, ShoppingCart } from 'lucide-react';
 import DashboardEntryDialog from '@/components/dashboard/DashboardEntryDialog';
+import Link from 'next/link';
 
 interface User { id: string; full_name: string; }
 
@@ -18,20 +19,24 @@ export default function DashboardActions({
 
   const done = () => {
     setOpen(null);
-    // Soft-refresh: reload the page's streaming sections without full navigation
     window.location.reload();
   };
 
-  if (!canWrite) return null;
-
   return (
-    <>
-      <button onClick={() => setOpen('inward')} className="btn btn-secondary">
-        <Plus size={14} /> Inward
-      </button>
-      <button onClick={() => setOpen('outward')} className="btn btn-primary">
-        <Plus size={14} /> Outward
-      </button>
+    <div className="flex flex-wrap gap-2">
+      {canWrite && (
+        <>
+          <button onClick={() => setOpen('inward')} className="btn btn-secondary">
+            <Plus size={14} /> Inward
+          </button>
+          <button onClick={() => setOpen('outward')} className="btn btn-primary">
+            <Plus size={14} /> Outward
+          </button>
+        </>
+      )}
+      <Link href="/purchase-orders" className="btn btn-secondary">
+        <ShoppingCart size={14} /> Order
+      </Link>
 
       {open && (
         <DashboardEntryDialog
@@ -43,6 +48,6 @@ export default function DashboardActions({
           onDone={done}
         />
       )}
-    </>
+    </div>
   );
 }
