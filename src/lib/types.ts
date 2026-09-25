@@ -18,6 +18,9 @@ export type PurchaseOrderStatus = 'PLACED' | 'PARTIAL' | 'FULFILLED';
 export type PurchaseOrderItemStatus = 'PENDING' | 'PARTIAL' | 'FULFILLED';
 export type ProductionOrderStatus = 'CREATED' | 'SENT' | 'IN_PROGRESS' | 'COMPLETED';
 
+export type TimeTag = '15-20 min' | '30-40 min' | '1 hour' | '2 hours';
+export type DeliveryMode = 'Hand' | 'Porter' | 'Courier' | 'Transportation';
+
 export interface AppUser {
   id: string;
   user_code: string | null;
@@ -156,10 +159,18 @@ export interface ProductionOrder {
   id: string;
   order_no: string;
   customer_name: string | null;
-  product_description: string;
+  // SKU link (new)
+  sku_id: string | null;
+  product_description: string;       // kept for display; populated from sku.display_name on create
   quantity: number | null;
   unit_code: string | null;
-  due_date: string | null;
+  // Replaced due_date with time_tag
+  time_tag: TimeTag | null;
+  // Delivery fields (new)
+  delivery_mode: DeliveryMode | null;
+  delivery_note: string | null;      // carrier / transport company name
+  // Fulfillment (new)
+  assigned_to: string | null;
   notes: string | null;
   whatsapp_number: string | null;
   whatsapp_message: string | null;
