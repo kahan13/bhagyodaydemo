@@ -88,7 +88,7 @@ function SkuCombobox({
       .order('product_type')
       .order('hier_l1')
       .order('hier_l2')
-      .then(({ data }) => {
+      .then(({ data }: { data: unknown[] | null }) => {
         setSkus((data ?? []) as unknown as Sku[]);
         setLoadingSkus(false);
       });
