@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useTransition, useEffect, useRef } from 'react';
-import { Plus, Send, CheckCircle, Clock, Loader, Pencil, X, Search, Trash2, AlertTriangle } from 'lucide-react';
+import { useState, useTransition, useEffect, useRef, useMemo } from 'react';
+import { Plus, Send, CheckCircle, Clock, Loader, Pencil, X, Search, Trash2, AlertTriangle, Calendar } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import type {
   ProductionOrder,
@@ -43,6 +43,20 @@ const STATUS_NEXT_LABEL: Partial<Record<ProductionOrderStatus, string>> = {
 
 const TIME_TAGS: TimeTag[] = ['15-20 min', '30-40 min', '1 hour', '2 hours'];
 const DELIVERY_MODES: DeliveryMode[] = ['Hand', 'Porter', 'Courier', 'Transportation'];
+
+// ─── Date formatter ───────────────────────────────────────────────────────────
+
+function formatOrderDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
 
 // ─── WhatsApp message builder ─────────────────────────────────────────────────
 
@@ -287,6 +301,42 @@ function makeEmptyForm() {
   };
 }
 
+// ─── Order search filter ──────────────────────────────────────────────────────
+
+function matchesSearch(order: ProductionOrder, q: string): boolean {
+  if (!q) return true;
+  const lower = q.toLowerCase();
+
+  const fields = [
+    order.order_no,
+    order.customer_name,
+    order.assigned_to,
+    order.delivery_mode,
+    order.delivery_note,
+    order.notes,
+    order.time_tag,
+    order.product_description,
+    STATUS_LABEL[order.status],
+    order.unit_code,
+    // Date string — searchable as "25 Sep 2026" etc.
+    formatOrderDate(order.created_at),
+  ];
+
+  if (fields.some((f) => f && f.toLowerCase().includes(lower))) return true;
+
+  // Also search across item names and SKU codes
+  if (order.items && order.items.length > 0) {
+    return order.items.some(
+      (item) =>
+        item.display_name.toLowerCase().includes(lower) ||
+        item.sku_code.toLowerCase().includes(lower) ||
+        item.unit_code.toLowerCase().includes(lower)
+    );
+  }
+
+  return false;
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ProductionOrdersView({
@@ -299,6 +349,7 @@ export default function ProductionOrdersView({
   defaultWhatsapp: string;
 }) {
   const [orders, setOrders] = useState<ProductionOrder[]>(initialOrders);
+  const [searchQuery, setSearchQuery] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(makeEmptyForm);
   const [whatsapp, setWhatsapp] = useState(defaultWhatsapp);
@@ -309,11 +360,19 @@ export default function ProductionOrdersView({
   const [deleteTarget, setDeleteTarget] = useState<ProductionOrder | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [, startTransition] = useTransition();
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const db = supabaseBrowser();
   const canCreate = session.permissions.includes('transactions.create');
 
   const needsDeliveryNote = form.delivery_mode === 'Courier' || form.delivery_mode === 'Transportation';
+
+  // ── Filtered orders (memoised) ─────────────────────────────────────────────
+
+  const filteredOrders = useMemo(
+    () => orders.filter((o) => matchesSearch(o, searchQuery)),
+    [orders, searchQuery]
+  );
 
   const previewMessage = buildMessage({
     customer_name: form.customer_name,
@@ -502,7 +561,11 @@ export default function ProductionOrdersView({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-[19px] font-semibold">Production Orders</h1>
-          <p className="text-[13px] text-ink-3 mt-0.5">{orders.length} order{orders.length !== 1 ? 's' : ''}</p>
+          <p className="text-[13px] text-ink-3 mt-0.5">
+            {searchQuery
+              ? `${filteredOrders.length} of ${orders.length} order${orders.length !== 1 ? 's' : ''}`
+              : `${orders.length} order${orders.length !== 1 ? 's' : ''}`}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-2 text-[13px]">
@@ -534,6 +597,29 @@ export default function ProductionOrdersView({
             </button>
           )}
         </div>
+      </div>
+
+      {/* ── Search Bar ─────────────────────────────────────────────────────── */}
+      <div className="relative flex items-center">
+        <Search size={15} className="absolute left-3 text-ink-3 pointer-events-none" />
+        <input
+          ref={searchInputRef}
+          type="text"
+          className="field pl-9 pr-9 w-full"
+          placeholder="Search by order no, customer, item, status, date, assigned to, delivery…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        {searchQuery && (
+          <button
+            className="absolute right-3 text-ink-3 hover:text-ink transition-colors"
+            onClick={() => { setSearchQuery(''); searchInputRef.current?.focus(); }}
+            type="button"
+            title="Clear search"
+          >
+            <X size={14} />
+          </button>
+        )}
       </div>
 
       {/* Create form */}
@@ -725,22 +811,38 @@ export default function ProductionOrdersView({
         </div>
       )}
 
-      {/* Empty state */}
+      {/* Empty state — no orders at all */}
       {orders.length === 0 && !showForm && (
         <div className="card p-10 text-center">
           <p className="text-[13px] text-ink-3">No production orders yet. Create one to get started.</p>
         </div>
       )}
 
+      {/* Empty state — search returned nothing */}
+      {orders.length > 0 && filteredOrders.length === 0 && (
+        <div className="card p-8 text-center space-y-2">
+          <Search size={20} className="mx-auto text-ink-3" />
+          <p className="text-[13px] text-ink-3">
+            No orders match <span className="font-medium text-ink">&quot;{searchQuery}&quot;</span>
+          </p>
+          <button
+            className="text-brand text-[12px] hover:underline"
+            onClick={() => setSearchQuery('')}
+          >
+            Clear search
+          </button>
+        </div>
+      )}
+
       {/* Orders list */}
       <div className="space-y-3">
-        {orders.map((order) => (
+        {filteredOrders.map((order) => (
           <div key={order.id} className="card p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
 
               {/* Left: order info */}
               <div className="min-w-0 flex-1">
-                {/* Top row: order no, status, time tag */}
+                {/* Top row: order no, status, time tag, date */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[11px] font-mono text-ink-3">{order.order_no}</span>
                   <span className={`badge ${STATUS_BADGE[order.status]}`}>{STATUS_LABEL[order.status]}</span>
@@ -749,6 +851,11 @@ export default function ProductionOrdersView({
                       ⏱ {order.time_tag}
                     </span>
                   )}
+                  {/* ── Created date ── */}
+                  <span className="flex items-center gap-1 text-[11px] text-ink-3">
+                    <Calendar size={11} className="shrink-0" />
+                    {formatOrderDate(order.created_at)}
+                  </span>
                 </div>
 
                 {/* Meta row */}
