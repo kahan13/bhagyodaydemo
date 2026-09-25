@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useTransition, useEffect, useRef, useMemo } from 'react';
-import { Plus, Send, CheckCircle, Clock, Loader, Pencil, X, Search, Trash2, AlertTriangle, Calendar } from 'lucide-react';
+import { useState, useTransition, useEffect, useRef } from 'react';
+import { Plus, Send, CheckCircle, Clock, Loader, Pencil, X, Search, Trash2, AlertTriangle } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import type {
   ProductionOrder,
@@ -44,20 +44,6 @@ const STATUS_NEXT_LABEL: Partial<Record<ProductionOrderStatus, string>> = {
 const TIME_TAGS: TimeTag[] = ['15-20 min', '30-40 min', '1 hour', '2 hours'];
 const DELIVERY_MODES: DeliveryMode[] = ['Hand', 'Porter', 'Courier', 'Transportation'];
 
-// ─── Date formatter ───────────────────────────────────────────────────────────
-
-function formatOrderDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-  });
-}
-
 // ─── WhatsApp message builder ─────────────────────────────────────────────────
 
 function buildMessage(fields: {
@@ -89,36 +75,101 @@ function buildMessage(fields: {
   return lines.join('\n');
 }
 
-// ─── Shared SKU cache (load once for the whole session) ──────────────────────
+// ─── ATP record (from v_sku_atp) ─────────────────────────────────────────────
 
-let _skuCache: Sku[] | null = null;
-let _skuInflight: Promise<Sku[]> | null = null;
+interface SkuAtp {
+  sku_id: string;
+  current_stock: number;
+  reserved_qty: number;
+  atp_stock: number;
+}
 
-function loadSkus(): Promise<Sku[]> {
+// ─── Extended SKU type with ATP fields ───────────────────────────────────────
+
+type SkuWithAtp = Sku & {
+  atp_stock: number;
+  reserved_qty: number;
+};
+
+// ─── Shared SKU + ATP cache (load once per session) ──────────────────────────
+
+let _skuCache: SkuWithAtp[] | null = null;
+let _skuInflight: Promise<SkuWithAtp[]> | null = null;
+
+function loadSkus(): Promise<SkuWithAtp[]> {
   if (_skuCache) return Promise.resolve(_skuCache);
   if (_skuInflight) return _skuInflight;
 
-  const p: Promise<Sku[]> = supabaseBrowser()
-    .from('v_sku_status')
-    .select(
-      'id,sku_code,display_name,exact_size,brand_name,family_name,unit_code,product_type,' +
-      'hier_l1,hier_l2,hier_l3,search_text,brand_code,family_code,profile_group,belt_form,' +
-      'construction,standard,pitch_mm,pitch_length_mm,width_mm,teeth,nominal_length,' +
-      'length_designation,rack_location,opening_stock,current_stock,min_stock_level,' +
-      'supplier_moq,reorder_quantity,supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty'
-    )
-    .eq('is_active', true)
-    .order('product_type')
-    .order('hier_l1')
-    .order('hier_l2')
-    .then(({ data }: { data: unknown[] | null }): Sku[] => {
-      _skuCache = (data ?? []) as unknown as Sku[];
-      _skuInflight = null;
-      return _skuCache;
-    });
+  const p: Promise<SkuWithAtp[]> = Promise.all([
+    supabaseBrowser()
+      .from('v_sku_status')
+      .select(
+        'id,sku_code,display_name,exact_size,brand_name,family_name,unit_code,product_type,' +
+        'hier_l1,hier_l2,hier_l3,search_text,brand_code,family_code,profile_group,belt_form,' +
+        'construction,standard,pitch_mm,pitch_length_mm,width_mm,teeth,nominal_length,' +
+        'length_designation,rack_location,opening_stock,current_stock,min_stock_level,' +
+        'supplier_moq,reorder_quantity,supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty'
+      )
+      .eq('is_active', true)
+      .order('product_type')
+      .order('hier_l1')
+      .order('hier_l2'),
+    supabaseBrowser()
+      .from('v_sku_atp')
+      .select('sku_id,current_stock,reserved_qty,atp_stock'),
+  ]).then(([skuRes, atpRes]) => {
+    const skuData = (skuRes.data ?? []) as unknown as Sku[];
+    const atpData = (atpRes.data ?? []) as SkuAtp[];
+
+    const atpMap: Record<string, SkuAtp> = {};
+    for (const row of atpData) atpMap[row.sku_id] = row;
+
+    _skuCache = skuData.map((s) => ({
+      ...s,
+      atp_stock: atpMap[s.id]?.atp_stock ?? s.current_stock,
+      reserved_qty: atpMap[s.id]?.reserved_qty ?? 0,
+    }));
+    _skuInflight = null;
+    return _skuCache;
+  });
 
   _skuInflight = p;
   return p;
+}
+
+// ─── Invalidate SKU cache (call after creating an order so ATP refreshes) ────
+
+function invalidateSkuCache() {
+  _skuCache = null;
+  _skuInflight = null;
+}
+
+// ─── ATP badge helper ─────────────────────────────────────────────────────────
+
+function AtpBadge({ sku, qty }: { sku: SkuWithAtp; qty: string }) {
+  const atp = sku.atp_stock;
+  const entered = parseFloat(qty) || 0;
+  const afterAlloc = atp - entered;
+
+  let colour: string;
+  if (atp <= 0) colour = 'text-danger font-semibold';
+  else if (atp < (sku.min_stock_level ?? 0)) colour = 'text-warn font-semibold';
+  else colour = 'text-ok';
+
+  return (
+    <p className="text-[10px] text-center mt-0.5 leading-tight">
+      <span className="text-ink-3">{sku.unit_code}</span>
+      {' · '}
+      <span className={colour} title={`Ledger stock: ${sku.current_stock} | Reserved: ${sku.reserved_qty}`}>
+        {atp} avail
+      </span>
+      {entered > 0 && (
+        <span className={afterAlloc < 0 ? ' text-danger font-semibold' : ' text-ink-3'}>
+          {' → '}{afterAlloc < 0 ? '⚠ ' : ''}{afterAlloc}
+        </span>
+      )}
+    </p>
+  );
 }
 
 // ─── SKU Search Combobox ──────────────────────────────────────────────────────
@@ -128,11 +179,11 @@ function SkuCombobox({
   onChange,
   placeholder = 'Search SKU code, name, size…',
 }: {
-  value: { sku: Sku | null; query: string };
-  onChange: (val: { sku: Sku | null; query: string }) => void;
+  value: { sku: SkuWithAtp | null; query: string };
+  onChange: (val: { sku: SkuWithAtp | null; query: string }) => void;
   placeholder?: string;
 }) {
-  const [skus, setSkus] = useState<Sku[]>(_skuCache ?? []);
+  const [skus, setSkus] = useState<SkuWithAtp[]>(_skuCache ?? []);
   const [loadingSkus, setLoadingSkus] = useState(!_skuCache);
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -166,7 +217,7 @@ function SkuCombobox({
         (s.search_text ?? '').toLowerCase().includes(q)
       ).slice(0, 40);
 
-  function selectSku(sku: Sku) {
+  function selectSku(sku: SkuWithAtp) {
     onChange({ sku, query: `${sku.sku_code} – ${sku.display_name}` });
     setOpen(false);
   }
@@ -201,22 +252,35 @@ function SkuCombobox({
           ref={dropdownRef}
           className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg max-h-56 overflow-y-auto"
         >
-          {filtered.map((sku) => (
-            <button
-              key={sku.id}
-              className="w-full text-left px-3 py-2 hover:bg-subtle transition-colors flex items-center justify-between gap-2"
-              onClick={() => selectSku(sku)}
-              type="button"
-            >
-              <div className="min-w-0">
-                <div className="text-[13px] font-medium truncate">
-                  <span className="font-mono text-brand">{sku.sku_code}</span>{' – '}{sku.display_name}
+          {filtered.map((sku) => {
+            const atpColour =
+              sku.atp_stock <= 0
+                ? 'text-danger'
+                : sku.atp_stock < (sku.min_stock_level ?? 0)
+                ? 'text-warn'
+                : 'text-ok';
+            return (
+              <button
+                key={sku.id}
+                className="w-full text-left px-3 py-2 hover:bg-subtle transition-colors flex items-center justify-between gap-2"
+                onClick={() => selectSku(sku)}
+                type="button"
+              >
+                <div className="min-w-0">
+                  <div className="text-[13px] font-medium truncate">
+                    <span className="font-mono text-brand">{sku.sku_code}</span>{' – '}{sku.display_name}
+                  </div>
+                  <div className="text-[11px] text-ink-3 truncate">{sku.brand_name} · {sku.exact_size}</div>
                 </div>
-                <div className="text-[11px] text-ink-3 truncate">{sku.brand_name} · {sku.exact_size}</div>
-              </div>
-              <span className="text-[11px] text-ink-3 shrink-0">{sku.unit_code}</span>
-            </button>
-          ))}
+                <div className="text-right shrink-0">
+                  <div className="text-[11px] text-ink-3">{sku.unit_code}</div>
+                  <div className={`text-[11px] font-medium ${atpColour}`}>
+                    {sku.atp_stock} avail
+                  </div>
+                </div>
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -279,7 +343,7 @@ function DeleteConfirmModal({
 
 interface LineItem {
   id: string; // local key only
-  skuSearch: { sku: Sku | null; query: string };
+  skuSearch: { sku: SkuWithAtp | null; query: string };
   quantity: string;
 }
 
@@ -301,42 +365,6 @@ function makeEmptyForm() {
   };
 }
 
-// ─── Order search filter ──────────────────────────────────────────────────────
-
-function matchesSearch(order: ProductionOrder, q: string): boolean {
-  if (!q) return true;
-  const lower = q.toLowerCase();
-
-  const fields = [
-    order.order_no,
-    order.customer_name,
-    order.assigned_to,
-    order.delivery_mode,
-    order.delivery_note,
-    order.notes,
-    order.time_tag,
-    order.product_description,
-    STATUS_LABEL[order.status],
-    order.unit_code,
-    // Date string — searchable as "25 Sep 2026" etc.
-    formatOrderDate(order.created_at),
-  ];
-
-  if (fields.some((f) => f && f.toLowerCase().includes(lower))) return true;
-
-  // Also search across item names and SKU codes
-  if (order.items && order.items.length > 0) {
-    return order.items.some(
-      (item) =>
-        item.display_name.toLowerCase().includes(lower) ||
-        item.sku_code.toLowerCase().includes(lower) ||
-        item.unit_code.toLowerCase().includes(lower)
-    );
-  }
-
-  return false;
-}
-
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ProductionOrdersView({
@@ -349,7 +377,6 @@ export default function ProductionOrdersView({
   defaultWhatsapp: string;
 }) {
   const [orders, setOrders] = useState<ProductionOrder[]>(initialOrders);
-  const [searchQuery, setSearchQuery] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(makeEmptyForm);
   const [whatsapp, setWhatsapp] = useState(defaultWhatsapp);
@@ -360,19 +387,11 @@ export default function ProductionOrdersView({
   const [deleteTarget, setDeleteTarget] = useState<ProductionOrder | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [, startTransition] = useTransition();
-  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const db = supabaseBrowser();
   const canCreate = session.permissions.includes('transactions.create');
 
   const needsDeliveryNote = form.delivery_mode === 'Courier' || form.delivery_mode === 'Transportation';
-
-  // ── Filtered orders (memoised) ─────────────────────────────────────────────
-
-  const filteredOrders = useMemo(
-    () => orders.filter((o) => matchesSearch(o, searchQuery)),
-    [orders, searchQuery]
-  );
 
   const previewMessage = buildMessage({
     customer_name: form.customer_name,
@@ -423,6 +442,19 @@ export default function ProductionOrdersView({
     const validItems = form.items.filter((li) => li.skuSearch.sku);
     if (validItems.length === 0) { setError('Please add at least one SKU item.'); return; }
 
+    // Warn if any item would over-commit ATP (don't block—just warn)
+    const overCommitted = validItems.filter((li) => {
+      const qty = parseFloat(li.quantity) || 0;
+      return qty > 0 && li.skuSearch.sku && qty > li.skuSearch.sku.atp_stock;
+    });
+    if (overCommitted.length > 0) {
+      const names = overCommitted.map((li) => li.skuSearch.sku!.sku_code).join(', ');
+      const confirmed = window.confirm(
+        `⚠ The quantity entered for ${names} exceeds available stock (ATP).\n\nProceed anyway?`
+      );
+      if (!confirmed) return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -461,6 +493,7 @@ export default function ProductionOrdersView({
     const orderId = (created as ProductionOrder).id;
 
     // 3. Insert line items
+    // reserved_qty is set automatically by the DB trigger (= quantity).
     const itemRows = validItems.map((li) => ({
       order_id: orderId,
       sku_id: li.skuSearch.sku!.id,
@@ -487,6 +520,9 @@ export default function ProductionOrdersView({
     setOrders((prev) => [newOrder, ...prev]);
     setForm(makeEmptyForm());
     setShowForm(false);
+
+    // Invalidate ATP cache so the next order creation shows fresh numbers
+    invalidateSkuCache();
   }
 
   // ── Delete order ───────────────────────────────────────────────────────────
@@ -502,6 +538,8 @@ export default function ProductionOrdersView({
     if (err) { setError(err.message); setDeleteTarget(null); return; }
     setOrders((prev) => prev.filter((o) => o.id !== deleteTarget.id));
     setDeleteTarget(null);
+    // Deleted order releases its reservations; refresh ATP cache
+    invalidateSkuCache();
   }
 
   // ── Status advance ─────────────────────────────────────────────────────────
@@ -519,6 +557,8 @@ export default function ProductionOrdersView({
       setOrders((prev) => prev.map((o) =>
         o.id === order.id ? { ...(data as ProductionOrder), items: o.items } : o
       ));
+      // If just completed, ATP is freed by DB trigger—refresh cache
+      if (next === 'COMPLETED') invalidateSkuCache();
     }
   }
 
@@ -561,11 +601,7 @@ export default function ProductionOrdersView({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-[19px] font-semibold">Production Orders</h1>
-          <p className="text-[13px] text-ink-3 mt-0.5">
-            {searchQuery
-              ? `${filteredOrders.length} of ${orders.length} order${orders.length !== 1 ? 's' : ''}`
-              : `${orders.length} order${orders.length !== 1 ? 's' : ''}`}
-          </p>
+          <p className="text-[13px] text-ink-3 mt-0.5">{orders.length} order{orders.length !== 1 ? 's' : ''}</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-2 text-[13px]">
@@ -597,29 +633,6 @@ export default function ProductionOrdersView({
             </button>
           )}
         </div>
-      </div>
-
-      {/* ── Search Bar ─────────────────────────────────────────────────────── */}
-      <div className="relative flex items-center">
-        <Search size={15} className="absolute left-3 text-ink-3 pointer-events-none" />
-        <input
-          ref={searchInputRef}
-          type="text"
-          className="field pl-9 pr-9 w-full"
-          placeholder="Search by order no, customer, item, status, date, assigned to, delivery…"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
-        {searchQuery && (
-          <button
-            className="absolute right-3 text-ink-3 hover:text-ink transition-colors"
-            onClick={() => { setSearchQuery(''); searchInputRef.current?.focus(); }}
-            type="button"
-            title="Clear search"
-          >
-            <X size={14} />
-          </button>
-        )}
       </div>
 
       {/* Create form */}
@@ -685,15 +698,24 @@ export default function ProductionOrdersView({
                     />
                     {li.skuSearch.sku && (
                       <p className="text-[11px] text-ink-3 mt-0.5 pl-0.5">
-                        {li.skuSearch.sku.brand_name} · {li.skuSearch.sku.exact_size} · {li.skuSearch.sku.unit_code}
+                        {li.skuSearch.sku.brand_name} · {li.skuSearch.sku.exact_size}
+                        {li.skuSearch.sku.reserved_qty > 0 && (
+                          <span className="text-warn ml-1">
+                            · {li.skuSearch.sku.reserved_qty} reserved
+                          </span>
+                        )}
                       </p>
                     )}
                   </div>
 
-                  {/* Quantity */}
+                  {/* Quantity + ATP */}
                   <div className="w-24 shrink-0">
                     <input
-                      className="field text-center"
+                      className={`field text-center ${
+                        li.skuSearch.sku && parseFloat(li.quantity) > li.skuSearch.sku.atp_stock
+                          ? 'border-danger focus:ring-danger/30'
+                          : ''
+                      }`}
                       type="number"
                       min="0"
                       placeholder="Qty"
@@ -701,7 +723,7 @@ export default function ProductionOrdersView({
                       onChange={(e) => updateItem(li.id, { quantity: e.target.value })}
                     />
                     {li.skuSearch.sku && (
-                      <p className="text-[10px] text-ink-3 text-center mt-0.5">{li.skuSearch.sku.unit_code}</p>
+                      <AtpBadge sku={li.skuSearch.sku} qty={li.quantity} />
                     )}
                   </div>
 
@@ -811,38 +833,22 @@ export default function ProductionOrdersView({
         </div>
       )}
 
-      {/* Empty state — no orders at all */}
+      {/* Empty state */}
       {orders.length === 0 && !showForm && (
         <div className="card p-10 text-center">
           <p className="text-[13px] text-ink-3">No production orders yet. Create one to get started.</p>
         </div>
       )}
 
-      {/* Empty state — search returned nothing */}
-      {orders.length > 0 && filteredOrders.length === 0 && (
-        <div className="card p-8 text-center space-y-2">
-          <Search size={20} className="mx-auto text-ink-3" />
-          <p className="text-[13px] text-ink-3">
-            No orders match <span className="font-medium text-ink">&quot;{searchQuery}&quot;</span>
-          </p>
-          <button
-            className="text-brand text-[12px] hover:underline"
-            onClick={() => setSearchQuery('')}
-          >
-            Clear search
-          </button>
-        </div>
-      )}
-
       {/* Orders list */}
       <div className="space-y-3">
-        {filteredOrders.map((order) => (
+        {orders.map((order) => (
           <div key={order.id} className="card p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
 
               {/* Left: order info */}
               <div className="min-w-0 flex-1">
-                {/* Top row: order no, status, time tag, date */}
+                {/* Top row: order no, status, time tag */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[11px] font-mono text-ink-3">{order.order_no}</span>
                   <span className={`badge ${STATUS_BADGE[order.status]}`}>{STATUS_LABEL[order.status]}</span>
@@ -851,11 +857,6 @@ export default function ProductionOrdersView({
                       ⏱ {order.time_tag}
                     </span>
                   )}
-                  {/* ── Created date ── */}
-                  <span className="flex items-center gap-1 text-[11px] text-ink-3">
-                    <Calendar size={11} className="shrink-0" />
-                    {formatOrderDate(order.created_at)}
-                  </span>
                 </div>
 
                 {/* Meta row */}
