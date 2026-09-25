@@ -80,10 +80,11 @@ function buildMessage(fields: {
 let _skuCache: Sku[] | null = null;
 let _skuInflight: Promise<Sku[]> | null = null;
 
-async function loadSkus(): Promise<Sku[]> {
-  if (_skuCache) return _skuCache;
+function loadSkus(): Promise<Sku[]> {
+  if (_skuCache) return Promise.resolve(_skuCache);
   if (_skuInflight) return _skuInflight;
-  _skuInflight = supabaseBrowser()
+
+  const p: Promise<Sku[]> = supabaseBrowser()
     .from('v_sku_status')
     .select(
       'id,sku_code,display_name,exact_size,brand_name,family_name,unit_code,product_type,' +
@@ -96,12 +97,14 @@ async function loadSkus(): Promise<Sku[]> {
     .order('product_type')
     .order('hier_l1')
     .order('hier_l2')
-    .then(({ data }: { data: unknown[] | null }) => {
+    .then(({ data }: { data: unknown[] | null }): Sku[] => {
       _skuCache = (data ?? []) as unknown as Sku[];
       _skuInflight = null;
       return _skuCache;
     });
-  return _skuInflight;
+
+  _skuInflight = p;
+  return p;
 }
 
 // ─── SKU Search Combobox ──────────────────────────────────────────────────────
