@@ -1,11 +1,19 @@
 'use client';
 
 import { useState, useTransition, useEffect, useRef } from 'react';
-import { Plus, Send, CheckCircle, Clock, Loader, Pencil, X, Search, ChevronDown } from 'lucide-react';
+import { Plus, Send, CheckCircle, Clock, Loader, Pencil, X, Search, Trash2, AlertTriangle } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
-import type { ProductionOrder, ProductionOrderStatus, Session, Sku, TimeTag, DeliveryMode } from '@/lib/types';
+import type {
+  ProductionOrder,
+  ProductionOrderItem,
+  ProductionOrderStatus,
+  Session,
+  Sku,
+  TimeTag,
+  DeliveryMode,
+} from '@/lib/types';
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const STATUS_LABEL: Record<ProductionOrderStatus, string> = {
   CREATED: 'Created',
@@ -34,33 +42,66 @@ const STATUS_NEXT_LABEL: Partial<Record<ProductionOrderStatus, string>> = {
 };
 
 const TIME_TAGS: TimeTag[] = ['15-20 min', '30-40 min', '1 hour', '2 hours'];
-
 const DELIVERY_MODES: DeliveryMode[] = ['Hand', 'Porter', 'Courier', 'Transportation'];
 
 // ─── WhatsApp message builder ─────────────────────────────────────────────────
 
 function buildMessage(fields: {
   customer_name: string;
-  product_description: string;
-  quantity: string;
-  unit_code: string;
+  items: Array<{ display_name: string; quantity: string; unit_code: string }>;
   time_tag: string;
   delivery_mode: string;
   delivery_note: string;
   assigned_to: string;
   notes: string;
 }) {
+  const itemLines = fields.items
+    .filter((i) => i.display_name)
+    .map((i, idx) =>
+      `  ${idx + 1}. ${i.display_name}${i.quantity ? ` × ${i.quantity} ${i.unit_code}`.trimEnd() : ''}`
+    );
+
   const lines = [
     `*Production Order*`,
     fields.customer_name ? `Customer: ${fields.customer_name}` : null,
-    `Product: ${fields.product_description}`,
-    fields.quantity ? `Quantity: ${fields.quantity} ${fields.unit_code}`.trim() : null,
+    itemLines.length > 0 ? `Items:\n${itemLines.join('\n')}` : null,
     fields.time_tag ? `Time: ${fields.time_tag}` : null,
-    fields.delivery_mode ? `Delivery: ${fields.delivery_mode}${fields.delivery_note ? ` (${fields.delivery_note})` : ''}` : null,
+    fields.delivery_mode
+      ? `Delivery: ${fields.delivery_mode}${fields.delivery_note ? ` (${fields.delivery_note})` : ''}`
+      : null,
     fields.assigned_to ? `Assigned to: ${fields.assigned_to}` : null,
     fields.notes ? `Notes: ${fields.notes}` : null,
   ].filter(Boolean);
   return lines.join('\n');
+}
+
+// ─── Shared SKU cache (load once for the whole session) ──────────────────────
+
+let _skuCache: Sku[] | null = null;
+let _skuInflight: Promise<Sku[]> | null = null;
+
+async function loadSkus(): Promise<Sku[]> {
+  if (_skuCache) return _skuCache;
+  if (_skuInflight) return _skuInflight;
+  _skuInflight = supabaseBrowser()
+    .from('v_sku_status')
+    .select(
+      'id,sku_code,display_name,exact_size,brand_name,family_name,unit_code,product_type,' +
+      'hier_l1,hier_l2,hier_l3,search_text,brand_code,family_code,profile_group,belt_form,' +
+      'construction,standard,pitch_mm,pitch_length_mm,width_mm,teeth,nominal_length,' +
+      'length_designation,rack_location,opening_stock,current_stock,min_stock_level,' +
+      'supplier_moq,reorder_quantity,supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty'
+    )
+    .eq('is_active', true)
+    .order('product_type')
+    .order('hier_l1')
+    .order('hier_l2')
+    .then(({ data }: { data: unknown[] | null }) => {
+      _skuCache = (data ?? []) as unknown as Sku[];
+      _skuInflight = null;
+      return _skuCache;
+    });
+  return _skuInflight;
 }
 
 // ─── SKU Search Combobox ──────────────────────────────────────────────────────
@@ -68,43 +109,30 @@ function buildMessage(fields: {
 function SkuCombobox({
   value,
   onChange,
+  placeholder = 'Search SKU code, name, size…',
 }: {
   value: { sku: Sku | null; query: string };
   onChange: (val: { sku: Sku | null; query: string }) => void;
+  placeholder?: string;
 }) {
-  const [skus, setSkus] = useState<Sku[]>([]);
-  const [loadingSkus, setLoadingSkus] = useState(false);
+  const [skus, setSkus] = useState<Sku[]>(_skuCache ?? []);
+  const [loadingSkus, setLoadingSkus] = useState(!_skuCache);
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Load SKUs once on mount
   useEffect(() => {
+    if (_skuCache) { setSkus(_skuCache); setLoadingSkus(false); return; }
     setLoadingSkus(true);
-    supabaseBrowser()
-      .from('v_sku_status')
-      .select('id,sku_code,display_name,exact_size,brand_name,family_name,unit_code,product_type,hier_l1,hier_l2,hier_l3,search_text,brand_code,family_code,profile_group,belt_form,construction,standard,pitch_mm,pitch_length_mm,width_mm,teeth,nominal_length,length_designation,rack_location,opening_stock,current_stock,min_stock_level,supplier_moq,reorder_quantity,supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty')
-      .eq('is_active', true)
-      .order('product_type')
-      .order('hier_l1')
-      .order('hier_l2')
-      .then(({ data }: { data: unknown[] | null }) => {
-        setSkus((data ?? []) as unknown as Sku[]);
-        setLoadingSkus(false);
-      });
+    loadSkus().then((s) => { setSkus(s); setLoadingSkus(false); });
   }, []);
 
-  // Close on outside click
   useEffect(() => {
     function handler(e: MouseEvent) {
       if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(e.target as Node) &&
-        inputRef.current &&
-        !inputRef.current.contains(e.target as Node)
-      ) {
-        setOpen(false);
-      }
+        dropdownRef.current && !dropdownRef.current.contains(e.target as Node) &&
+        inputRef.current && !inputRef.current.contains(e.target as Node)
+      ) setOpen(false);
     }
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -113,25 +141,17 @@ function SkuCombobox({
   const q = value.query.toLowerCase();
   const filtered = q.length < 1
     ? skus.slice(0, 40)
-    : skus
-        .filter((s) =>
-          s.sku_code.toLowerCase().includes(q) ||
-          s.display_name.toLowerCase().includes(q) ||
-          s.exact_size.toLowerCase().includes(q) ||
-          s.brand_name.toLowerCase().includes(q) ||
-          (s.search_text ?? '').toLowerCase().includes(q)
-        )
-        .slice(0, 40);
+    : skus.filter((s) =>
+        s.sku_code.toLowerCase().includes(q) ||
+        s.display_name.toLowerCase().includes(q) ||
+        s.exact_size.toLowerCase().includes(q) ||
+        s.brand_name.toLowerCase().includes(q) ||
+        (s.search_text ?? '').toLowerCase().includes(q)
+      ).slice(0, 40);
 
   function selectSku(sku: Sku) {
     onChange({ sku, query: `${sku.sku_code} – ${sku.display_name}` });
     setOpen(false);
-  }
-
-  function clearSku() {
-    onChange({ sku: null, query: '' });
-    inputRef.current?.focus();
-    setOpen(true);
   }
 
   return (
@@ -141,19 +161,16 @@ function SkuCombobox({
         <input
           ref={inputRef}
           className="field pl-7 pr-7"
-          placeholder={loadingSkus ? 'Loading SKUs…' : 'Search SKU code, name, size…'}
+          placeholder={loadingSkus ? 'Loading SKUs…' : placeholder}
           value={value.query}
-          onChange={(e) => {
-            onChange({ sku: null, query: e.target.value });
-            setOpen(true);
-          }}
+          onChange={(e) => { onChange({ sku: null, query: e.target.value }); setOpen(true); }}
           onFocus={() => setOpen(true)}
           autoComplete="off"
         />
         {value.query && (
           <button
             className="absolute right-2 text-ink-3 hover:text-ink"
-            onClick={clearSku}
+            onClick={() => { onChange({ sku: null, query: '' }); inputRef.current?.focus(); setOpen(true); }}
             tabIndex={-1}
             type="button"
           >
@@ -165,7 +182,7 @@ function SkuCombobox({
       {open && filtered.length > 0 && (
         <div
           ref={dropdownRef}
-          className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg max-h-64 overflow-y-auto"
+          className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg max-h-56 overflow-y-auto"
         >
           {filtered.map((sku) => (
             <button
@@ -176,13 +193,9 @@ function SkuCombobox({
             >
               <div className="min-w-0">
                 <div className="text-[13px] font-medium truncate">
-                  <span className="font-mono text-brand">{sku.sku_code}</span>
-                  {' – '}
-                  {sku.display_name}
+                  <span className="font-mono text-brand">{sku.sku_code}</span>{' – '}{sku.display_name}
                 </div>
-                <div className="text-[11px] text-ink-3 truncate">
-                  {sku.brand_name} · {sku.exact_size}
-                </div>
+                <div className="text-[11px] text-ink-3 truncate">{sku.brand_name} · {sku.exact_size}</div>
               </div>
               <span className="text-[11px] text-ink-3 shrink-0">{sku.unit_code}</span>
             </button>
@@ -195,26 +208,81 @@ function SkuCombobox({
           ref={dropdownRef}
           className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg px-3 py-4 text-center text-[12px] text-ink-3"
         >
-          No SKUs match "{value.query}"
+          No SKUs match &quot;{value.query}&quot;
         </div>
       )}
     </div>
   );
 }
 
+// ─── Delete Confirm Modal ─────────────────────────────────────────────────────
+
+function DeleteConfirmModal({
+  orderNo,
+  onConfirm,
+  onCancel,
+  deleting,
+}: {
+  orderNo: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  deleting: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-surface rounded-xl border border-line shadow-xl p-6 max-w-sm w-full space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 shrink-0 rounded-full bg-danger-soft p-2">
+            <AlertTriangle size={18} className="text-danger" />
+          </div>
+          <div>
+            <h3 className="text-[15px] font-semibold">Delete Order {orderNo}?</h3>
+            <p className="text-[13px] text-ink-3 mt-1">
+              This will permanently delete the order and all its items. This cannot be undone.
+            </p>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button className="btn btn-secondary" onClick={onCancel} disabled={deleting}>Cancel</button>
+          <button
+            className="btn bg-danger text-white hover:bg-danger/90 border-danger"
+            onClick={onConfirm}
+            disabled={deleting}
+          >
+            {deleting ? <Loader size={14} className="animate-spin" /> : <Trash2 size={14} />}
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Line item row type ───────────────────────────────────────────────────────
+
+interface LineItem {
+  id: string; // local key only
+  skuSearch: { sku: Sku | null; query: string };
+  quantity: string;
+}
+
+function makeLineItem(): LineItem {
+  return { id: Math.random().toString(36).slice(2), skuSearch: { sku: null, query: '' }, quantity: '' };
+}
+
 // ─── Empty form ───────────────────────────────────────────────────────────────
 
-const EMPTY_FORM = {
-  customer_name: '',
-  skuSearch: { sku: null as Sku | null, query: '' },
-  quantity: '',
-  unit_code: 'PCS',
-  time_tag: '' as TimeTag | '',
-  delivery_mode: '' as DeliveryMode | '',
-  delivery_note: '',
-  assigned_to: '',
-  notes: '',
-};
+function makeEmptyForm() {
+  return {
+    customer_name: '',
+    items: [makeLineItem()],
+    time_tag: '' as TimeTag | '',
+    delivery_mode: '' as DeliveryMode | '',
+    delivery_note: '',
+    assigned_to: '',
+    notes: '',
+  };
+}
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -229,26 +297,28 @@ export default function ProductionOrdersView({
 }) {
   const [orders, setOrders] = useState<ProductionOrder[]>(initialOrders);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [form, setForm] = useState(makeEmptyForm);
   const [whatsapp, setWhatsapp] = useState(defaultWhatsapp);
   const [editingWhatsapp, setEditingWhatsapp] = useState(false);
   const [whatsappDraft, setWhatsappDraft] = useState(defaultWhatsapp);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ProductionOrder | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [, startTransition] = useTransition();
 
   const db = supabaseBrowser();
   const canCreate = session.permissions.includes('transactions.create');
 
-  const selectedSku = form.skuSearch.sku;
-  const productDescription = selectedSku?.display_name ?? '';
-  const unitCode = selectedSku?.unit_code ?? form.unit_code;
+  const needsDeliveryNote = form.delivery_mode === 'Courier' || form.delivery_mode === 'Transportation';
 
   const previewMessage = buildMessage({
     customer_name: form.customer_name,
-    product_description: productDescription,
-    quantity: form.quantity,
-    unit_code: unitCode,
+    items: form.items.map((li) => ({
+      display_name: li.skuSearch.sku?.display_name ?? '',
+      quantity: li.quantity,
+      unit_code: li.skuSearch.sku?.unit_code ?? '',
+    })),
     time_tag: form.time_tag,
     delivery_mode: form.delivery_mode,
     delivery_note: form.delivery_note,
@@ -256,8 +326,22 @@ export default function ProductionOrdersView({
     notes: form.notes,
   });
 
-  const needsDeliveryNote =
-    form.delivery_mode === 'Courier' || form.delivery_mode === 'Transportation';
+  // ── Line item helpers ──────────────────────────────────────────────────────
+
+  function updateItem(id: string, patch: Partial<LineItem>) {
+    setForm((f) => ({ ...f, items: f.items.map((li) => li.id === id ? { ...li, ...patch } : li) }));
+  }
+
+  function addItem() {
+    setForm((f) => ({ ...f, items: [...f.items, makeLineItem()] }));
+  }
+
+  function removeItem(id: string) {
+    setForm((f) => ({
+      ...f,
+      items: f.items.length > 1 ? f.items.filter((li) => li.id !== id) : f.items,
+    }));
+  }
 
   // ── WhatsApp settings ──────────────────────────────────────────────────────
 
@@ -274,24 +358,29 @@ export default function ProductionOrdersView({
   // ── Create order ───────────────────────────────────────────────────────────
 
   async function handleCreate() {
-    if (!selectedSku) { setError('Please select a SKU from the list.'); return; }
+    const validItems = form.items.filter((li) => li.skuSearch.sku);
+    if (validItems.length === 0) { setError('Please add at least one SKU item.'); return; }
+
     setSaving(true);
     setError(null);
 
-    // Get daily-reset order number from DB function
+    // 1. Get daily-reset order number
     const { data: noData, error: noErr } = await db.rpc('next_production_order_no');
     if (noErr) { setError(noErr.message); setSaving(false); return; }
     const order_no = noData as string;
 
+    // Build summary description from items for legacy field
+    const product_description = validItems
+      .map((li) => li.skuSearch.sku!.display_name)
+      .join(', ');
+
+    // 2. Insert the order header
     const { data: created, error: err } = await db
       .from('production_orders')
       .insert({
         order_no,
         customer_name: form.customer_name || null,
-        sku_id: selectedSku.id,
-        product_description: selectedSku.display_name,
-        quantity: form.quantity ? Number(form.quantity) : null,
-        unit_code: unitCode || null,
+        product_description,
         time_tag: form.time_tag || null,
         delivery_mode: form.delivery_mode || null,
         delivery_note: needsDeliveryNote ? (form.delivery_note || null) : null,
@@ -304,13 +393,53 @@ export default function ProductionOrdersView({
       .select('*')
       .single();
 
+    if (err) { setError(err.message); setSaving(false); return; }
+    if (!created) { setError('Failed to create order.'); setSaving(false); return; }
+
+    const orderId = (created as ProductionOrder).id;
+
+    // 3. Insert line items
+    const itemRows = validItems.map((li) => ({
+      order_id: orderId,
+      sku_id: li.skuSearch.sku!.id,
+      sku_code: li.skuSearch.sku!.sku_code,
+      display_name: li.skuSearch.sku!.display_name,
+      unit_code: li.skuSearch.sku!.unit_code,
+      quantity: li.quantity ? Number(li.quantity) : 1,
+    }));
+
+    const { data: insertedItems, error: itemErr } = await db
+      .from('production_order_items')
+      .insert(itemRows)
+      .select('*');
+
     setSaving(false);
 
-    if (err) { setError(err.message); return; }
+    if (itemErr) { setError(itemErr.message); return; }
 
-    if (created) setOrders((prev) => [created as ProductionOrder, ...prev]);
-    setForm(EMPTY_FORM);
+    const newOrder: ProductionOrder = {
+      ...(created as ProductionOrder),
+      items: (insertedItems ?? []) as ProductionOrderItem[],
+    };
+
+    setOrders((prev) => [newOrder, ...prev]);
+    setForm(makeEmptyForm());
     setShowForm(false);
+  }
+
+  // ── Delete order ───────────────────────────────────────────────────────────
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    const { error: err } = await db
+      .from('production_orders')
+      .delete()
+      .eq('id', deleteTarget.id);
+    setDeleting(false);
+    if (err) { setError(err.message); setDeleteTarget(null); return; }
+    setOrders((prev) => prev.filter((o) => o.id !== deleteTarget.id));
+    setDeleteTarget(null);
   }
 
   // ── Status advance ─────────────────────────────────────────────────────────
@@ -325,7 +454,9 @@ export default function ProductionOrdersView({
       .select('*')
       .single();
     if (data) {
-      setOrders((prev) => prev.map((o) => (o.id === order.id ? (data as ProductionOrder) : o)));
+      setOrders((prev) => prev.map((o) =>
+        o.id === order.id ? { ...(data as ProductionOrder), items: o.items } : o
+      ));
     }
   }
 
@@ -335,9 +466,11 @@ export default function ProductionOrdersView({
     const num = (order.whatsapp_number ?? whatsapp).replace(/\D/g, '');
     const text = order.whatsapp_message ?? buildMessage({
       customer_name: order.customer_name ?? '',
-      product_description: order.product_description,
-      quantity: String(order.quantity ?? ''),
-      unit_code: order.unit_code ?? '',
+      items: (order.items ?? []).map((i) => ({
+        display_name: i.display_name,
+        quantity: String(i.quantity),
+        unit_code: i.unit_code,
+      })),
       time_tag: order.time_tag ?? '',
       delivery_mode: order.delivery_mode ?? '',
       delivery_note: order.delivery_note ?? '',
@@ -352,6 +485,16 @@ export default function ProductionOrdersView({
   return (
     <div className="p-4 lg:p-6 max-w-[1100px] mx-auto space-y-4">
 
+      {/* Delete confirm modal */}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          orderNo={deleteTarget.order_no}
+          onConfirm={handleDelete}
+          onCancel={() => setDeleteTarget(null)}
+          deleting={deleting}
+        />
+      )}
+
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -359,7 +502,6 @@ export default function ProductionOrdersView({
           <p className="text-[13px] text-ink-3 mt-0.5">{orders.length} order{orders.length !== 1 ? 's' : ''}</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* WhatsApp number */}
           <div className="flex items-center gap-2 text-[13px]">
             <span className="text-ink-3 hidden sm:inline">WhatsApp:</span>
             {editingWhatsapp ? (
@@ -383,9 +525,8 @@ export default function ProductionOrdersView({
               </>
             )}
           </div>
-
           {canCreate && (
-            <button className="btn btn-primary" onClick={() => { setShowForm(true); setError(null); }}>
+            <button className="btn btn-primary" onClick={() => { setShowForm(true); setError(null); setForm(makeEmptyForm()); }}>
               <Plus size={14} /> New Order
             </button>
           )}
@@ -415,44 +556,90 @@ export default function ProductionOrdersView({
               />
             </div>
 
-            {/* SKU Search */}
+            {/* Assigned To */}
             <div>
-              <label className="eyebrow mb-1 block">SKU / Product <span className="text-danger">*</span></label>
-              <SkuCombobox
-                value={form.skuSearch}
-                onChange={(val) => setForm({ ...form, skuSearch: val, unit_code: val.sku?.unit_code ?? form.unit_code })}
+              <label className="eyebrow mb-1 block">Assigned To</label>
+              <input
+                className="field"
+                placeholder="Who will fulfil this order?"
+                value={form.assigned_to}
+                onChange={(e) => setForm({ ...form, assigned_to: e.target.value })}
               />
-              {selectedSku && (
-                <p className="text-[11px] text-ink-3 mt-1">
-                  {selectedSku.brand_name} · {selectedSku.exact_size} · Unit: {selectedSku.unit_code}
-                </p>
-              )}
+            </div>
+          </div>
+
+          {/* ── Line Items ── */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="eyebrow">Items <span className="text-danger">*</span></label>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={addItem}
+              >
+                <Plus size={12} /> Add Item
+              </button>
             </div>
 
-            {/* Quantity */}
-            <div className="flex gap-2">
-              <div className="flex-1">
-                <label className="eyebrow mb-1 block">Quantity</label>
-                <input
-                  className="field"
-                  type="number"
-                  min="0"
-                  placeholder="100"
-                  value={form.quantity}
-                  onChange={(e) => setForm({ ...form, quantity: e.target.value })}
-                />
-              </div>
-              <div className="w-24">
-                <label className="eyebrow mb-1 block">Unit</label>
-                <input
-                  className="field"
-                  placeholder="PCS"
-                  value={selectedSku ? selectedSku.unit_code : form.unit_code}
-                  readOnly={!!selectedSku}
-                  onChange={(e) => setForm({ ...form, unit_code: e.target.value })}
-                />
-              </div>
+            <div className="space-y-2">
+              {form.items.map((li, idx) => (
+                <div key={li.id} className="flex gap-2 items-start rounded-lg border border-line bg-subtle p-3">
+                  {/* Row number */}
+                  <span className="text-[11px] text-ink-3 font-mono mt-2.5 w-4 shrink-0 text-center">{idx + 1}</span>
+
+                  {/* SKU search */}
+                  <div className="flex-1 min-w-0">
+                    <SkuCombobox
+                      value={li.skuSearch}
+                      onChange={(val) => updateItem(li.id, { skuSearch: val })}
+                      placeholder="Search SKU…"
+                    />
+                    {li.skuSearch.sku && (
+                      <p className="text-[11px] text-ink-3 mt-0.5 pl-0.5">
+                        {li.skuSearch.sku.brand_name} · {li.skuSearch.sku.exact_size} · {li.skuSearch.sku.unit_code}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Quantity */}
+                  <div className="w-24 shrink-0">
+                    <input
+                      className="field text-center"
+                      type="number"
+                      min="0"
+                      placeholder="Qty"
+                      value={li.quantity}
+                      onChange={(e) => updateItem(li.id, { quantity: e.target.value })}
+                    />
+                    {li.skuSearch.sku && (
+                      <p className="text-[10px] text-ink-3 text-center mt-0.5">{li.skuSearch.sku.unit_code}</p>
+                    )}
+                  </div>
+
+                  {/* Remove */}
+                  <button
+                    type="button"
+                    className="btn btn-ghost h-8 w-8 p-0 mt-0.5 text-ink-3 hover:text-danger shrink-0"
+                    onClick={() => removeItem(li.id)}
+                    disabled={form.items.length === 1}
+                    title="Remove item"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
             </div>
+
+            <button
+              type="button"
+              className="mt-2 w-full rounded-lg border border-dashed border-line py-2 text-[12px] text-ink-3 hover:border-brand hover:text-brand transition-colors"
+              onClick={addItem}
+            >
+              <Plus size={12} className="inline mr-1" />Add another item
+            </button>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
 
             {/* Time Tag */}
             <div>
@@ -494,7 +681,6 @@ export default function ProductionOrdersView({
                   </button>
                 ))}
               </div>
-              {/* Courier / Transportation side note */}
               {needsDeliveryNote && (
                 <div className="mt-2">
                   <input
@@ -505,17 +691,6 @@ export default function ProductionOrdersView({
                   />
                 </div>
               )}
-            </div>
-
-            {/* Assigned To */}
-            <div>
-              <label className="eyebrow mb-1 block">Assigned To</label>
-              <input
-                className="field"
-                placeholder="Who will fulfil this order?"
-                value={form.assigned_to}
-                onChange={(e) => setForm({ ...form, assigned_to: e.target.value })}
-              />
             </div>
 
             {/* Notes */}
@@ -531,7 +706,7 @@ export default function ProductionOrdersView({
             </div>
           </div>
 
-          {/* WhatsApp message preview */}
+          {/* WhatsApp preview */}
           <div className="rounded-lg border border-line bg-subtle p-3">
             <p className="eyebrow mb-1.5">WhatsApp message preview</p>
             <pre className="text-[12px] text-ink-2 whitespace-pre-wrap font-sans leading-relaxed">{previewMessage}</pre>
@@ -559,7 +734,10 @@ export default function ProductionOrdersView({
         {orders.map((order) => (
           <div key={order.id} className="card p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
+
+              {/* Left: order info */}
+              <div className="min-w-0 flex-1">
+                {/* Top row: order no, status, time tag */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[11px] font-mono text-ink-3">{order.order_no}</span>
                   <span className={`badge ${STATUS_BADGE[order.status]}`}>{STATUS_LABEL[order.status]}</span>
@@ -570,14 +748,10 @@ export default function ProductionOrdersView({
                   )}
                 </div>
 
-                <p className="text-[14px] font-semibold mt-1">{order.product_description}</p>
-
-                <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1 text-[12px] text-ink-3">
+                {/* Meta row */}
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1.5 text-[12px] text-ink-3">
                   {order.customer_name && (
                     <span>Customer: <span className="text-ink">{order.customer_name}</span></span>
-                  )}
-                  {order.quantity != null && (
-                    <span>Qty: <span className="text-ink font-medium">{order.quantity} {order.unit_code ?? ''}</span></span>
                   )}
                   {order.delivery_mode && (
                     <span>
@@ -590,11 +764,36 @@ export default function ProductionOrdersView({
                   )}
                 </div>
 
+                {/* Items list */}
+                {order.items && order.items.length > 0 ? (
+                  <ul className="mt-2 space-y-1">
+                    {order.items.map((item, idx) => (
+                      <li key={item.id} className="flex items-center gap-2 text-[13px]">
+                        <span className="text-ink-3 font-mono text-[11px] w-4 shrink-0">{idx + 1}.</span>
+                        <span className="font-medium text-ink truncate">{item.display_name}</span>
+                        {item.quantity != null && (
+                          <span className="text-ink-3 shrink-0">× {item.quantity} {item.unit_code}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  /* Legacy single-item orders */
+                  order.product_description && (
+                    <p className="text-[13px] font-medium mt-1">{order.product_description}
+                      {order.quantity != null && (
+                        <span className="text-ink-3 font-normal ml-2">× {order.quantity} {order.unit_code ?? ''}</span>
+                      )}
+                    </p>
+                  )
+                )}
+
                 {order.notes && (
                   <p className="text-[12px] text-ink-3 mt-1 truncate max-w-[500px]">{order.notes}</p>
                 )}
               </div>
 
+              {/* Right: action buttons */}
               <div className="flex items-center gap-2 shrink-0 flex-wrap">
                 <button
                   className="btn btn-secondary btn-sm"
@@ -613,7 +812,18 @@ export default function ProductionOrdersView({
                     {STATUS_NEXT_LABEL[order.status]}
                   </button>
                 )}
+
+                {canCreate && (
+                  <button
+                    className="btn btn-ghost btn-sm text-ink-3 hover:text-danger hover:bg-danger-soft"
+                    onClick={() => setDeleteTarget(order)}
+                    title="Delete order"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
               </div>
+
             </div>
           </div>
         ))}

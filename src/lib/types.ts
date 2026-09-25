@@ -155,21 +155,33 @@ export interface PurchaseOrderReceipt {
   notes: string | null;
 }
 
+export interface ProductionOrderItem {
+  id: string;
+  order_id: string;
+  sku_id: string;
+  sku_code: string;
+  display_name: string;
+  unit_code: string;
+  quantity: number;
+  notes: string | null;
+  created_at: string;
+}
+
 export interface ProductionOrder {
   id: string;
   order_no: string;
   customer_name: string | null;
-  // SKU link (new)
+  // Legacy single-SKU fields (kept for old rows)
   sku_id: string | null;
-  product_description: string;       // kept for display; populated from sku.display_name on create
+  product_description: string;
   quantity: number | null;
   unit_code: string | null;
   // Replaced due_date with time_tag
   time_tag: TimeTag | null;
-  // Delivery fields (new)
+  // Delivery fields
   delivery_mode: DeliveryMode | null;
-  delivery_note: string | null;      // carrier / transport company name
-  // Fulfillment (new)
+  delivery_note: string | null;
+  // Fulfillment
   assigned_to: string | null;
   notes: string | null;
   whatsapp_number: string | null;
@@ -178,6 +190,8 @@ export interface ProductionOrder {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  // Joined from v_production_orders (may be undefined if loaded from base table)
+  items?: ProductionOrderItem[];
 }
 
 /**
