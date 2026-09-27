@@ -16,7 +16,7 @@ export type Permission =
 
 export type PurchaseOrderStatus = 'PLACED' | 'PARTIAL' | 'FULFILLED';
 export type PurchaseOrderItemStatus = 'PENDING' | 'PARTIAL' | 'FULFILLED';
-export type ProductionOrderStatus = 'CREATED' | 'SENT' | 'IN_PROGRESS' | 'COMPLETED';
+export type ProductionOrderStatus = 'CREATED' | 'SENT' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 
 export type TimeTag = '15-20 min' | '30-40 min' | '1 hour' | '2 hours';
 export type DeliveryMode = 'Hand' | 'Porter' | 'Courier' | 'Transportation';
@@ -65,6 +65,7 @@ export interface Sku {
   unit_code: string;
   opening_stock: number;
   current_stock: number;
+  physical_prod_stock: number;
   min_stock_level: number;
   supplier_moq: number;
   reorder_quantity: number;
@@ -163,8 +164,35 @@ export interface ProductionOrderItem {
   display_name: string;
   unit_code: string;
   quantity: number;
+  reserved_qty: number;
+  is_fulfilled: boolean;
   notes: string | null;
   created_at: string;
+}
+
+/** One open production order item contributing to a SKU mismatch */
+export interface MismatchOrderItem {
+  poi_id: string;
+  order_id: string;
+  order_no: string;
+  customer_name: string | null;
+  order_status: ProductionOrderStatus;
+  quantity: number;
+  unit_code: string;
+  created_at: string;
+}
+
+/** Row from v_production_stock_status — only mismatched SKUs shown in UI */
+export interface SkuMismatch {
+  sku_id: string;
+  sku_code: string;
+  display_name: string;
+  unit_code: string;
+  current_stock: number;
+  physical_prod_stock: number;
+  stock_gap: number;          // current_stock - physical_prod_stock (always > 0 for mismatch)
+  is_mismatched: boolean;
+  open_order_items: MismatchOrderItem[];
 }
 
 export interface ProductionOrder {
