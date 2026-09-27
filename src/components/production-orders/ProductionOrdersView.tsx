@@ -125,6 +125,9 @@ function fetchSkus(): Promise<SkuWithAtp[]> {
       .from('v_sku_atp')
       .select('sku_id,current_stock,reserved_qty,atp_stock'),
   ]).then(([skuRes, atpRes]) => {
+    if (atpRes.error) {
+      console.error('[ATP] v_sku_atp fetch failed — run 009_soft_allocation.sql in Supabase:', atpRes.error.message);
+    }
     const skuData = (skuRes.data ?? []) as unknown as Sku[];
     const atpData = (atpRes.data ?? []) as SkuAtp[];
 
