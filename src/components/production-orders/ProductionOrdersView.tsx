@@ -91,13 +91,20 @@ type SkuWithAtp = Sku & {
   reserved_qty: number;
 };
 
-// ─── Shared SKU + ATP cache (load once per session) ──────────────────────────
+// ─── Shared SKU + ATP cache ───────────────────────────────────────────────────
+//
+// _skuVersion is a simple integer counter. Every time we need fresh ATP numbers
+// (after create / delete / status→COMPLETED) we call invalidateSkuCache() which
+// bumps the version. SkuCombobox receives the current version as a prop and
+// puts it in its useEffect dependency array, so it re-fetches automatically
+// whenever the version changes — even if the component never unmounts.
 
 let _skuCache: SkuWithAtp[] | null = null;
 let _skuInflight: Promise<SkuWithAtp[]> | null = null;
+let _skuVersion = 0;
 
-function loadSkus(): Promise<SkuWithAtp[]> {
-  if (_skuCache) return Promise.resolve(_skuCache);
+function fetchSkus(): Promise<SkuWithAtp[]> {
+  // Always bypass cache during an active fetch request
   if (_skuInflight) return _skuInflight;
 
   const p: Promise<SkuWithAtp[]> = Promise.all([
@@ -137,11 +144,20 @@ function loadSkus(): Promise<SkuWithAtp[]> {
   return p;
 }
 
-// ─── Invalidate SKU cache (call after creating an order so ATP refreshes) ────
+function loadSkus(): Promise<SkuWithAtp[]> {
+  if (_skuCache) return Promise.resolve(_skuCache);
+  return fetchSkus();
+}
 
+// Bump version → every mounted SkuCombobox re-fetches ATP from the DB
 function invalidateSkuCache() {
   _skuCache = null;
   _skuInflight = null;
+  _skuVersion += 1;
+}
+
+function getSkuVersion() {
+  return _skuVersion;
 }
 
 // ─── ATP badge helper ─────────────────────────────────────────────────────────
@@ -178,10 +194,12 @@ function AtpBadge({ sku, qty, otherQty = 0 }: { sku: SkuWithAtp; qty: string; ot
 function SkuCombobox({
   value,
   onChange,
+  cacheVersion,
   placeholder = 'Search SKU code, name, size…',
 }: {
   value: { sku: SkuWithAtp | null; query: string };
   onChange: (val: { sku: SkuWithAtp | null; query: string }) => void;
+  cacheVersion: number;
   placeholder?: string;
 }) {
   const [skus, setSkus] = useState<SkuWithAtp[]>(_skuCache ?? []);
@@ -190,11 +208,11 @@ function SkuCombobox({
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  // Re-fetch whenever cacheVersion bumps (i.e. after any order create/delete/complete)
   useEffect(() => {
-    if (_skuCache) { setSkus(_skuCache); setLoadingSkus(false); return; }
     setLoadingSkus(true);
     loadSkus().then((s) => { setSkus(s); setLoadingSkus(false); });
-  }, []);
+  }, [cacheVersion]);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -366,6 +384,15 @@ function makeEmptyForm() {
   };
 }
 
+// ─── Date/time formatter ──────────────────────────────────────────────────────
+
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  const date = d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const time = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+  return `${date}, ${time}`;
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ProductionOrdersView({
@@ -387,10 +414,17 @@ export default function ProductionOrdersView({
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ProductionOrder | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [skuVersion, setSkuVersion] = useState(0);
   const [, startTransition] = useTransition();
 
   const db = supabaseBrowser();
   const canCreate = session.permissions.includes('transactions.create');
+
+  // Invalidate cache AND update React state so SkuCombobox re-fetches
+  function refreshAtp() {
+    invalidateSkuCache();
+    setSkuVersion(getSkuVersion());
+  }
 
   const needsDeliveryNote = form.delivery_mode === 'Courier' || form.delivery_mode === 'Transportation';
 
@@ -530,8 +564,8 @@ export default function ProductionOrdersView({
     setForm(makeEmptyForm());
     setShowForm(false);
 
-    // Invalidate ATP cache so the next order creation shows fresh numbers
-    invalidateSkuCache();
+    // Refresh ATP so the next order creation shows correct available numbers
+    refreshAtp();
   }
 
   // ── Delete order ───────────────────────────────────────────────────────────
@@ -547,8 +581,8 @@ export default function ProductionOrdersView({
     if (err) { setError(err.message); setDeleteTarget(null); return; }
     setOrders((prev) => prev.filter((o) => o.id !== deleteTarget.id));
     setDeleteTarget(null);
-    // Deleted order releases its reservations; refresh ATP cache
-    invalidateSkuCache();
+    // Deleted order releases its reservations; refresh ATP
+    refreshAtp();
   }
 
   // ── Status advance ─────────────────────────────────────────────────────────
@@ -566,8 +600,8 @@ export default function ProductionOrdersView({
       setOrders((prev) => prev.map((o) =>
         o.id === order.id ? { ...(data as ProductionOrder), items: o.items } : o
       ));
-      // If just completed, ATP is freed by DB trigger—refresh cache
-      if (next === 'COMPLETED') invalidateSkuCache();
+      // If just completed, ATP is freed by DB trigger—refresh
+      if (next === 'COMPLETED') refreshAtp();
     }
   }
 
@@ -714,6 +748,7 @@ export default function ProductionOrdersView({
                     <SkuCombobox
                       value={li.skuSearch}
                       onChange={(val) => updateItem(li.id, { skuSearch: val })}
+                      cacheVersion={skuVersion}
                       placeholder="Search SKU…"
                     />
                     {li.skuSearch.sku && (
@@ -869,13 +904,18 @@ export default function ProductionOrdersView({
 
               {/* Left: order info */}
               <div className="min-w-0 flex-1">
-                {/* Top row: order no, status, time tag */}
+                {/* Top row: order no, status, time tag, created at */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[11px] font-mono text-ink-3">{order.order_no}</span>
                   <span className={`badge ${STATUS_BADGE[order.status]}`}>{STATUS_LABEL[order.status]}</span>
                   {order.time_tag && (
                     <span className="text-[11px] bg-subtle border border-line rounded-full px-2 py-0.5 text-ink-2">
                       ⏱ {order.time_tag}
+                    </span>
+                  )}
+                  {order.created_at && (
+                    <span className="text-[11px] text-ink-3">
+                      🕐 {formatDateTime(order.created_at)}
                     </span>
                   )}
                 </div>
