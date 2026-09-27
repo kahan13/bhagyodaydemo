@@ -146,22 +146,23 @@ function invalidateSkuCache() {
 
 // ─── ATP badge helper ─────────────────────────────────────────────────────────
 
-function AtpBadge({ sku, qty }: { sku: SkuWithAtp; qty: string }) {
-  const atp = sku.atp_stock;
+function AtpBadge({ sku, qty, otherQty = 0 }: { sku: SkuWithAtp; qty: string; otherQty?: number }) {
+  // effectiveAtp = atp from DB minus what's already typed in OTHER rows for the same SKU
+  const effectiveAtp = sku.atp_stock - otherQty;
   const entered = parseFloat(qty) || 0;
-  const afterAlloc = atp - entered;
+  const afterAlloc = effectiveAtp - entered;
 
   let colour: string;
-  if (atp <= 0) colour = 'text-danger font-semibold';
-  else if (atp < (sku.min_stock_level ?? 0)) colour = 'text-warn font-semibold';
+  if (effectiveAtp <= 0) colour = 'text-danger font-semibold';
+  else if (effectiveAtp < (sku.min_stock_level ?? 0)) colour = 'text-warn font-semibold';
   else colour = 'text-ok';
 
   return (
     <p className="text-[10px] text-center mt-0.5 leading-tight">
       <span className="text-ink-3">{sku.unit_code}</span>
       {' · '}
-      <span className={colour} title={`Ledger stock: ${sku.current_stock} | Reserved: ${sku.reserved_qty}`}>
-        {atp} avail
+      <span className={colour} title={`Ledger stock: ${sku.current_stock} | Reserved: ${sku.reserved_qty} | Committed in other rows: ${otherQty}`}>
+        {effectiveAtp} avail
       </span>
       {entered > 0 && (
         <span className={afterAlloc < 0 ? ' text-danger font-semibold' : ' text-ink-3'}>
@@ -442,15 +443,23 @@ export default function ProductionOrdersView({
     const validItems = form.items.filter((li) => li.skuSearch.sku);
     if (validItems.length === 0) { setError('Please add at least one SKU item.'); return; }
 
-    // Warn if any item would over-commit ATP (don't block—just warn)
-    const overCommitted = validItems.filter((li) => {
+    // Warn if total qty for any SKU (across all rows) exceeds its ATP
+    const qtyBySku: Record<string, { sku: SkuWithAtp; total: number }> = {};
+    for (const li of validItems) {
+      const sku = li.skuSearch.sku!;
       const qty = parseFloat(li.quantity) || 0;
-      return qty > 0 && li.skuSearch.sku && qty > li.skuSearch.sku.atp_stock;
-    });
+      if (!qtyBySku[sku.id]) qtyBySku[sku.id] = { sku, total: 0 };
+      qtyBySku[sku.id].total += qty;
+    }
+    const overCommitted = Object.values(qtyBySku).filter(
+      ({ sku, total }) => total > sku.atp_stock
+    );
     if (overCommitted.length > 0) {
-      const names = overCommitted.map((li) => li.skuSearch.sku!.sku_code).join(', ');
+      const names = overCommitted
+        .map(({ sku, total }) => `${sku.sku_code} (need ${total}, have ${sku.atp_stock})`)
+        .join('\n');
       const confirmed = window.confirm(
-        `⚠ The quantity entered for ${names} exceeds available stock (ATP).\n\nProceed anyway?`
+        `⚠ Total quantity exceeds available stock (ATP):\n\n${names}\n\nProceed anyway?`
       );
       if (!confirmed) return;
     }
@@ -684,7 +693,18 @@ export default function ProductionOrdersView({
             </div>
 
             <div className="space-y-2">
-              {form.items.map((li, idx) => (
+              {form.items.map((li, idx) => {
+                // Sum qty of all OTHER rows that share the same SKU
+                const otherQty = li.skuSearch.sku
+                  ? form.items
+                      .filter((other) => other.id !== li.id && other.skuSearch.sku?.id === li.skuSearch.sku!.id)
+                      .reduce((sum, other) => sum + (parseFloat(other.quantity) || 0), 0)
+                  : 0;
+                const effectiveAtp = li.skuSearch.sku
+                  ? li.skuSearch.sku.atp_stock - otherQty
+                  : Infinity;
+
+                return (
                 <div key={li.id} className="flex gap-2 items-start rounded-lg border border-line bg-subtle p-3">
                   {/* Row number */}
                   <span className="text-[11px] text-ink-3 font-mono mt-2.5 w-4 shrink-0 text-center">{idx + 1}</span>
@@ -712,7 +732,7 @@ export default function ProductionOrdersView({
                   <div className="w-24 shrink-0">
                     <input
                       className={`field text-center ${
-                        li.skuSearch.sku && parseFloat(li.quantity) > li.skuSearch.sku.atp_stock
+                        li.skuSearch.sku && parseFloat(li.quantity) > effectiveAtp
                           ? 'border-danger focus:ring-danger/30'
                           : ''
                       }`}
@@ -723,7 +743,7 @@ export default function ProductionOrdersView({
                       onChange={(e) => updateItem(li.id, { quantity: e.target.value })}
                     />
                     {li.skuSearch.sku && (
-                      <AtpBadge sku={li.skuSearch.sku} qty={li.quantity} />
+                      <AtpBadge sku={li.skuSearch.sku} qty={li.quantity} otherQty={otherQty} />
                     )}
                   </div>
 
@@ -738,7 +758,8 @@ export default function ProductionOrdersView({
                     <X size={14} />
                   </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             <button
