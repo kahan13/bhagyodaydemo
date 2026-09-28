@@ -1,16 +1,32 @@
 import { Suspense } from 'react';
-import { ArrowDownLeft, ArrowUpRight, ShoppingCart, Check } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, ShoppingCart, Check, Package, Clock, Ban } from 'lucide-react';
 import { requireSession, can } from '@/lib/auth';
 import { supabaseServer, supabaseService } from '@/lib/supabase-server';
 
 import { fmtQty, fmtRelative, fmtDate } from '@/lib/format';
-import type { DashboardSummary, Movement, Sku } from '@/lib/types';
+import type { DashboardSummary, Movement, Sku, ProductionOrder, ProductionOrderItem } from '@/lib/types';
 import DashboardActions from '@/components/dashboard/DashboardActions';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
 const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing', V_BELT: 'V-Belt' };
+
+const PO_STATUS_LABEL: Record<string, string> = {
+  CREATED:     'Created',
+  SENT:        'Sent',
+  IN_PROGRESS: 'In Progress',
+  COMPLETED:   'Completed',
+  CANCELLED:   'Cancelled',
+};
+
+const PO_STATUS_STYLE: Record<string, string> = {
+  CREATED:     'bg-warn/10 text-warn',
+  SENT:        'bg-brand/10 text-brand',
+  IN_PROGRESS: 'bg-ok/10 text-ok',
+  COMPLETED:   'bg-subtle text-ink-3',
+  CANCELLED:   'bg-danger/10 text-danger',
+};
 
 /* ── Stats ───────────────────────────────────────────────────────────────── */
 function Stat({ label, value, sub, tone }: {
@@ -137,7 +153,6 @@ type POItem = {
 };
 
 async function OrdersPane() {
-  // Use service role so SKU names are NEVER blank regardless of RLS policies
   const svc = await supabaseService();
 
   const { data: rawOrders } = await svc
@@ -289,7 +304,150 @@ async function OrdersPane() {
   );
 }
 
-/* ── Needs reordering ────────────────────────────────────────────────────── */
+/* ── Production Orders pane ──────────────────────────────────────────────── */
+type ProdOrderRow = {
+  id: string;
+  order_no: string;
+  customer_name: string | null;
+  status: string;
+  time_tag: string | null;
+  delivery_mode: string | null;
+  assigned_to: string | null;
+  created_at: string;
+  items: Array<{
+    id: string;
+    display_name: string;
+    quantity: number;
+    unit_code: string;
+    is_fulfilled: boolean;
+  }>;
+};
+
+async function ProductionOrdersPane() {
+  const db = await supabaseServer();
+
+  const { data } = await db
+    .from('production_orders')
+    .select('id,order_no,customer_name,status,time_tag,delivery_mode,assigned_to,created_at,production_order_items(id,display_name,quantity,unit_code,is_fulfilled)')
+    .not('status', 'in', '("COMPLETED","CANCELLED")')
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  const orders = ((data ?? []) as any[]).map((o) => ({
+    ...o,
+    items: o.production_order_items ?? [],
+  })) as ProdOrderRow[];
+
+  // Count summary
+  const created    = orders.filter((o) => o.status === 'CREATED').length;
+  const sent       = orders.filter((o) => o.status === 'SENT').length;
+  const inProgress = orders.filter((o) => o.status === 'IN_PROGRESS').length;
+
+  return (
+    <section className="card">
+      <div className="card-head">
+        <div className="flex items-center gap-2">
+          <h2 className="card-title">Production Orders</h2>
+          {orders.length > 0 && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-brand/10 text-brand">
+              {orders.length} active
+            </span>
+          )}
+        </div>
+        <Link href="/production-orders" className="text-[12px] text-brand hover:underline">View all</Link>
+      </div>
+
+      {/* Mini status summary bar */}
+      {orders.length > 0 && (
+        <div className="flex items-center gap-3 px-4 py-2 border-b border-line bg-subtle text-[11px]">
+          {created > 0 && (
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-warn inline-block" />
+              <span className="text-ink-3">{created} created</span>
+            </span>
+          )}
+          {sent > 0 && (
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-brand inline-block" />
+              <span className="text-ink-3">{sent} sent</span>
+            </span>
+          )}
+          {inProgress > 0 && (
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-ok inline-block" />
+              <span className="text-ink-3">{inProgress} in progress</span>
+            </span>
+          )}
+        </div>
+      )}
+
+      {orders.length === 0 ? (
+        <p className="px-5 py-6 text-[12px] text-ink-3 text-center">No active production orders.</p>
+      ) : (
+        <ul className="divide-y divide-line">
+          {orders.map((o) => {
+            const fulfilledCount = o.items.filter((i) => i.is_fulfilled).length;
+            const totalItems     = o.items.length;
+            return (
+              <li key={o.id} className="flex items-start gap-3 px-4 py-2.5">
+                <div className="min-w-0 flex-1">
+                  {/* Order no + status + customer */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[11px] font-mono text-ink-3">{o.order_no}</span>
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${PO_STATUS_STYLE[o.status] ?? 'bg-subtle text-ink-3'}`}>
+                      {PO_STATUS_LABEL[o.status] ?? o.status}
+                    </span>
+                    {o.customer_name && (
+                      <span className="text-[12px] font-medium text-ink truncate">{o.customer_name}</span>
+                    )}
+                  </div>
+
+                  {/* Items summary */}
+                  {o.items.length > 0 && (
+                    <p className="text-[11px] text-ink-3 mt-0.5 truncate">
+                      {o.items.map((i) => `${i.display_name} ×${i.quantity} ${i.unit_code}`).join(' · ')}
+                    </p>
+                  )}
+
+                  {/* Meta row */}
+                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                    {o.time_tag && (
+                      <span className="text-[10px] text-ink-3">⏱ {o.time_tag}</span>
+                    )}
+                    {o.delivery_mode && (
+                      <span className="text-[10px] text-ink-3">· {o.delivery_mode}</span>
+                    )}
+                    {o.assigned_to && (
+                      <span className="text-[10px] text-ink-3">· {o.assigned_to}</span>
+                    )}
+                    <span className="text-[10px] text-ink-3 ml-auto">{fmtRelative(o.created_at)}</span>
+                  </div>
+                </div>
+
+                {/* Fulfilment chip — only show if items exist */}
+                {totalItems > 0 && (
+                  <div className="shrink-0 text-right">
+                    <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded ${
+                      fulfilledCount === totalItems
+                        ? 'bg-ok/10 text-ok'
+                        : fulfilledCount > 0
+                        ? 'bg-warn/10 text-warn'
+                        : 'bg-subtle text-ink-3'
+                    }`}>
+                      {fulfilledCount}/{totalItems} posted
+                    </span>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/* ── Needs reordering (compact) ──────────────────────────────────────────── */
 async function LowStock() {
   const db = await supabaseServer();
   const { data } = await db
@@ -298,7 +456,7 @@ async function LowStock() {
     .eq('is_active', true)
     .in('stock_status', ['LOW_STOCK', 'OUT_OF_STOCK'])
     .order('shortfall', { ascending: false })
-    .limit(10);
+    .limit(8);
 
   const rows = (data ?? []) as Pick<Sku,
     'sku_code'|'exact_size'|'brand_name'|'current_stock'|'min_stock_level'|
@@ -318,33 +476,29 @@ async function LowStock() {
         <Link href="/inventory" className="text-[12px] text-brand hover:underline">View inventory</Link>
       </div>
       {rows.length === 0 ? (
-        <p className="px-5 py-6 text-[13px] text-ink-3 text-center">All products at or above minimum.</p>
+        <p className="px-5 py-4 text-[12px] text-ink-3 text-center">All products at or above minimum.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="table">
+          <table className="table text-[12px]">
             <thead>
               <tr>
-                <th>Product</th>
-                <th>Brand</th>
-                <th>Type</th>
-                <th className="text-right">Stock</th>
-                <th className="text-right">Min</th>
-                <th className="text-right">Order qty</th>
+                <th className="text-[11px]">Product</th>
+                <th className="text-[11px]">Brand</th>
+                <th className="text-right text-[11px]">Stock</th>
+                <th className="text-right text-[11px]">Order qty</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.sku_code}>
-                  <td className="font-medium">{r.exact_size}</td>
-                  <td className="text-ink-2">{r.brand_name}</td>
-                  <td className="text-ink-3 text-[11px]">{TYPE_LABEL[r.product_type ?? ''] ?? r.product_type}</td>
-                  <td className="num text-right">
+                <tr key={r.sku_code} className="h-8">
+                  <td className="font-medium py-1.5">{r.exact_size}</td>
+                  <td className="text-ink-2 py-1.5">{r.brand_name}</td>
+                  <td className="num text-right py-1.5">
                     <span className={r.stock_status === 'OUT_OF_STOCK' ? 'text-danger font-medium' : 'text-warn font-medium'}>
                       {fmtQty(r.current_stock, r.unit_code)}
                     </span>
                   </td>
-                  <td className="num text-right text-ink-3">{fmtQty(r.min_stock_level, r.unit_code)}</td>
-                  <td className="num text-right font-medium">{fmtQty(r.suggested_purchase_qty, r.unit_code)}</td>
+                  <td className="num text-right font-medium py-1.5">{fmtQty(r.suggested_purchase_qty, r.unit_code)}</td>
                 </tr>
               ))}
             </tbody>
@@ -422,8 +576,13 @@ export default async function DashboardPage({
         </Suspense>
       </div>
 
-      {/* Zone 3: Needs reordering — full width below */}
-      <Suspense fallback={<div className="card h-[240px] skeleton" />}>
+      {/* Zone 3: Production Orders — full width */}
+      <Suspense fallback={<div className="card h-[200px] skeleton" />}>
+        <ProductionOrdersPane />
+      </Suspense>
+
+      {/* Zone 4: Reorder — compact, full width, last */}
+      <Suspense fallback={<div className="card h-[160px] skeleton" />}>
         <LowStock />
       </Suspense>
     </div>

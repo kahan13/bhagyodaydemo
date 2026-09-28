@@ -136,9 +136,11 @@ CREATE OR REPLACE FUNCTION trg_po_status_physical()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   -- Order just became CANCELLED: restore physical stock for all open items
+  -- Cap at current_stock so physical never exceeds book (e.g. outward was posted
+  -- after the order was created, reducing book, then order is cancelled).
   IF NEW.status = 'CANCELLED' AND OLD.status <> 'CANCELLED' THEN
     UPDATE skus s
-    SET physical_prod_stock = physical_prod_stock + poi.quantity,
+    SET physical_prod_stock = LEAST(s.current_stock, s.physical_prod_stock + poi.quantity),
         updated_at = now()
     FROM production_order_items poi
     WHERE poi.order_id = NEW.id
@@ -464,23 +466,32 @@ GRANT SELECT ON v_sku_atp TO authenticated;
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 11. Guard: physical_prod_stock can never exceed current_stock
---     Applied whenever physical would go above book (e.g. cancel after outward)
+-- 11. Drop old clamp trigger if it exists from a previous run of this file.
+--     The clamp was removed because it incorrectly suppressed INWARD increases.
+--     Physical stock is now only capped inside the cancel-restore path itself.
 -- ─────────────────────────────────────────────────────────────────────────────
 
-CREATE OR REPLACE FUNCTION trg_clamp_physical_stock()
-RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-  -- Clamp: physical can never rise above the current book stock
-  IF NEW.physical_prod_stock > NEW.current_stock THEN
-    NEW.physical_prod_stock := NEW.current_stock;
-  END IF;
-  -- Physical can go negative if orders exceed actual stock (edge case with
-  -- allow_negative_stock setting). We allow it to mirror the book.
-  RETURN NEW;
-END $$;
-
 DROP TRIGGER IF EXISTS skus_clamp_physical ON skus;
-CREATE TRIGGER skus_clamp_physical
-  BEFORE UPDATE OF physical_prod_stock, current_stock ON skus
-  FOR EACH ROW EXECUTE FUNCTION trg_clamp_physical_stock();
+DROP FUNCTION IF EXISTS trg_clamp_physical_stock();
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 12. One-time repair: fix any SKUs where physical < book AND no open
+--     production order items explain the gap (i.e. the gap was caused by the
+--     now-removed clamp trigger incorrectly suppressing an INWARD).
+--     This re-syncs physical = book for those SKUs only.
+--     SKUs with a legitimate mismatch (open production orders) are left alone.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+UPDATE skus s
+SET physical_prod_stock = s.current_stock,
+    updated_at = now()
+WHERE s.physical_prod_stock < s.current_stock
+  AND NOT EXISTS (
+    SELECT 1
+    FROM production_order_items poi
+    JOIN production_orders po ON po.id = poi.order_id
+    WHERE poi.sku_id = s.id
+      AND poi.is_fulfilled = false
+      AND po.status NOT IN ('COMPLETED','CANCELLED')
+  );
