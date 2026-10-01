@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
-import { Search, Plus, Pencil, ToggleLeft, ToggleRight, X } from 'lucide-react';
+import { Search, Plus, Pencil, ToggleLeft, ToggleRight, X, Ruler } from 'lucide-react';
 import type { Permission, ProductType } from '@/lib/types';
 
 interface Product {
@@ -16,6 +16,8 @@ interface Product {
   belt_form?: string; pitch_mm?: number; pitch_length_mm?: number;
   width_mm?: number; teeth?: number; standard?: string;
   construction?: string; nominal_length?: number; length_designation?: string;
+  // NEW: roll definition
+  roll_length_mm?: number | null;
 }
 
 interface Brand { id: string; code: string; name: string; has_timing_belts: boolean; has_v_belts: boolean; }
@@ -111,6 +113,9 @@ export default function ProductMasterView({
     V_BELT: products.filter((p) => (showInactive || p.is_active) && p.product_type === 'V_BELT').length,
   };
 
+  // Products missing roll_length_mm (show warning count in header)
+  const missingRoll = products.filter((p) => p.is_active && !p.roll_length_mm).length;
+
   return (
     <div className="flex flex-col h-[calc(100vh-56px)]">
       {/* Header */}
@@ -126,6 +131,15 @@ export default function ProductMasterView({
           <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} className="rounded" />
           Show inactive
         </label>
+
+        {/* Warning: SKUs missing roll length */}
+        {missingRoll > 0 && (
+          <span className="flex items-center gap-1 text-[12px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+            <Ruler size={12} />
+            {missingRoll} SKU{missingRoll > 1 ? 's' : ''} missing roll length
+          </span>
+        )}
+
         {can('products.create') && (
           <button onClick={openAdd} className="btn btn-primary ml-auto flex items-center gap-1.5 text-[13px]">
             <Plus size={14} /> Add Product
@@ -161,8 +175,8 @@ export default function ProductMasterView({
                 <th>Brand</th>
                 <th className="num">Stock</th>
                 <th className="num">Min</th>
+                <th className="num">Roll (mm)</th>
                 <th>Rack</th>
-                <th>Unit</th>
                 <th>Status</th>
                 {can('products.edit') && <th />}
               </tr>
@@ -177,8 +191,16 @@ export default function ProductMasterView({
                   <td>{p.brand_name}</td>
                   <td className="num">{p.current_stock} {p.unit_code}</td>
                   <td className="num">{p.min_stock_level}</td>
+                  <td className="num">
+                    {p.roll_length_mm ? (
+                      <span>{p.roll_length_mm}</span>
+                    ) : (
+                      <span className="text-amber-500 flex items-center justify-end gap-1">
+                        <Ruler size={11} /> —
+                      </span>
+                    )}
+                  </td>
                   <td>{p.rack_location ?? '—'}</td>
-                  <td>{p.unit_code}</td>
                   <td>
                     <span className={`badge ${p.stock_status === 'OK' ? 'badge-ok' : p.stock_status === 'OUT_OF_STOCK' ? 'badge-danger' : 'badge-warn'}`}>
                       {p.stock_status === 'OK' ? 'OK' : p.stock_status === 'OUT_OF_STOCK' ? 'Out' : 'Low'}
@@ -252,8 +274,34 @@ export default function ProductMasterView({
               <div>
                 <label className="label">Unit</label>
                 <select className="input w-full" value={form.unit_code ?? 'PCS'} onChange={(e) => set('unit_code', e.target.value)}>
-                  {['PCS', 'MTR', 'ROLL', 'SET'].map((u) => <option key={u}>{u}</option>)}
+                  {['PCS', 'MTR', 'MM', 'ROLL', 'SET'].map((u) => <option key={u}>{u}</option>)}
                 </select>
+              </div>
+
+              {/* ── ROLL LENGTH ── */}
+              <div className="col-span-2">
+                <label className="label flex items-center gap-1.5">
+                  <Ruler size={13} className="text-ink-3" />
+                  Roll Length (mm)
+                  <span className="text-[11px] text-ink-3 font-normal ml-1">— length of 1 full sleeve for this SKU</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    className="input w-48"
+                    value={form.roll_length_mm ?? ''}
+                    onChange={(e) => set('roll_length_mm', e.target.value ? Number(e.target.value) : null)}
+                    placeholder="e.g. 400"
+                  />
+                  <span className="text-[12px] text-ink-3">mm per roll</span>
+                </div>
+                {!form.roll_length_mm && (
+                  <p className="mt-1 text-[11px] text-amber-600">
+                    ⚠ Without this, inward receipts cannot auto-determine lot size. Set it before receiving stock.
+                  </p>
+                )}
               </div>
 
               {dialog === 'add' && (

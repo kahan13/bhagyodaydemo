@@ -9,7 +9,7 @@ export async function GET() {
   const db = await supabaseServer();
   const { data, error } = await db
     .from('v_sku_status')
-    .select('id,sku_code,product_type,display_name,exact_size,hier_l1,hier_l2,hier_l3,brand_code,brand_name,family_code,family_name,unit_code,opening_stock,current_stock,min_stock_level,supplier_moq,reorder_quantity,rack_location,is_active,stock_status')
+    .select('id,sku_code,product_type,display_name,exact_size,hier_l1,hier_l2,hier_l3,brand_code,brand_name,family_code,family_name,unit_code,opening_stock,current_stock,min_stock_level,supplier_moq,reorder_quantity,rack_location,is_active,stock_status,roll_length_mm')
     .order('product_type').order('hier_l1').order('hier_l2').order('hier_l3');
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data);
@@ -80,6 +80,7 @@ export async function POST(req: Request) {
     nominal_length: body.nominal_length || null,
     length_designation: body.length_designation || null,
     is_active: body.is_active ?? true,
+    roll_length_mm: body.roll_length_mm || null,
   }).select('sku_code').single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
@@ -120,6 +121,7 @@ export async function PATCH(req: Request) {
     construction: fields.construction || null,
     nominal_length: fields.nominal_length || null,
     length_designation: fields.length_designation || null,
+    roll_length_mm: fields.roll_length_mm || null,
     updated_at: new Date().toISOString(),
   };
   if (fields.brand_id) update.brand_id = fields.brand_id;
