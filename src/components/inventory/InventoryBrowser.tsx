@@ -7,6 +7,7 @@ import { supabaseBrowser } from '@/lib/supabase-browser';
 import { fmtQty, fmtRelative, CHANNEL_LABEL } from '@/lib/format';
 import { HIERARCHY, type Movement, type Permission, type ProductType, type Sku } from '@/lib/types';
 import MovementDialog from '@/components/inventory/MovementDialog';
+import SkuLotsPanel from '@/components/inventory/SkuLotsPanel';
 
 const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
 
@@ -19,7 +20,7 @@ export default function InventoryBrowser({
   initialType: ProductType;
   labelOverrides?: Partial<Record<ProductType, [string, string, string]>>;
 }) {
-  const { skus, loading, error, applyStock } = useCatalog();
+  const { skus, loading, error, applyStock, refresh } = useCatalog();
   const [type, setType] = useState<ProductType>(initialType);
   const [query, setQuery] = useState('');
   const [lowOnly, setLowOnly] = useState(false);
@@ -368,7 +369,12 @@ export default function InventoryBrowser({
         </div>
 
         <aside className="w-[350px] shrink-0 border-l border-line bg-surface hidden xl:flex flex-col">
-          <DetailPanel sku={selected} can={can} onAction={setAction} />
+          <DetailPanel
+            sku={selected}
+            can={can}
+            onAction={setAction}
+            onStockChange={() => { void refresh(); }}
+          />
         </aside>
       </div>
 
@@ -376,7 +382,13 @@ export default function InventoryBrowser({
         <div className="xl:hidden fixed inset-0 z-50 flex">
           <div className="flex-1 bg-ink/25" onClick={() => setSelected(null)} aria-hidden />
           <aside className="w-full max-w-[380px] bg-surface shadow-lg flex flex-col slide-up">
-            <DetailPanel sku={selected} can={can} onAction={setAction} onClose={() => setSelected(null)} />
+            <DetailPanel
+              sku={selected}
+              can={can}
+              onAction={setAction}
+              onClose={() => setSelected(null)}
+              onStockChange={() => { void refresh(); }}
+            />
           </aside>
         </div>
       )}
@@ -424,12 +436,13 @@ function Skelly() {
 /* ── detail panel ── */
 
 function DetailPanel({
-  sku, can, onAction, onClose,
+  sku, can, onAction, onClose, onStockChange,
 }: {
   sku: Sku | null;
   can: (p: Permission) => boolean;
   onAction: (a: 'inward' | 'outward' | 'adjust') => void;
   onClose?: () => void;
+  onStockChange?: () => void;
 }) {
   const [history, setHistory] = useState<Movement[]>([]);
   const [busy, setBusy] = useState(false);
@@ -538,8 +551,23 @@ function DetailPanel({
           <Field label="Rack" value={sku.rack_location} />
           <Field label="Supplier" value={sku.supplier_name} />
           <Field label="Opening stock" value={fmtQty(sku.opening_stock, sku.unit_code)} />
+          {(sku as Sku & { roll_length_mm?: number }).roll_length_mm && (
+            <Field label="Roll length" value={`${(sku as Sku & { roll_length_mm?: number }).roll_length_mm} mm / roll`} />
+          )}
           {specs.filter(([, v]) => v).map(([k, v]) => <Field key={k} label={k} value={v} />)}
         </dl>
+
+        {/* ── Lot breakdown (timing belts with lot tracking) ── */}
+        <div className="px-5 py-4 border-b border-line">
+          <p className="eyebrow mb-3">Stock lots</p>
+          <SkuLotsPanel
+            skuId={sku.id}
+            skuCode={sku.sku_code}
+            unitCode={sku.unit_code}
+            can={can}
+            onStockChange={onStockChange}
+          />
+        </div>
 
         <div className="px-5 py-4">
           <p className="eyebrow mb-2.5">Movement history</p>
