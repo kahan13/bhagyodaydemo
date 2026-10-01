@@ -1,10 +1,35 @@
 'use client';
 
+/**
+ * Import screen — fixed for the real KAHAN workbook (3 sheets: Timing Belt,
+ * V-Belt, Conveyor Belt). Changes from the previous version:
+ *
+ *   1. Added CONVEYOR_BELT as a third product type.
+ *   2. Lot fields (lot_status, lot_qty, roll_length_mm) are now scoped with
+ *      types: ['TIMING_BELT'] — they no longer leak into V-Belt or Conveyor
+ *      Belt selections. Only Timing Belt rolls have a cut-pcs/full-sleeve
+ *      concept in the real sheets.
+ *   3. Added Conveyor-Belt-specific fields: `colour` (maps to the sheet's
+ *      COLOUR column) and reused the existing `family` field for the sheet's
+ *      PRODUCT FAMILY column (same grouping concept as Timing Belt's family).
+ *      `exact_size` (already a core field) is the natural target for the
+ *      sheet's SHORT DESCRIPTION formula column (e.g. "200 X 500 X 1.5").
+ *   4. Fixed the double-arrow dropdown bug: every `className="input"` (an
+ *      undefined CSS class with zero styling, so the browser's native arrow
+ *      showed through) is now `className="field"` (the actually-styled class
+ *      — appearance:none + a single custom chevron). The per-row "Your
+ *      Column" select additionally had a manual <ChevronDown> icon stacked on
+ *      top of that unstyled select, which is what produced two visible
+ *      arrows there specifically — that manual icon and its wrapping
+ *      `relative` div are removed since `.field` already draws its own
+ *      chevron.
+ */
+
 import { useRef, useState } from 'react';
-import { Upload, CheckCircle, AlertCircle, ChevronDown, Plus, Trash2 } from 'lucide-react';
+import { Upload, CheckCircle, AlertCircle, Plus, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
-type ProductType = 'TIMING_BELT' | 'V_BELT';
+type ProductType = 'TIMING_BELT' | 'V_BELT' | 'CONVEYOR_BELT';
 
 interface SystemField {
   key: string;
@@ -19,11 +44,13 @@ const CORE_FIELDS: SystemField[] = [
   { key: 'sku_code',           label: 'SKU / Part Number',        required: true },
   { key: 'exact_size',         label: 'Size / Designation',       required: true },
   { key: 'brand',              label: 'Brand',                    required: true },
-  { key: 'family',             label: 'Family',    required: true, types: ['TIMING_BELT'] },
+  { key: 'family',             label: 'Family',    required: true, types: ['TIMING_BELT', 'CONVEYOR_BELT'] },
   { key: 'profile',            label: 'Profile',   required: true, types: ['V_BELT'] },
-  // Lot fields: map these to create opening lots from the sheet
-  { key: 'lot_status',         label: 'Lot Status (CUT PCS / FULL SLEEVE)',  isLotField: true },
-  { key: 'lot_qty',            label: 'Lot Quantity (mm)',                   isLotField: true },
+  // Lot fields: map these to create opening lots from the sheet.
+  // Timing Belt only — Timing Belt is the only sheet with a CUT PCS / FULL
+  // SLEEVE column in the real data.
+  { key: 'lot_status',         label: 'Lot Status (CUT PCS / FULL SLEEVE)',  isLotField: true, types: ['TIMING_BELT'] },
+  { key: 'lot_qty',            label: 'Lot Quantity (mm)',                   isLotField: true, types: ['TIMING_BELT'] },
 ];
 
 // Optional SKU master fields – shown in the "add field" panel
@@ -36,7 +63,7 @@ const OPTIONAL_FIELDS: SystemField[] = [
   { key: 'rack_location',      label: 'Rack Location' },
   { key: 'display_name',       label: 'Display Name' },
   { key: 'is_active',          label: 'Active? (Yes / No / 1 / 0)' },
-  { key: 'roll_length_mm',     label: 'Roll Length (mm) — 1 full sleeve' },
+  { key: 'roll_length_mm',     label: 'Roll Length (mm) — 1 full sleeve', types: ['TIMING_BELT'] },
   { key: 'belt_form',          label: 'Belt Form',          types: ['TIMING_BELT'] },
   { key: 'pitch_mm',           label: 'Pitch (mm)',         types: ['TIMING_BELT'] },
   { key: 'pitch_length_mm',    label: 'Pitch Length (mm)',  types: ['TIMING_BELT'] },
@@ -46,6 +73,7 @@ const OPTIONAL_FIELDS: SystemField[] = [
   { key: 'construction',       label: 'Construction',       types: ['V_BELT'] },
   { key: 'nominal_length',     label: 'Nominal Length',     types: ['V_BELT'] },
   { key: 'length_designation', label: 'Length Designation', types: ['V_BELT'] },
+  { key: 'colour',             label: 'Colour',             types: ['CONVEYOR_BELT'] },
 ];
 
 const ALL_SYSTEM_KEYS = [...CORE_FIELDS, ...OPTIONAL_FIELDS].map((f) => f.key);
@@ -164,6 +192,9 @@ export default function ImportMappedView() {
     .filter((f) => f.required)
     .every((f) => mapping[f.key]);
 
+  // Lot columns are only meaningful for Timing Belt — CORE_FIELDS already
+  // hides lot_status/lot_qty for other product types, so this can only be
+  // true when productType === 'TIMING_BELT'.
   const hasLotColumns = mapping['lot_status'] && mapping['lot_qty'];
 
   const doImport = async () => {
@@ -213,7 +244,7 @@ export default function ImportMappedView() {
           <div>
             <p className="text-[13px] text-ink-2 mb-6">
               Upload your Excel (.xlsx) or CSV file. You&apos;ll map columns to system fields on the next screen.
-              Sheets with a <strong>CUT PCS / FULL SLEEVE</strong> column and a quantity column will automatically create opening lots for each row.
+              For Timing Belt sheets, a <strong>CUT PCS / FULL SLEEVE</strong> column and a quantity column will automatically create opening lots for each row.
             </p>
             <div
               onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
@@ -238,32 +269,35 @@ export default function ImportMappedView() {
               {sheets.length > 1 && (
                 <div>
                   <label className="label">Sheet / Tab</label>
-                  <select className="input" value={selectedSheet} onChange={(e) => onSheetChange(e.target.value)}>
+                  <select className="field" value={selectedSheet} onChange={(e) => onSheetChange(e.target.value)}>
                     {sheets.map((s) => <option key={s}>{s}</option>)}
                   </select>
                 </div>
               )}
               <div>
                 <label className="label">Product Type in this file</label>
-                <select className="input" value={productType} onChange={(e) => setProductType(e.target.value as ProductType)}>
+                <select className="field" value={productType} onChange={(e) => setProductType(e.target.value as ProductType)}>
                   <option value="TIMING_BELT">Timing Belts</option>
                   <option value="V_BELT">V-Belts</option>
+                  <option value="CONVEYOR_BELT">Conveyor Belt</option>
                 </select>
               </div>
             </div>
 
-            {/* Lot-status hint */}
-            {hasLotColumns ? (
-              <div className="mb-4 flex items-start gap-2 text-[12px] text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2.5">
-                <CheckCircle size={13} className="mt-0.5 shrink-0" />
-                Lot columns mapped — opening lots (FULL SLEEVE / CUT PCS) will be created from each row.
-              </div>
-            ) : (
-              <div className="mb-4 flex items-start gap-2 text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
-                <AlertCircle size={13} className="mt-0.5 shrink-0" />
-                Map <strong>Lot Status</strong> and <strong>Lot Quantity</strong> below to create opening lots from this sheet.
-                Opening stock will still be set from those columns.
-              </div>
+            {/* Lot-status hint — Timing Belt only */}
+            {productType === 'TIMING_BELT' && (
+              hasLotColumns ? (
+                <div className="mb-4 flex items-start gap-2 text-[12px] text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2.5">
+                  <CheckCircle size={13} className="mt-0.5 shrink-0" />
+                  Lot columns mapped — opening lots (FULL SLEEVE / CUT PCS) will be created from each row.
+                </div>
+              ) : (
+                <div className="mb-4 flex items-start gap-2 text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+                  <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                  Map <strong>Lot Status</strong> and <strong>Lot Quantity</strong> below to create opening lots from this sheet.
+                  Opening stock will still be set from those columns.
+                </div>
+              )
             )}
 
             <p className="text-[12px] text-ink-3 mb-3">
@@ -301,21 +335,18 @@ export default function ImportMappedView() {
                         )}
                       </td>
                       <td className="px-3 py-2">
-                        <div className="relative">
-                          <select
-                            className={`input w-full pr-7 ${sf.required && !mapping[sf.key] ? 'border-red-300' : ''}`}
-                            value={mapping[sf.key] ?? ''}
-                            onChange={(e) => setMap(sf.key, e.target.value)}
-                          >
-                            <option value="">— skip —</option>
-                            {fileHeaders.map((h) => <option key={h} value={h}>{h}</option>)}
-                          </select>
-                          <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-ink-3" />
-                        </div>
+                        <select
+                          className={`field w-full ${sf.required && !mapping[sf.key] ? 'border-red-300' : ''}`}
+                          value={mapping[sf.key] ?? ''}
+                          onChange={(e) => setMap(sf.key, e.target.value)}
+                        >
+                          <option value="">— skip —</option>
+                          {fileHeaders.map((h) => <option key={h} value={h}>{h}</option>)}
+                        </select>
                       </td>
                       <td className="px-3 py-2">
                         <input
-                          className="input w-full text-[12px]"
+                          className="field w-full text-[12px]"
                           placeholder={mapping[sf.key] ?? '—'}
                           value={labels[sf.key] ?? ''}
                           onChange={(e) => setLabels((l) => ({ ...l, [sf.key]: e.target.value }))}

@@ -35,6 +35,14 @@ const normaliseLotStatus = (raw: unknown): 'CUT_PCS' | 'FULL_SLEEVE' => {
   return 'FULL_SLEEVE';
 };
 
+type ProductType = 'TIMING_BELT' | 'V_BELT' | 'CONVEYOR_BELT';
+
+// V-Belt is the only type that groups by "profile" instead of "family" —
+// Timing Belt and Conveyor Belt sheets both use a family-style grouping
+// column (Timing Belt: FAMILY, Conveyor Belt: PRODUCT FAMILY).
+const familyKeyFor = (productType: ProductType): 'family' | 'profile' =>
+  productType === 'V_BELT' ? 'profile' : 'family';
+
 export async function POST(req: Request) {
   await requirePermission('settings.import');
   const svc = await supabaseService();
@@ -42,7 +50,7 @@ export async function POST(req: Request) {
   const fd = await req.formData();
   const file = fd.get('file') as File | null;
   const sheetName = fd.get('sheet') as string;
-  const productType = fd.get('productType') as 'TIMING_BELT' | 'V_BELT';
+  const productType = fd.get('productType') as ProductType;
   const mapping: Record<string, string> = JSON.parse(fd.get('mapping') as string);
   const labels: Record<string, string> = JSON.parse(fd.get('labels') as string);
 
@@ -59,7 +67,13 @@ export async function POST(req: Request) {
   const cell = (row: Record<string, unknown>, sfKey: string): unknown =>
     mapping[sfKey] ? row[mapping[sfKey]] : undefined;
 
-  const hasLotColumns = !!(mapping['lot_status'] && mapping['lot_qty']);
+  const familyKey = familyKeyFor(productType);
+
+  // Lots only ever apply to Timing Belt — V-Belt and Conveyor Belt sheets have
+  // no cut-pcs/full-sleeve concept, so this is gated by product type as well
+  // as by whether the columns were mapped (belt-and-braces: the import
+  // screen already hides these fields for non-Timing-Belt types).
+  const hasLotColumns = productType === 'TIMING_BELT' && !!(mapping['lot_status'] && mapping['lot_qty']);
 
   // ── 1. Collect unique brands and families ──────────────────────────────────
   const brandNames = new Set<string>();
@@ -67,7 +81,7 @@ export async function POST(req: Request) {
 
   for (const row of rows) {
     const brand = toStr(cell(row, 'brand'));
-    const family = toStr(cell(row, productType === 'TIMING_BELT' ? 'family' : 'profile'));
+    const family = toStr(cell(row, familyKey));
     if (brand) brandNames.add(brand);
     if (family) familyNames.add(family);
   }
@@ -124,7 +138,7 @@ export async function POST(req: Request) {
     const skuCode    = toStr(cell(row, 'sku_code'));
     const exactSize  = toStr(cell(row, 'exact_size'));
     const brandName  = toStr(cell(row, 'brand'));
-    const familyName = toStr(cell(row, productType === 'TIMING_BELT' ? 'family' : 'profile'));
+    const familyName = toStr(cell(row, familyKey));
 
     if (!skuCode)   { errors.push(`Row ${rowNum}: SKU code is empty.`);                               continue; }
     if (!exactSize) { errors.push(`Row ${rowNum}: Size is empty (${skuCode}).`);                      continue; }
@@ -140,13 +154,15 @@ export async function POST(req: Request) {
     // Opening stock: prefer explicit opening_stock column; fall back to lot_qty if lot columns mapped
     const lotQtyRaw     = hasLotColumns ? toNum(cell(row, 'lot_qty')) : null;
     const openingStock  = toNum(cell(row, 'opening_stock')) ?? lotQtyRaw ?? 0;
-    const rollLengthMm  = toNum(cell(row, 'roll_length_mm'));
+    const rollLengthMm  = productType === 'TIMING_BELT' ? toNum(cell(row, 'roll_length_mm')) : null;
 
     const isActiveRaw = cell(row, 'is_active');
     const isActive    = isActiveRaw === '' || isActiveRaw === undefined ? true : toBool(isActiveRaw);
 
     const displayNameRaw = toStr(cell(row, 'display_name'));
     const displayName    = displayNameRaw || `${exactSize} ${brandName}`;
+
+    const colourRaw = toStr(cell(row, 'colour'));
 
     const hier_l1   = familyName;
     const hier_l2   = exactSize;
@@ -168,6 +184,7 @@ export async function POST(req: Request) {
       opening_stock:      openingStock,
       current_stock:      openingStock,
       roll_length_mm:     rollLengthMm,
+      colour:             colourRaw || null,
       min_stock_level:    toNum(cell(row, 'min_stock_level'))    ?? 0,
       supplier_moq:       toNum(cell(row, 'supplier_moq'))       ?? 0,
       reorder_quantity:   toNum(cell(row, 'reorder_quantity'))   ?? 0,
@@ -213,7 +230,7 @@ export async function POST(req: Request) {
       inserted++;
     }
 
-    // ── Create opening lot if lot columns are mapped and qty > 0 ──────────
+    // ── Create opening lot if lot columns are mapped and qty > 0 (Timing Belt only) ──
     if (hasLotColumns && lotQtyRaw && lotQtyRaw > 0) {
       const lotStatus = normaliseLotStatus(cell(row, 'lot_status'));
 
@@ -235,8 +252,8 @@ export async function POST(req: Request) {
   }
 
   // ── 3. Save hierarchy labels ──────────────────────────────────────────────
-  const l1Key   = productType === 'TIMING_BELT' ? 'family' : 'profile';
-  const l1Label = labels[l1Key]       || mapping[l1Key]       || (productType === 'TIMING_BELT' ? 'Family' : 'Profile');
+  const l1Key   = familyKey;
+  const l1Label = labels[l1Key]        || mapping[l1Key]        || (familyKey === 'family' ? 'Family' : 'Profile');
   const l2Label = labels['exact_size'] || mapping['exact_size'] || 'Size';
   const l3Label = labels['brand']      || mapping['brand']      || 'Brand';
 
