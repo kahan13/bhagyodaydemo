@@ -3,356 +3,233 @@
 /**
  * LotAllocationPicker
  * ─────────────────────────────────────────────────────────────────────────────
- * Used inside the Production Order item form.
+ * Lets the admin pick WHICH physical lots (rolls) a production order line item
+ * should pull from, when the quantity can't all come from one roll.
  *
- * Props:
- *   skuId       – the SKU to allocate from
- *   unitCode    – mm / pcs / etc.
- *   required    – total qty the order item needs
- *   value       – current saved allocations (array)
- *   onChange    – called whenever allocations change
- *   readOnly    – show-only mode (fulfilled / cancelled orders)
+ * Rebuilt clean for Step 6 — the previous attempt assumed a `DRAFT` order
+ * status that never exists in this schema (see 013_lot_allocations.sql) and
+ * wasn't wired into the real ProductionOrdersView.tsx line-item form at all.
+ * This version is a self-contained, controlled component: it fetches a SKU's
+ * lots itself and reports the chosen split back to the parent as plain data —
+ * no assumptions about where it's rendered.
  *
- * Allocation model
- * ────────────────
- *   Each allocation = { lot_id, lot_no, status, available_qty, allocated_qty }
- *   The component lets the worker pick which lots to pull from and how much.
- *   If one lot can't cover the full qty, they split across two lots.
- *   A FULL_SLEEVE lot split is shown with a "will become CUT PCS" notice.
+ * Business rule it encodes (as explained to the user):
+ *   - Cut Pcs lots are offered before Full Sleeve lots — use up an already
+ *     opened roll before opening a fresh one.
+ *   - If one lot doesn't cover the full quantity, the remainder is pulled
+ *     from the next lot in line (auto-split), and that lot becomes Cut Pcs
+ *     the moment anything is taken from it.
+ *   - The book ledger is never touched here. This only records the PLAN;
+ *     lots are actually drained later, when the order item's outward is
+ *     posted (record_production_outward_with_lots in 013).
  *
- * The component does NOT write to the DB itself – the parent production-order
- * save handler writes `lot_allocations` rows via the API.
+ * Usage:
+ *   <LotAllocationPicker
+ *     skuId={sku.id}
+ *     unitCode={sku.unit_code}
+ *     qtyNeeded={50}
+ *     value={allocations}
+ *     onChange={(next, isComplete) => ...}
+ *   />
  */
 
-import { useEffect, useState, useMemo } from 'react';
-import { Layers, AlertTriangle, CheckCircle2, Info } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, CheckCircle2, RefreshCw, Wand2 } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { fmtQty } from '@/lib/format';
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface LotAllocation {
   lot_id: string;
   lot_no: string;
+  qty: number;
   status: 'FULL_SLEEVE' | 'CUT_PCS';
   roll_length_mm: number;
-  available_qty: number;
-  allocated_qty: number;
 }
 
 interface AvailableLot {
   id: string;
   lot_no: string;
-  status: 'FULL_SLEEVE' | 'CUT_PCS';
-  roll_length_mm: number;
+  status: 'FULL_SLEEVE' | 'CUT_PCS' | 'EXHAUSTED' | 'WASTED';
   current_qty: number;
-  unit_code: string;
-  pct_remaining: number | null;
+  roll_length_mm: number;
+  created_at: string;
 }
-
-// ── Status badge ──────────────────────────────────────────────────────────────
-
-const STATUS_STYLE: Record<string, string> = {
-  FULL_SLEEVE: 'bg-green-100 text-green-800 border-green-200',
-  CUT_PCS:     'bg-amber-100 text-amber-800 border-amber-200',
-};
-const STATUS_LABEL: Record<string, string> = {
-  FULL_SLEEVE: 'Full Sleeve',
-  CUT_PCS:     'Cut Pcs',
-};
-
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span className={`inline-flex items-center border rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_STYLE[status] ?? 'bg-slate-100 text-slate-500'}`}>
-      {STATUS_LABEL[status] ?? status}
-    </span>
-  );
-}
-
-// ── Main component ────────────────────────────────────────────────────────────
 
 export default function LotAllocationPicker({
   skuId,
   unitCode,
-  required,
+  qtyNeeded,
   value,
   onChange,
-  readOnly = false,
+  disabled = false,
 }: {
   skuId: string;
   unitCode: string;
-  required: number;                  // total qty the order item needs (mm)
+  qtyNeeded: number;
   value: LotAllocation[];
-  onChange: (allocs: LotAllocation[]) => void;
-  readOnly?: boolean;
+  onChange: (next: LotAllocation[], isComplete: boolean) => void;
+  disabled?: boolean;
 }) {
   const [lots, setLots] = useState<AvailableLot[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
 
-  // Load active (non-exhausted, non-wasted) lots for this SKU
-  useEffect(() => {
-    if (!skuId) return;
+  const load = async () => {
+    if (!skuId) { setLots([]); setLoading(false); return; }
     setLoading(true); setErr('');
-
-    void supabaseBrowser()
+    const { data, error } = await supabaseBrowser()
       .from('v_sku_lots')
-      .select('id,lot_no,status,roll_length_mm,current_qty,unit_code,pct_remaining')
+      .select('id,lot_no,status,current_qty,roll_length_mm,created_at')
       .eq('sku_id', skuId)
       .in('status', ['FULL_SLEEVE', 'CUT_PCS'])
-      .order('created_at', { ascending: true })   // oldest (cut pcs) first
-      .then(({ data, error }) => {
-        if (error) { setErr(error.message); setLoading(false); return; }
-        setLots((data ?? []) as AvailableLot[]);
-        setLoading(false);
-      });
-  }, [skuId]);
+      .gt('current_qty', 0)
+      // Cut pieces first (use up opened rolls before opening a new one),
+      // then oldest first within each group (FIFO).
+      .order('status', { ascending: false }) // 'FULL_SLEEVE' > 'CUT_PCS' alphabetically desc puts CUT_PCS first
+      .order('created_at', { ascending: true });
 
-  // Total allocated so far
+    if (error) { setErr(error.message); setLoading(false); return; }
+    setLots((data ?? []) as AvailableLot[]);
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [skuId]);
+
   const totalAllocated = useMemo(
-    () => value.reduce((s, a) => s + a.allocated_qty, 0),
+    () => value.reduce((s, a) => s + a.qty, 0),
     [value],
   );
+  const totalAvailable = useMemo(
+    () => lots.reduce((s, l) => s + l.current_qty, 0),
+    [lots],
+  );
+  const isComplete = qtyNeeded > 0 && totalAllocated === qtyNeeded;
+  const remaining = qtyNeeded - totalAllocated;
 
-  const remaining = required - totalAllocated;
-  const isComplete = remaining <= 0;
-  const isOver     = remaining < 0;
-
-  // ── Auto-suggest allocation ─────────────────────────────────────────────────
-  // Suggest button: greedily fill from CUT_PCS first, then FULL_SLEEVE
-  const suggest = () => {
-    if (!lots.length || required <= 0) return;
-    let need = required;
-    const result: LotAllocation[] = [];
-
-    // Sort: CUT_PCS first (use up partials), then FULL_SLEEVE (oldest first)
-    const sorted = [...lots].sort((a, b) => {
-      if (a.status === 'CUT_PCS' && b.status !== 'CUT_PCS') return -1;
-      if (b.status === 'CUT_PCS' && a.status !== 'CUT_PCS') return 1;
-      return 0;
-    });
-
-    for (const lot of sorted) {
+  // ── Auto-fill: greedy, cut-pcs-first, oldest-first (lots already sorted that way) ──
+  const autoFill = () => {
+    let need = qtyNeeded;
+    const next: LotAllocation[] = [];
+    for (const lot of lots) {
       if (need <= 0) break;
       const take = Math.min(need, lot.current_qty);
       if (take > 0) {
-        result.push({
-          lot_id:        lot.id,
-          lot_no:        lot.lot_no,
-          status:        lot.status,
+        next.push({
+          lot_id: lot.id,
+          lot_no: lot.lot_no,
+          qty: take,
+          status: lot.status as 'FULL_SLEEVE' | 'CUT_PCS',
           roll_length_mm: lot.roll_length_mm,
-          available_qty: lot.current_qty,
-          allocated_qty: take,
         });
         need -= take;
       }
     }
-
-    onChange(result);
+    onChange(next, need <= 0);
   };
 
-  // ── Per-lot qty change ──────────────────────────────────────────────────────
-  const setLotQty = (lotId: string, qty: number, lot: AvailableLot) => {
+  const setLotQty = (lot: AvailableLot, qty: number) => {
     const clamped = Math.max(0, Math.min(qty, lot.current_qty));
-    if (clamped === 0) {
-      // Remove this lot from allocations
-      onChange(value.filter((a) => a.lot_id !== lotId));
-      return;
-    }
-    const existing = value.find((a) => a.lot_id === lotId);
-    if (existing) {
-      onChange(value.map((a) => a.lot_id === lotId ? { ...a, allocated_qty: clamped } : a));
-    } else {
-      onChange([...value, {
-        lot_id:        lot.id,
-        lot_no:        lot.lot_no,
-        status:        lot.status,
-        roll_length_mm: lot.roll_length_mm,
-        available_qty: lot.current_qty,
-        allocated_qty: clamped,
-      }]);
-    }
+    const existing = value.filter((a) => a.lot_id !== lot.id);
+    const next = clamped > 0
+      ? [...existing, {
+          lot_id: lot.id, lot_no: lot.lot_no, qty: clamped,
+          status: lot.status as 'FULL_SLEEVE' | 'CUT_PCS', roll_length_mm: lot.roll_length_mm,
+        }]
+      : existing;
+    const total = next.reduce((s, a) => s + a.qty, 0);
+    onChange(next, total === qtyNeeded);
   };
 
-  // ── What will a lot's status become after allocation ─────────────────────────
-  const postStatus = (lot: AvailableLot, allocQty: number): 'FULL_SLEEVE' | 'CUT_PCS' | 'EXHAUSTED' => {
-    const after = lot.current_qty - allocQty;
-    if (after <= 0) return 'EXHAUSTED';
-    return 'CUT_PCS';   // any partial = cut pcs regardless of current status
-  };
+  const valueFor = (lotId: string) => value.find((a) => a.lot_id === lotId)?.qty ?? 0;
+
+  if (!skuId || qtyNeeded <= 0) return null;
 
   if (loading) {
-    return (
-      <div className="space-y-1.5">
-        {[0, 1].map((i) => <div key={i} className="h-10 skeleton rounded-md" />)}
-      </div>
-    );
+    return <div className="h-16 skeleton rounded-md mt-2" />;
   }
 
-  if (err) return <p className="text-[12px] text-red-500">{err}</p>;
+  if (err) {
+    return <p className="text-[11px] text-danger mt-2">Could not load lots: {err}</p>;
+  }
 
   if (lots.length === 0) {
     return (
-      <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px]">
-        <AlertTriangle size={14} className="text-amber-500 mt-px shrink-0" />
-        <p className="text-amber-800">No active lots available for this SKU. Receive stock via a Purchase Order first.</p>
+      <div className="mt-2 flex items-start gap-1.5 text-[11px] text-ink-3 bg-subtle border border-line rounded-md px-2.5 py-2">
+        <AlertTriangle size={12} className="mt-0.5 shrink-0 text-warn" />
+        <span>
+          No tracked lots for this SKU yet. Outward will still post to the book ledger normally —
+          it just won't be split by roll.
+        </span>
       </div>
     );
   }
 
   return (
-    <div className="space-y-3">
-
-      {/* Header row */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Layers size={13} className="text-ink-3" />
-          <span className="text-[12px] font-medium text-ink">Lot Allocation</span>
-        </div>
-
-        {/* Status pill */}
-        {isOver && (
-          <span className="inline-flex items-center gap-1 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-0.5">
-            <AlertTriangle size={11} /> Over by {fmtQty(Math.abs(remaining), unitCode)}
-          </span>
-        )}
-        {isComplete && !isOver && (
-          <span className="inline-flex items-center gap-1 text-[11px] text-green-700 bg-green-50 border border-green-200 rounded px-2 py-0.5">
-            <CheckCircle2 size={11} /> Fully allocated
-          </span>
-        )}
-        {!isComplete && (
-          <span className="text-[11px] text-ink-3">
-            {fmtQty(totalAllocated, unitCode)} / {fmtQty(required, unitCode)}
-          </span>
-        )}
-
-        {!readOnly && (
+    <div className="mt-2 rounded-md border border-line bg-subtle p-2.5 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-ink-3">
+          Allocate from lots — {fmtQty(totalAvailable, unitCode)} available across {lots.length} lot{lots.length > 1 ? 's' : ''}
+        </span>
+        <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={suggest}
-            className="btn btn-secondary btn-xs ml-auto"
-            title="Auto-fill from oldest lots"
+            onClick={load}
+            className="text-ink-3 hover:text-ink p-1"
+            title="Refresh lots"
           >
-            Auto-fill
+            <RefreshCw size={11} />
           </button>
-        )}
+          {!disabled && (
+            <button
+              type="button"
+              onClick={autoFill}
+              className="btn btn-secondary btn-sm !h-6 !py-0 !px-2 text-[11px] flex items-center gap-1"
+            >
+              <Wand2 size={11} /> Auto-fill
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Lot rows */}
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         {lots.map((lot) => {
-          const alloc     = value.find((a) => a.lot_id === lot.id);
-          const allocQty  = alloc?.allocated_qty ?? 0;
-          const rollsStr  = `${lot.roll_length_mm} mm / roll`;
-          const after     = lot.current_qty - allocQty;
-          const willBe    = allocQty > 0 ? postStatus(lot, allocQty) : null;
-
+          const qty = valueFor(lot.id);
           return (
-            <div
-              key={lot.id}
-              className={`rounded-lg border px-3 py-2.5 text-[12px] transition-colors ${
-                allocQty > 0 ? 'border-brand/40 bg-brand/5' : 'border-line bg-surface'
-              }`}
-            >
-              <div className="flex items-start gap-3">
-                {/* Lot info */}
-                <div className="flex-1 min-w-0 space-y-0.5">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-[11px] text-ink-3">{lot.lot_no}</span>
-                    <StatusBadge status={lot.status} />
-                    <span className="text-[11px] text-ink-3">{rollsStr}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-ink">
-                      Available: <span className="font-semibold num">{fmtQty(lot.current_qty, unitCode)}</span>
-                    </span>
-                    {lot.status === 'CUT_PCS' && lot.pct_remaining !== null && (
-                      <span className="text-ink-3">{lot.pct_remaining}% of roll</span>
-                    )}
-                  </div>
-
-                  {/* Progress bar for CUT_PCS */}
-                  {lot.status === 'CUT_PCS' && lot.pct_remaining !== null && (
-                    <div className="h-1 bg-amber-100 rounded-full overflow-hidden w-32">
-                      <div
-                        className="h-full bg-amber-400 rounded-full"
-                        style={{ width: `${Math.max(2, lot.pct_remaining)}%` }}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* Qty input */}
-                {!readOnly && (
-                  <div className="shrink-0 flex flex-col items-end gap-1">
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        className="w-6 h-6 rounded border border-line bg-subtle text-ink hover:bg-line flex items-center justify-center text-[13px] font-bold"
-                        onClick={() => setLotQty(lot.id, allocQty - 1, lot)}
-                        disabled={allocQty <= 0}
-                      >−</button>
-                      <input
-                        type="number"
-                        min={0}
-                        max={lot.current_qty}
-                        className="input w-24 text-center text-[13px] num h-7 px-1"
-                        value={allocQty || ''}
-                        placeholder="0"
-                        onChange={(e) => setLotQty(lot.id, Number(e.target.value), lot)}
-                      />
-                      <button
-                        type="button"
-                        className="w-6 h-6 rounded border border-line bg-subtle text-ink hover:bg-line flex items-center justify-center text-[13px] font-bold"
-                        onClick={() => setLotQty(lot.id, allocQty + 1, lot)}
-                        disabled={allocQty >= lot.current_qty}
-                      >+</button>
-                    </div>
-                    {allocQty > 0 && (
-                      <span className="text-[11px] text-ink-3 num">
-                        {after > 0 ? `${fmtQty(after, unitCode)} left` : 'will exhaust'}
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                {/* Read-only qty */}
-                {readOnly && allocQty > 0 && (
-                  <span className="shrink-0 num font-semibold text-[13px]">{fmtQty(allocQty, unitCode)}</span>
-                )}
-              </div>
-
-              {/* Post-allocation notice */}
-              {!readOnly && allocQty > 0 && willBe && (
-                <div className={`mt-2 pt-2 border-t border-line text-[11px] flex items-center gap-1.5 ${
-                  willBe === 'EXHAUSTED' ? 'text-slate-500' : 'text-amber-700'
-                }`}>
-                  <Info size={11} className="shrink-0" />
-                  {willBe === 'EXHAUSTED'
-                    ? 'This lot will be fully exhausted after fulfillment.'
-                    : lot.status === 'FULL_SLEEVE'
-                      ? `This full sleeve will become CUT PCS (${fmtQty(after, unitCode)} remaining).`
-                      : `${fmtQty(after, unitCode)} will remain as CUT PCS.`
-                  }
-                </div>
-              )}
+            <div key={lot.id} className="flex items-center gap-2 text-[12px]">
+              <span className="font-mono text-[11px] text-ink-3 w-28 shrink-0 truncate">{lot.lot_no}</span>
+              <span className={`badge shrink-0 ${lot.status === 'FULL_SLEEVE' ? 'badge-ok' : 'badge-warn'}`}>
+                {lot.status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs'}
+              </span>
+              <span className="text-ink-3 text-[11px] shrink-0 w-24">
+                {fmtQty(lot.current_qty, unitCode)} left
+              </span>
+              <input
+                type="number"
+                min={0}
+                max={lot.current_qty}
+                className="field h-7 text-[12px] text-right w-24 ml-auto"
+                value={qty || ''}
+                placeholder="0"
+                disabled={disabled}
+                onChange={(e) => setLotQty(lot, Number(e.target.value) || 0)}
+              />
             </div>
           );
         })}
       </div>
 
-      {/* Shortage warning */}
-      {!readOnly && !isComplete && lots.reduce((s, l) => s + l.current_qty, 0) < required && (
-        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px]">
-          <AlertTriangle size={14} className="text-red-500 mt-px shrink-0" />
-          <p className="text-red-800">
-            Total available stock ({fmtQty(lots.reduce((s, l) => s + l.current_qty, 0), unitCode)}) is less
-            than the required quantity ({fmtQty(required, unitCode)}).
-            Receive more stock before fulfilling this order.
-          </p>
-        </div>
-      )}
+      <div className={`flex items-center gap-1.5 text-[11px] pt-1 border-t border-line ${
+        isComplete ? 'text-ok' : remaining > 0 ? 'text-warn' : 'text-danger'
+      }`}>
+        {isComplete ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
+        {isComplete && <span>Fully allocated — {fmtQty(totalAllocated, unitCode)} across {value.length} lot{value.length > 1 ? 's' : ''}</span>}
+        {!isComplete && remaining > 0 && (
+          <span>{fmtQty(remaining, unitCode)} still unallocated of {fmtQty(qtyNeeded, unitCode)} needed</span>
+        )}
+        {!isComplete && remaining < 0 && (
+          <span>Over-allocated by {fmtQty(-remaining, unitCode)} — reduce a lot's quantity</span>
+        )}
+      </div>
     </div>
   );
 }

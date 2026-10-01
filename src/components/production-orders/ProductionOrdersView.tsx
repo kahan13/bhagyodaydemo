@@ -18,6 +18,7 @@ import type {
   TimeTag,
   DeliveryMode,
 } from '@/lib/types';
+import LotAllocationPicker, { type LotAllocation } from './LotAllocationPicker';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -533,10 +534,19 @@ interface LineItem {
   id: string;
   skuSearch: { sku: SkuWithAtp | null; query: string };
   quantity: string;
+  /** Which physical lots (rolls) this line should draw from. Only meaningful
+   *  for SKUs with roll_length_mm set; empty for everything else — those post
+   *  straight to the book ledger exactly as they always have. */
+  allocations: LotAllocation[];
 }
 
 function makeLineItem(): LineItem {
-  return { id: Math.random().toString(36).slice(2), skuSearch: { sku: null, query: '' }, quantity: '' };
+  return {
+    id: Math.random().toString(36).slice(2),
+    skuSearch: { sku: null, query: '' },
+    quantity: '',
+    allocations: [],
+  };
 }
 
 function makeEmptyForm() {
@@ -732,12 +742,47 @@ export default function ProductionOrdersView({
       .insert(itemRows)
       .select('*');
 
+    if (itemErr) { setSaving(false); setError(itemErr.message); return; }
+
+    // ── Persist lot allocation plans, one call per line item that has one ──
+    // Relies on Postgres returning multi-row INSERT...RETURNING in the same
+    // order as the VALUES list, same assumption this file already makes when
+    // it zips insertedItems straight into newOrder.items below. Only items
+    // whose picked lots fully cover the quantity are saved — an incomplete
+    // pick is left alone and that item simply posts to the book ledger with
+    // no lot split later, exactly like a non-lot-tracked SKU would.
+    const rows = (insertedItems ?? []) as ProductionOrderItem[];
+    const lotErrors: string[] = [];
+    for (let i = 0; i < validItems.length; i++) {
+      const li = validItems[i];
+      const row = rows[i];
+      if (!row || li.allocations.length === 0) continue;
+
+      const totalAllocated = li.allocations.reduce((s, a) => s + a.qty, 0);
+      const qtyNeeded = li.quantity ? Number(li.quantity) : 0;
+      if (totalAllocated !== qtyNeeded) continue; // picker already flags this to the user
+
+      const { error: allocErr } = await db.rpc('set_item_lot_allocations', {
+        p_item_id: row.id,
+        p_allocations: li.allocations.map((a) => ({ lot_id: a.lot_id, qty: a.qty })),
+      });
+      if (allocErr) {
+        lotErrors.push(`${li.skuSearch.sku?.sku_code ?? 'item'}: ${allocErr.message}`);
+      }
+    }
+
     setSaving(false);
-    if (itemErr) { setError(itemErr.message); return; }
+
+    if (lotErrors.length > 0) {
+      setError(
+        `Order ${order_no} was created, but lot allocation failed for: ${lotErrors.join('; ')}. ` +
+        `Those items will post to stock normally but without a lot split — you can leave them as is.`
+      );
+    }
 
     const newOrder: ProductionOrder = {
       ...(created as ProductionOrder),
-      items: (insertedItems ?? []) as ProductionOrderItem[],
+      items: rows,
     };
 
     setOrders((prev) => [newOrder, ...prev]);
@@ -810,7 +855,10 @@ export default function ProductionOrdersView({
     if (!outwardTarget) return;
     setRecordingOutward(true);
 
-    const { error: err } = await db.rpc('record_production_outward', {
+    // record_production_outward_with_lots (013) wraps the original
+    // record_production_outward (010) — same ledger behaviour, plus it drains
+    // whatever lots were allocated to this item (no-op if none were).
+    const { error: err } = await db.rpc('record_production_outward_with_lots', {
       p_poi_id:  outwardTarget.poi_id,
       p_notes:   notes || null,
       p_channel: 'WEB',
@@ -984,53 +1032,71 @@ export default function ProductionOrdersView({
                   : 0;
                 const effectiveAtp = li.skuSearch.sku ? li.skuSearch.sku.atp_stock - otherQty : Infinity;
 
+                // Lot tracking only applies once the SKU has a roll length defined
+                // in Product Master (migration 011). Everything else behaves exactly
+                // as before — straight to the book ledger, no lot picker shown.
+                const isLotTracked = !!li.skuSearch.sku?.roll_length_mm;
+                const qtyNum = parseFloat(li.quantity) || 0;
+
                 return (
-                  <div key={li.id} className="flex gap-2 items-start rounded-lg border border-line bg-subtle p-3">
-                    <span className="text-[11px] text-ink-3 font-mono mt-2.5 w-4 shrink-0 text-center">{idx + 1}</span>
-                    <div className="flex-1 min-w-0">
-                      <SkuCombobox
-                        value={li.skuSearch}
-                        onChange={(val) => updateItem(li.id, { skuSearch: val })}
-                        cacheVersion={skuVersion}
-                        placeholder="Search SKU…"
-                      />
-                      {li.skuSearch.sku && (
-                        <p className="text-[11px] text-ink-3 mt-0.5 pl-0.5">
-                          {li.skuSearch.sku.brand_name} · {li.skuSearch.sku.exact_size}
-                          {li.skuSearch.sku.reserved_qty > 0 && (
-                            <span className="text-warn ml-1">
-                              · {li.skuSearch.sku.reserved_qty} reserved
-                            </span>
-                          )}
-                        </p>
-                      )}
+                  <div key={li.id} className="rounded-lg border border-line bg-subtle p-3">
+                    <div className="flex gap-2 items-start">
+                      <span className="text-[11px] text-ink-3 font-mono mt-2.5 w-4 shrink-0 text-center">{idx + 1}</span>
+                      <div className="flex-1 min-w-0">
+                        <SkuCombobox
+                          value={li.skuSearch}
+                          onChange={(val) => updateItem(li.id, { skuSearch: val, allocations: [] })}
+                          cacheVersion={skuVersion}
+                          placeholder="Search SKU…"
+                        />
+                        {li.skuSearch.sku && (
+                          <p className="text-[11px] text-ink-3 mt-0.5 pl-0.5">
+                            {li.skuSearch.sku.brand_name} · {li.skuSearch.sku.exact_size}
+                            {li.skuSearch.sku.reserved_qty > 0 && (
+                              <span className="text-warn ml-1">
+                                · {li.skuSearch.sku.reserved_qty} reserved
+                              </span>
+                            )}
+                          </p>
+                        )}
+                      </div>
+                      <div className="w-24 shrink-0">
+                        <input
+                          className={`field text-center ${
+                            li.skuSearch.sku && parseFloat(li.quantity) > effectiveAtp
+                              ? 'border-danger focus:ring-danger/30'
+                              : ''
+                          }`}
+                          type="number"
+                          min="0"
+                          placeholder="Qty"
+                          value={li.quantity}
+                          onChange={(e) => updateItem(li.id, { quantity: e.target.value })}
+                        />
+                        {li.skuSearch.sku && (
+                          <AtpBadge sku={li.skuSearch.sku} qty={li.quantity} otherQty={otherQty} />
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-ghost h-8 w-8 p-0 mt-0.5 text-ink-3 hover:text-danger shrink-0"
+                        onClick={() => removeItem(li.id)}
+                        disabled={form.items.length === 1}
+                        title="Remove item"
+                      >
+                        <X size={14} />
+                      </button>
                     </div>
-                    <div className="w-24 shrink-0">
-                      <input
-                        className={`field text-center ${
-                          li.skuSearch.sku && parseFloat(li.quantity) > effectiveAtp
-                            ? 'border-danger focus:ring-danger/30'
-                            : ''
-                        }`}
-                        type="number"
-                        min="0"
-                        placeholder="Qty"
-                        value={li.quantity}
-                        onChange={(e) => updateItem(li.id, { quantity: e.target.value })}
+
+                    {isLotTracked && qtyNum > 0 && (
+                      <LotAllocationPicker
+                        skuId={li.skuSearch.sku!.id}
+                        unitCode={li.skuSearch.sku!.unit_code}
+                        qtyNeeded={qtyNum}
+                        value={li.allocations}
+                        onChange={(next) => updateItem(li.id, { allocations: next })}
                       />
-                      {li.skuSearch.sku && (
-                        <AtpBadge sku={li.skuSearch.sku} qty={li.quantity} otherQty={otherQty} />
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      className="btn btn-ghost h-8 w-8 p-0 mt-0.5 text-ink-3 hover:text-danger shrink-0"
-                      onClick={() => removeItem(li.id)}
-                      disabled={form.items.length === 1}
-                      title="Remove item"
-                    >
-                      <X size={14} />
-                    </button>
+                    )}
                   </div>
                 );
               })}

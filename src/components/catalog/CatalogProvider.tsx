@@ -21,7 +21,7 @@ const COLUMNS =
   'brand_code,brand_name,family_code,family_name,profile_group,belt_form,construction,standard,' +
   'pitch_mm,pitch_length_mm,width_mm,teeth,nominal_length,length_designation,rack_location,' +
   'unit_code,opening_stock,current_stock,min_stock_level,supplier_moq,reorder_quantity,' +
-  'supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty';
+  'supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty,roll_length_mm';
 
 let cache: Sku[] | null = null;
 let inflight: Promise<Sku[]> | null = null;
