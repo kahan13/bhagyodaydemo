@@ -139,6 +139,7 @@ export default function TransactionsView({
                 <th className="text-right">After</th>
                 <th>Entered By</th>
                 <th>Operated By</th>
+                <th>Lots</th>
                 <th>Invoice No</th>
                 {canReverse && <th />}
               </tr>
@@ -172,6 +173,7 @@ export default function TransactionsView({
                   <td className="num text-right">{fmtQty(m.new_stock)}</td>
                   <td className="text-ink-2">{m.user_name}</td>
                   <td className="text-ink-3">{(m as Movement & { operated_by_name?: string }).operated_by_name ?? '—'}</td>
+                  <td><LotCell m={m} /></td>
                   <td className="text-ink-3 font-mono text-[12px]">{(m as Movement & { invoice_no?: string }).invoice_no ?? '—'}</td>
                   {canReverse && (
                     <td className="text-right">
@@ -229,6 +231,34 @@ function Select({ label, value, onChange, options, width = 'w-[124px]' }: {
   );
 }
 
+const LOT_LABEL: Record<string, string> = {
+  FULL_SLEEVE: 'Full Sleeve', CUT_PCS: 'Cut Pcs', EXHAUSTED: 'used up', WASTED: 'wasted',
+};
+
+/** One line per lot, e.g. "30 mm from Cut Pcs · LOT-…-0003". */
+function lotLines(m: Movement): string[] {
+  const b = m.lot_breakdown;
+  if (!b || b.length === 0) return [];
+  const verb = m.txn_mode === 'REVERSAL'
+    ? (m.txn_type === 'INWARD' ? 'put back into' : 'closed')
+    : m.txn_type === 'INWARD' ? 'new' : 'from';
+  return b.map((e) =>
+    m.txn_type === 'INWARD' && m.txn_mode !== 'REVERSAL'
+      ? `${fmtQty(e.qty)} ${verb} ${LOT_LABEL.FULL_SLEEVE} roll · ${e.lot_no}`
+      : `${fmtQty(e.qty)} ${verb} ${LOT_LABEL[e.status] ?? e.status}${e.new_lot ? ' (new lot)' : ''} · ${e.lot_no}`);
+}
+
+function LotCell({ m }: { m: Movement }) {
+  if (!m.lot_tracked || m.txn_type === 'ADJUSTMENT') return <span className="text-ink-3">—</span>;
+  const lines = lotLines(m);
+  if (lines.length === 0) return <span className="text-ink-3 text-[11px]">lot not recorded</span>;
+  return (
+    <div className="space-y-0.5 min-w-[200px]">
+      {lines.map((l, i) => <p key={i} className="text-[11px] text-ink-2 num leading-snug">{l}</p>)}
+    </div>
+  );
+}
+
 function ReverseDialog({ movement, onClose, onDone }: {
   movement: Movement; onClose: () => void; onDone: () => void;
 }) {
@@ -272,6 +302,17 @@ function ReverseDialog({ movement, onClose, onDone }: {
               {fmtDate(movement.occurred_at)} {fmtTime(movement.occurred_at)} · {movement.user_name}
             </p>
           </div>
+          {movement.lot_tracked && lotLines(movement).length > 0 && (
+            <div className="bg-brand-soft/40 rounded-lg px-3.5 py-2.5">
+              <p className="text-[11px] font-semibold text-ink-2 mb-1">
+                {movement.txn_type === 'OUTWARD' ? 'Will be put back into these lots' : 'These lots will be closed'}
+              </p>
+              {lotLines(movement).map((l, i) => <p key={i} className="text-[12px] text-ink-2 num">{l}</p>)}
+              {movement.txn_type === 'INWARD' && (
+                <p className="text-[11px] text-ink-3 mt-1">Blocked if any of these rolls has already been used.</p>
+              )}
+            </div>
+          )}
           <div>
             <label className="label" htmlFor="reason">Reason (required)</label>
             <textarea id="reason" rows={2} className="field" value={reason} required

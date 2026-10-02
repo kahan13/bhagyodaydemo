@@ -121,6 +121,9 @@ export interface Movement {
   exact_size: string;
   brand_name: string;
   family_code: string;
+  /** Lots this movement created / used / put back: [{lot_no,status,qty,new_lot?}] */
+  lot_breakdown?: { lot_no: string; status: string; qty: number; new_lot?: boolean }[] | null;
+  lot_tracked?: boolean;
 }
 
 export interface DashboardSummary {
