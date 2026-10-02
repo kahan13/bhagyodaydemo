@@ -10,6 +10,7 @@ import MovementDialog from '@/components/inventory/MovementDialog';
 import SkuLotsPanel from '@/components/inventory/SkuLotsPanel';
 import LotBreakdown, { groupsInline, groupText } from '@/components/inventory/LotBreakdown';
 import { TYPE_META } from '@/lib/sheet-config';
+import { useListNav } from '@/lib/useListNav';
 
 const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
 
@@ -167,6 +168,13 @@ export default function InventoryBrowser({
     }).slice(0, 8);
   }, [viewSkus, query, lowOnly]);
 
+  const nav = useListNav({
+    count: searchHits.length,
+    open: searchOpen && searchHits.length > 0,
+    setOpen: setSearchOpen,
+    onPick: (i) => { if (searchHits[i]) openSku(searchHits[i]); },
+  });
+
   // List view: rows of the current product type, narrowed by the filters
   const sectionOf = (s: Sku) => s.section ?? s.colour ?? s.hier_l2;
   const typeRows = useMemo(() => viewSkus.filter((s) => s.product_type === type), [viewSkus, type]);
@@ -278,21 +286,28 @@ export default function InventoryBrowser({
           <div className="relative flex-1 min-w-[200px] max-w-[320px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
             <input
+              data-global-search
               className="field pl-9"
-              placeholder="Search size, brand or SKU"
+              placeholder="Search size, brand or SKU   ( / )"
               value={query}
               onChange={(e) => { setQuery(e.target.value); setSearchOpen(true); }}
+              onKeyDown={nav.onKeyDown}
+              role="combobox"
+              aria-expanded={searchOpen}
               onFocus={() => setSearchOpen(true)}
               onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
             />
             {searchOpen && searchHits.length > 0 && (
-              <div className="absolute z-30 left-0 right-0 top-full mt-1 rounded-lg border border-line bg-surface shadow-lg max-h-80 overflow-y-auto">
-                {searchHits.map((s) => (
+              <div ref={nav.listRef} className="absolute z-30 left-0 right-0 top-full mt-1 rounded-lg border border-line bg-surface shadow-lg max-h-80 overflow-y-auto">
+                {searchHits.map((s, idx) => (
                   <button
                     key={s.sku_code}
                     type="button"
+                    tabIndex={-1}
+                    data-nav-idx={idx}
+                    onMouseEnter={() => nav.setCursor(idx)}
                     onMouseDown={(e) => { e.preventDefault(); openSku(s); }}
-                    className="w-full text-left px-3 py-2 hover:bg-subtle border-b border-line last:border-0"
+                    className={`w-full text-left px-3 py-2 border-b border-line last:border-0 ${idx === nav.cursor ? 'bg-brand-soft' : 'hover:bg-subtle'}`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[13px] font-medium truncate">{s.exact_size} <span className="text-ink-2 font-normal">· {s.brand_name}</span></span>

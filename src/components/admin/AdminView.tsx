@@ -7,6 +7,7 @@ import {
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { fmtDateTime, ROLE_LABEL } from '@/lib/format';
 import type { Permission } from '@/lib/types';
+import ClearDataPanel from '@/components/admin/ClearDataPanel';
 
 interface UserRow { id: string; role_code: string; is_active: boolean }
 interface RoleRow { code: string; name: string; description: string | null; rank: number }
@@ -269,6 +270,8 @@ node scripts/import-master-excel.mjs \
               </>
             )}
           </section>
+
+          {can('settings.import') && <ClearDataPanel />}
         </div>
       )}
     </div>

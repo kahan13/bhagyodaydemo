@@ -40,6 +40,7 @@ export default function RollEntry({
       <div>
         <label className="label">Standard rolls received ({len} mm each) <span className="text-danger">*</span></label>
         <input
+          id="roll-count"
           className="field num text-[16px] h-11"
           inputMode="numeric"
           value={rows.count}

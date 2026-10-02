@@ -19,6 +19,7 @@ import type {
   TimeTag,
   DeliveryMode,
 } from '@/lib/types';
+import { useListNav } from '@/lib/useListNav';
 import LotAllocationPicker, { type LotAllocation } from './LotAllocationPicker';
 import type { LotGroup, PendingAdjustment } from '@/lib/types';
 import { loadReceiptModel, printReceipt, downloadReceiptPdf, receiptHtml, type ReceiptModel } from '@/lib/order-receipt';
@@ -289,6 +290,26 @@ function SkuCombobox({
     setOpen(false);
   }
 
+  const nav = useListNav({
+    count: options.length,
+    open: open && allOptions.length > 0,
+    setOpen,
+    onPick: (i) => {
+      const o = options[i];
+      if (!o) return;
+      const used = usedElsewhere ? usedElsewhere(o.sku, o.group) : 0;
+      const avail = Math.max(0, (o.group ? o.group.total_qty : o.sku.atp_stock) - used);
+      if (o.group && avail <= 0) return;
+      selectOption(o.sku, o.group);
+    },
+    isDisabled: (i) => {
+      const o = options[i];
+      if (!o || !o.group) return false;
+      const used = usedElsewhere ? usedElsewhere(o.sku, o.group) : 0;
+      return Math.max(0, o.group.total_qty - used) <= 0;
+    },
+  });
+
   return (
     <div className="relative">
       <div className="relative flex items-center">
@@ -300,6 +321,9 @@ function SkuCombobox({
           value={value.query}
           onChange={(e) => { onChange({ sku: null, query: e.target.value }); setOpen(true); }}
           onFocus={() => setOpen(true)}
+          onKeyDown={nav.onKeyDown}
+          role="combobox"
+          aria-expanded={open}
           autoComplete="off"
         />
         {value.query && (
@@ -316,7 +340,7 @@ function SkuCombobox({
 
       {open && (allOptions.length > 0) && (
         <div
-          ref={dropdownRef}
+          ref={(el) => { (dropdownRef as React.MutableRefObject<HTMLDivElement | null>).current = el; (nav.listRef as React.MutableRefObject<HTMLDivElement | null>).current = el; }}
           className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg max-h-72 overflow-y-auto"
         >
           <div className="sticky top-0 z-10 flex gap-1 bg-surface border-b border-line px-2 py-1.5">
@@ -337,7 +361,7 @@ function SkuCombobox({
               Nothing in this tab — try {tab === 'CUT_PCS' ? 'Full Sleeve' : 'Show all'}.
             </p>
           )}
-          {options.map(({ sku, group }) => {
+          {options.map(({ sku, group }, idx) => {
             const used = usedElsewhere ? usedElsewhere(sku, group) : 0;
             const avail = Math.max(0, (group ? group.total_qty : sku.atp_stock) - used);
             const atpColour =
@@ -349,8 +373,11 @@ function SkuCombobox({
             return (
               <button
                 key={`${sku.id}-${group?.status ?? 'x'}-${group?.piece_qty ?? 0}`}
+                data-nav-idx={idx}
+                tabIndex={-1}
+                onMouseEnter={() => nav.setCursor(idx)}
                 className={`w-full text-left px-3 py-2 transition-colors flex items-center justify-between gap-2 ${
-                  group && avail <= 0 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-subtle'
+                  group && avail <= 0 ? 'opacity-40 cursor-not-allowed' : idx === nav.cursor ? 'bg-brand-soft' : 'hover:bg-subtle'
                 }`}
                 disabled={!!group && avail <= 0}
                 onClick={() => selectOption(sku, group)}
@@ -815,6 +842,17 @@ export default function ProductionOrdersView({
 }) {
   const [orders, setOrders] = useState<ProductionOrder[]>(initialOrders);
   const [showForm, setShowForm] = useState(true);
+
+  // keyboard: "n" opens the new-order window and puts the cursor in the first field
+  useEffect(() => {
+    const h = (e: Event) => {
+      if ((e as CustomEvent).detail !== 'new-order') return;
+      setShowForm(true);
+      setTimeout(() => document.querySelector<HTMLInputElement>('[data-new-order-first]')?.focus(), 60);
+    };
+    window.addEventListener('bb:action', h);
+    return () => window.removeEventListener('bb:action', h);
+  }, []);
   const [ordersOpen, setOrdersOpen] = useState(false);
   const [movementsOpen, setMovementsOpen] = useState(false);
   const [mismatchOpen, setMismatchOpen] = useState(false);
@@ -1633,6 +1671,7 @@ export default function ProductionOrdersView({
               <input
                 className="field"
                 placeholder="e.g. Ramesh Industries"
+                data-new-order-first
                 value={form.customer_name}
                 onChange={(e) => setForm({ ...form, customer_name: e.target.value })}
               />

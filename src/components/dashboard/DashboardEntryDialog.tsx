@@ -6,6 +6,7 @@ import { useCatalog } from '@/components/catalog/CatalogProvider';
 import { fmtQty } from '@/lib/format';
 import type { ProductType, Sku } from '@/lib/types';
 import LotBreakdown, { groupsInline } from '@/components/inventory/LotBreakdown';
+import { useListNav } from '@/lib/useListNav';
 import RollEntry, { emptyRolls, rollsPayload, rollsTotal, type RollRows } from '@/components/inventory/RollEntry';
 
 interface User { id: string; full_name: string; }
@@ -66,7 +67,16 @@ export default function DashboardEntryDialog({
     setRolls(emptyRolls());
     setSearch(`${s.exact_size} — ${s.brand_name}`);
     setDropOpen(false);
+    // keyboard flow: straight on to the quantity / roll box
+    setTimeout(() => (document.getElementById('d-qty') ?? document.getElementById('roll-count'))?.focus(), 60);
   };
+
+  const nav = useListNav({
+    count: pool.length,
+    open: dropOpen && !sku,
+    setOpen: setDropOpen,
+    onPick: (i) => { if (pool[i]) selectSku(pool[i]); },
+  });
 
   const clearSku = () => {
     setSku(null);
@@ -158,10 +168,14 @@ export default function DashboardEntryDialog({
                 ref={searchRef}
                 className="field pl-8 pr-8"
                 placeholder="Search size, brand or SKU…"
+                autoFocus
                 value={search}
                 autoComplete="off"
                 onChange={(e) => { setSearch(e.target.value); setSku(null); setDropOpen(true); }}
                 onFocus={() => setDropOpen(true)}
+                onKeyDown={nav.onKeyDown}
+                role="combobox"
+                aria-expanded={dropOpen && !sku}
               />
               {sku ? (
                 <button type="button" onClick={clearSku} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink">
@@ -173,13 +187,16 @@ export default function DashboardEntryDialog({
             </div>
 
             {dropOpen && !sku && (
-              <div className="absolute z-10 mt-1 w-full bg-surface border border-line rounded-lg shadow-lg max-h-52 overflow-y-auto">
+              <div ref={nav.listRef} className="absolute z-10 mt-1 w-full bg-surface border border-line rounded-lg shadow-lg max-h-52 overflow-y-auto">
                 {pool.length === 0 ? (
                   <p className="px-3 py-4 text-[13px] text-ink-3 text-center">No matches</p>
-                ) : pool.map((s) => (
+                ) : pool.map((s, idx) => (
                   <button
-                    key={s.id} type="button"
-                    className="w-full text-left px-3 py-2.5 hover:bg-subtle flex items-center justify-between gap-3 border-b border-line last:border-0"
+                    key={s.id} type="button" tabIndex={-1}
+                    data-nav-idx={idx}
+                    aria-selected={idx === nav.cursor}
+                    className={`w-full text-left px-3 py-2.5 flex items-center justify-between gap-3 border-b border-line last:border-0 ${idx === nav.cursor ? 'bg-brand-soft' : 'hover:bg-subtle'}`}
+                    onMouseEnter={() => nav.setCursor(idx)}
                     onMouseDown={() => selectSku(s)}
                   >
                     <span>

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   LayoutDashboard, Boxes, ArrowLeftRight, FileText, Settings,
@@ -11,6 +11,8 @@ import { ROLE_LABEL, initials } from '@/lib/format';
 import type { Permission, Session } from '@/lib/types';
 import SignOutButton from '@/components/shell/SignOutButton';
 import CommandPalette from '@/components/shell/CommandPalette';
+import ShortcutsList from '@/components/shell/ShortcutsList';
+import { GO_KEYS } from '@/lib/shortcuts';
 
 type Item = { href: string; label: string; icon: typeof Boxes; needs?: Permission };
 
@@ -39,6 +41,8 @@ export default function AppShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [helpOpen, setHelpOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -46,15 +50,78 @@ export default function AppShell({
   useEffect(() => { setNavOpen(false); setMenuOpen(false); }, [pathname]);
 
   useEffect(() => {
+    let gAt = 0;   // when "g" was pressed (for g-then-letter navigation)
+    const typing = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+    };
+    const topModal = () => {
+      const all = document.querySelectorAll<HTMLElement>('div.fixed.inset-0');
+      return [...all].filter((m) => !m.classList.contains('lg:hidden')).pop() ?? null;
+    };
+
     const onKey = (e: KeyboardEvent) => {
+      // Ctrl/Cmd + K : quick search
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setPaletteOpen(true);
+        return;
+      }
+
+      // Esc : close the topmost window by pressing its own close / cancel button
+      if (e.key === 'Escape' && !e.defaultPrevented) {
+        if (helpOpen) { setHelpOpen(false); return; }
+        const modal = topModal();
+        if (modal) {
+          const close =
+            modal.querySelector<HTMLElement>('button[aria-label="Close"]') ??
+            modal.querySelector<HTMLElement>('button:has(svg.lucide-x)') ??
+            [...modal.querySelectorAll<HTMLElement>('button')].find((b) => /^\s*cancel\s*$/i.test(b.textContent ?? ''));
+          close?.click();
+        }
+        return;
+      }
+
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (typing(e.target)) return;
+      if (paletteOpen || helpOpen) return;
+
+      const k = e.key;
+
+      if (k === '?') { e.preventDefault(); setHelpOpen(true); return; }
+
+      if (k === '/') {
+        e.preventDefault();
+        const box = document.querySelector<HTMLInputElement>('[data-global-search]');
+        if (box) { box.focus(); box.select(); } else setPaletteOpen(true);
+        return;
+      }
+
+      if (topModal()) return;   // a window is open: page shortcuts stay quiet
+
+      // g then letter
+      if (gAt && Date.now() - gAt < 1200) {
+        const dest = GO_KEYS[k.toLowerCase()];
+        gAt = 0;
+        if (dest) {
+          e.preventDefault();
+          router.push(dest.href);
+        }
+        return;
+      }
+      if (k.toLowerCase() === 'g') { gAt = Date.now(); return; }
+
+      // page actions
+      const act = ({ i: 'inward', o: 'outward', n: 'new-order' } as Record<string, string>)[k.toLowerCase()];
+      if (act) {
+        window.dispatchEvent(new CustomEvent('bb:action', { detail: act }));
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [router, paletteOpen, helpOpen]);
 
   const allowed = (i: Item) => !i.needs || session.permissions.includes(i.needs);
   const active  = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
@@ -124,6 +191,16 @@ export default function AppShell({
           <Group items={MAIN} />
           <Group title="Administration" items={ADMIN} />
         </div>
+
+        <div className="px-3 py-3 border-t border-line">
+          <Link
+            href="/shortcuts"
+            className="flex items-center gap-2 h-8 px-2.5 rounded-lg text-[13px] text-ink-3 hover:bg-subtle transition-colors"
+          >
+            <span>Keyboard shortcuts</span>
+            <kbd className="ml-auto text-[10px] px-1.5 py-0.5 rounded border border-line bg-subtle text-ink-3">?</kbd>
+          </Link>
+        </div>
       </aside>
 
       {navOpen && (
@@ -182,6 +259,18 @@ export default function AppShell({
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+
+      {helpOpen && (
+        <div className="fixed inset-0 z-[80] bg-ink/25 backdrop-blur-[2px] grid place-items-center p-4" onClick={() => setHelpOpen(false)}>
+          <div className="w-full max-w-[820px] max-h-[88vh] overflow-y-auto bg-canvas rounded-xl border border-line shadow-xl p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-[15px] font-semibold">Keyboard shortcuts</h2>
+              <button className="btn btn-ghost h-7 w-7 p-0" aria-label="Close" onClick={() => setHelpOpen(false)}><X size={15} /></button>
+            </div>
+            <ShortcutsList />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

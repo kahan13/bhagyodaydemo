@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, ShoppingCart } from 'lucide-react';
 import DashboardEntryDialog from '@/components/dashboard/DashboardEntryDialog';
 import Link from 'next/link';
@@ -16,6 +16,17 @@ export default function DashboardActions({
   lastInvoice: string | null;
 }) {
   const [open, setOpen] = useState<'inward' | 'outward' | null>(null);
+
+  // keyboard: i = inward, o = outward
+  useEffect(() => {
+    if (!canWrite) return;
+    const h = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (d === 'inward' || d === 'outward') setOpen(d);
+    };
+    window.addEventListener('bb:action', h);
+    return () => window.removeEventListener('bb:action', h);
+  }, [canWrite]);
 
   const done = () => {
     setOpen(null);

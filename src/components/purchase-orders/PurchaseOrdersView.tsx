@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
 import { fmtQty, fmtDate } from '@/lib/format';
+import { useListNav } from '@/lib/useListNav';
 import type { ProductType, Sku } from '@/lib/types';
 
 type ItemStatus  = 'PENDING' | 'PARTIAL' | 'FULFILLED';
@@ -101,6 +102,14 @@ function SkuPicker({ onSelect, selected }: { onSelect: (s: Sku) => void; selecte
       .slice(0, 50);
   }, [skus, type, search]);
 
+  const nav = useListNav({
+    count: pool.length,
+    open,
+    setOpen,
+    onPick: (i) => { const s = pool[i]; if (s && !selected.includes(s.id)) { onSelect(s); setSearch(''); setOpen(false); } },
+    isDisabled: (i) => !!pool[i] && selected.includes(pool[i].id),
+  });
+
   return (
     <div className="space-y-2">
       <div className="flex gap-1 p-0.5 bg-subtle rounded-md">
@@ -127,21 +136,26 @@ function SkuPicker({ onSelect, selected }: { onSelect: (s: Sku) => void; selecte
             autoComplete="off"
             onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
             onFocus={() => setOpen(true)}
+            onKeyDown={nav.onKeyDown}
+            role="combobox"
+            aria-expanded={open}
           />
         </div>
         {open && (
-          <div className="absolute z-20 mt-1 w-full bg-surface border border-line rounded-lg shadow-lg max-h-64 overflow-y-auto">
+          <div ref={nav.listRef} className="absolute z-20 mt-1 w-full bg-surface border border-line rounded-lg shadow-lg max-h-64 overflow-y-auto">
             {pool.length === 0 ? (
               <p className="px-3 py-4 text-[12px] text-ink-3 text-center">No matches</p>
             ) : (
-              pool.map((s) => {
+              pool.map((s, idx) => {
                 const already = selected.includes(s.id);
                 return (
                   <button
-                    key={s.id} type="button"
+                    key={s.id} type="button" tabIndex={-1}
                     disabled={already}
+                    data-nav-idx={idx}
+                    onMouseEnter={() => nav.setCursor(idx)}
                     className={`w-full text-left px-3 py-2.5 flex items-center justify-between gap-3 border-b border-line last:border-0 ${
-                      already ? 'opacity-40 cursor-not-allowed bg-subtle' : 'hover:bg-subtle'
+                      already ? 'opacity-40 cursor-not-allowed bg-subtle' : idx === nav.cursor ? 'bg-brand-soft' : 'hover:bg-subtle'
                     }`}
                     onMouseDown={() => { if (!already) { onSelect(s); setSearch(''); setOpen(false); } }}
                   >
@@ -335,7 +349,13 @@ function CreateOrderDialog({
   const [busy, setBusy]         = useState(false);
   const [err, setErr]           = useState<string | null>(null);
 
-  const addSku     = (s: Sku) => setLines((prev) => [...prev, { sku: s, qty: '' }]);
+  const addSku     = (s: Sku) => {
+    setLines((prev) => [...prev, { sku: s, qty: '' }]);
+    setTimeout(() => {
+      const boxes = document.querySelectorAll<HTMLInputElement>('[data-po-qty]');
+      boxes[boxes.length - 1]?.focus();
+    }, 60);
+  };
   const removeLine = (i: number) => setLines((prev) => prev.filter((_, j) => j !== i));
   const setQty     = (i: number, v: string) =>
     setLines((prev) => prev.map((l, j) => j === i ? { ...l, qty: v.replace(/[^0-9.]/g, '') } : l));
@@ -433,6 +453,7 @@ function CreateOrderDialog({
                       inputMode="decimal"
                       value={l.qty}
                       onChange={(e) => setQty(i, e.target.value)}
+                      data-po-qty
                       placeholder={`qty (${l.sku.unit_code})`}
                     />
                     <button type="button" onClick={() => removeLine(i)} className="text-ink-3 hover:text-danger p-1">
@@ -744,6 +765,13 @@ export default function PurchaseOrdersView() {
   }, [catalogSkus]);                                             // ← re-enrich when catalog loads
 
   useEffect(() => { load(); }, [load]);
+
+  // keyboard: "n" starts a new purchase order
+  useEffect(() => {
+    const h = (e: Event) => { if ((e as CustomEvent).detail === 'new-order') setShowCreate(true); };
+    window.addEventListener('bb:action', h);
+    return () => window.removeEventListener('bb:action', h);
+  }, []);
 
   const handleRecordInward = async (order: Order) => {
     setRecording(true);
