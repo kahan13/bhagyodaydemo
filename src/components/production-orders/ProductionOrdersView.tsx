@@ -7,6 +7,7 @@ import {
   ArrowDownCircle, CheckSquare, ChevronDown, ChevronRight, Trash, Printer, FileDown,
 } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
+import { useCatalog } from '@/components/catalog/CatalogProvider';
 import type {
   ProductionOrder,
   ProductionOrderItem,
@@ -665,6 +666,7 @@ interface MovementRow {
   occurred_at: string;
   user_name: string;
   notes: string | null;
+  lot_breakdown: { lot_no: string; status: string; qty: number }[] | null;
   skus: { sku_code: string; display_name: string } | null;
 }
 
@@ -688,6 +690,15 @@ function MovementsPane({ rows, loading, pendingMovementIds }: { rows: MovementRo
               <div className="text-[11px] text-ink-3 truncate">
                 {m.txn_no} · {m.user_name} · {formatDateTime(m.occurred_at)}{m.notes ? ` · ${m.notes}` : ''}
               </div>
+              {m.lot_breakdown && m.lot_breakdown.length > 0 && (
+                <div className="flex gap-1 flex-wrap mt-1">
+                  {m.lot_breakdown.map((b, k) => (
+                    <span key={k} className={`badge ${b.status === 'FULL_SLEEVE' ? 'badge-ok' : 'badge-warn'}`}>
+                      {b.status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs'} {b.qty}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="text-right shrink-0">
               <div className="font-medium">{tag} {m.quantity} {m.unit_code}</div>
@@ -786,6 +797,28 @@ export default function ProductionOrdersView({
   const [mismatchOpen, setMismatchOpen] = useState(false);
   const [directOpen, setDirectOpen] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptModel | null>(null);
+  const [allocMap, setAllocMap] = useState<Record<string, { label: string; qty: number; piece: number }[]>>({});
+
+  async function loadAllocs(list: ProductionOrder[]) {
+    const ids = list.flatMap((o) => (o.items ?? []).map((i) => i.id));
+    if (ids.length === 0) { setAllocMap({}); return; }
+    const { data } = await db
+      .from('lot_allocations')
+      .select('item_id,allocated_qty,lot_status,piece_qty,sku_lots(status,current_qty)')
+      .in('item_id', ids);
+    const m: Record<string, { label: string; qty: number; piece: number }[]> = {};
+    for (const r of (data ?? []) as any[]) {
+      const status = r.lot_status ?? r.sku_lots?.status ?? 'CUT_PCS';
+      (m[r.item_id] ??= []).push({
+        label: status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs',
+        qty: Number(r.allocated_qty),
+        piece: Number(r.piece_qty ?? r.sku_lots?.current_qty ?? 0),
+      });
+    }
+    for (const k of Object.keys(m)) m[k].sort((a, b) => (a.label === b.label ? 0 : a.label === 'Cut Pcs' ? -1 : 1));
+    setAllocMap(m);
+  }
+  useEffect(() => { loadAllocs(orders); }, [orders]); // eslint-disable-line react-hooks/exhaustive-deps
   const [pending, setPending] = useState<PendingAdjustment[]>([]);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [movements, setMovements] = useState<MovementRow[]>([]);
@@ -807,6 +840,7 @@ export default function ProductionOrdersView({
   const [outwardTarget, setOutwardTarget] = useState<MismatchOrderItem | null>(null);
   const [recordingOutward, setRecordingOutward] = useState(false);
 
+  const { refresh: refreshCatalog } = useCatalog();
   const db = supabaseBrowser();
   const canCreate = session.permissions.includes('transactions.create');
 
@@ -837,7 +871,7 @@ export default function ProductionOrdersView({
     setLoadingMovements(true);
     const { data } = await db
       .from('inventory_movements')
-      .select('id,txn_no,txn_type,txn_mode,quantity,unit_code,occurred_at,user_name,notes,skus(sku_code,display_name)')
+      .select('id,txn_no,txn_type,txn_mode,quantity,unit_code,occurred_at,user_name,notes,lot_breakdown,skus(sku_code,display_name)')
       .order('occurred_at', { ascending: false })
       .limit(40);
     setMovements((data ?? []) as unknown as MovementRow[]);
@@ -856,6 +890,8 @@ export default function ProductionOrdersView({
   useEffect(() => { fetchMismatches(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function refreshAll() {
+    refreshCatalog();            // Inventory view must see the new lot state
+    loadAllocs(orders);
     if (movementsOpen) fetchMovements();
     invalidateSkuCache();
     setSkuVersion(getSkuVersion());
@@ -1068,31 +1104,45 @@ export default function ProductionOrdersView({
     // no lot split later, exactly like a non-lot-tracked SKU would.
     const rows = (insertedItems ?? []) as ProductionOrderItem[];
     const lotErrors: string[] = [];
-    for (let i = 0; i < validItems.length; i++) {
+    for (let i = 0; i < validItems.length && !isDirect; i++) {
       const li = validItems[i];
       const row = rows[i];
-      if (!row || li.allocations.length === 0) continue;
-
-      const totalAllocated = li.allocations.reduce((s, a) => s + a.qty, 0);
+      const sku = li.skuSearch.sku;
+      if (!row || !sku?.roll_length_mm) continue;       // only roll-tracked SKUs have lots
       const qtyNeeded = li.quantity ? Number(li.quantity) : 0;
-      if (totalAllocated !== qtyNeeded) continue; // picker already flags this to the user
+      const totalAllocated = li.allocations.reduce((sum, a) => sum + a.qty, 0);
 
-      const { error: allocErr } = await db.rpc('set_item_lot_allocations', {
-        p_item_id: row.id,
-        p_allocations: li.allocations.map((a) => ({ lot_id: a.lot_id, qty: a.qty })),
-      });
-      if (allocErr) {
-        lotErrors.push(`${li.skuSearch.sku?.sku_code ?? 'item'}: ${allocErr.message}`);
+      let planned = false;
+      // 1) the exact lots shown in the picker, when they cover the quantity
+      if (li.allocations.length > 0 && totalAllocated === qtyNeeded) {
+        const { error: allocErr } = await db.rpc('set_item_lot_allocations', {
+          p_item_id: row.id,
+          p_allocations: li.allocations.map((a) => ({ lot_id: a.lot_id, qty: a.qty })),
+        });
+        planned = !allocErr;
+      }
+      // 2) otherwise let the database plan it from the classification that was picked
+      if (!planned && li.skuSearch.group) {
+        const g = li.skuSearch.group;
+        const { error: planErr } = await db.rpc('plan_item_lots', {
+          p_item_id: row.id, p_status: g.status, p_piece_qty: g.piece_qty,
+        });
+        if (planErr) lotErrors.push(`${sku.sku_code}: ${planErr.message}`);
+        else planned = true;
+      }
+      if (!planned && !li.skuSearch.group) {
+        lotErrors.push(`${sku.sku_code}: pick Cut Pcs or Full Sleeve from the search list so the lots can be planned`);
       }
     }
 
     setSaving(false);
 
     if (lotErrors.length > 0) {
-      setError(
-        `Order ${order_no} was created, but lot allocation failed for: ${lotErrors.join('; ')}. ` +
-        `Those items will post to stock normally but without a lot split — you can leave them as is.`
-      );
+      const msg =
+        `Order ${order_no} was created, but the lots could not be planned for: ${lotErrors.join('; ')}. ` +
+        `When outward is recorded these items will use Cut Pcs first, then the oldest Full Sleeve.`;
+      setError(msg);
+      window.alert(msg);
     }
 
     const newOrder: ProductionOrder = {
@@ -1277,6 +1327,19 @@ export default function ProductionOrdersView({
                           )}
                           {item.is_fulfilled && (
                             <span className="text-[10px] bg-ok/10 text-ok px-1.5 rounded-full shrink-0">Outward posted</span>
+                          )}
+                          {(allocMap[item.id] ?? []).length > 0 && (
+                            <span className="flex gap-1 flex-wrap">
+                              {allocMap[item.id].map((p, k) => (
+                                <span
+                                  key={k}
+                                  className={`badge ${p.label === 'Full Sleeve' ? 'badge-ok' : 'badge-warn'}`}
+                                  title={p.label === 'Full Sleeve' && p.piece > p.qty ? `${p.qty} of a ${p.piece} sleeve — rest becomes Cut Pcs` : undefined}
+                                >
+                                  {p.label} {p.qty}
+                                </span>
+                              ))}
+                            </span>
                           )}
                         </li>
                       ))}
@@ -1670,10 +1733,13 @@ export default function ProductionOrdersView({
                         />
                         {li.skuSearch.sku && (
                           grp ? (
-                            // Only the picked classification is shown — never the SKU's overall total
+                            // Only the picked classification; live: what is left after THIS line's quantity
                             <p className="text-[10px] text-center mt-0.5 leading-tight">
                               <span className="text-ink-3">{li.skuSearch.sku.unit_code} · </span>
-                              <span className="text-ok">{Math.max(0, grp.total_qty - otherGroupQty)} avail</span>
+                              <span className={Math.max(0, grpAvail - (parseFloat(li.quantity) || 0)) === 0 ? 'text-warn font-semibold' : 'text-ok'}>
+                                {Math.max(0, grpAvail - (parseFloat(li.quantity) || 0))} left
+                              </span>
+                              <span className="text-ink-3 block">of {grpAvail} {groupLabel(grp)}</span>
                             </p>
                           ) : (
                             <AtpBadge sku={li.skuSearch.sku} qty={li.quantity} otherQty={otherQty} />
