@@ -1247,7 +1247,6 @@ export default function ProductionOrdersView({
                           onChange={(val) => updateItem(li.id, {
                             skuSearch: val,
                             allocations: [],
-                            ...(val.group && !li.quantity ? { quantity: String(val.group.piece_qty) } : {}),
                           })}
                           cacheVersion={skuVersion}
                           placeholder="Search SKU…"
@@ -1278,11 +1277,20 @@ export default function ProductionOrdersView({
                           onChange={(e) => updateItem(li.id, { quantity: e.target.value })}
                         />
                         {li.skuSearch.sku && (
-                          <AtpBadge
-                            sku={grp ? { ...li.skuSearch.sku, atp_stock: grp.total_qty + freshExtra } : li.skuSearch.sku}
-                            qty={li.quantity}
-                            otherQty={grp ? otherGroupQty : otherQty}
-                          />
+                          grp ? (
+                            // Only the picked classification is shown — never the SKU's overall total
+                            <p className="text-[10px] text-center mt-0.5 leading-tight">
+                              <span className="text-ink-3">{li.skuSearch.sku.unit_code} · </span>
+                              <span className="text-ok">{Math.max(0, grp.total_qty - otherGroupQty)} avail</span>
+                              {grp.status === 'CUT_PCS' && (parseFloat(li.quantity) || 0) > grp.total_qty - otherGroupQty && (
+                                <span className="text-warn block">
+                                  +{(parseFloat(li.quantity) || 0) - (grp.total_qty - otherGroupQty)} from new sleeve
+                                </span>
+                              )}
+                            </p>
+                          ) : (
+                            <AtpBadge sku={li.skuSearch.sku} qty={li.quantity} otherQty={otherQty} />
+                          )
                         )}
                       </div>
                       <button
