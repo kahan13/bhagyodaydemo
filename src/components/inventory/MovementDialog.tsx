@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { X, Check } from 'lucide-react';
 import { fmtQty } from '@/lib/format';
 import type { Channel, Sku } from '@/lib/types';
+import LotBreakdown from '@/components/inventory/LotBreakdown';
 
 /**
  * One dialog for inward, outward and adjustment, on desktop and phone alike.
@@ -85,9 +86,13 @@ export default function MovementDialog({
             <p className="text-[11px] text-ink-3 mt-0.5">
               {sku.brand_name} · {sku.family_name}
             </p>
-            <p className="num text-[12px] text-ink-2 mt-1.5">
-              In stock {fmtQty(sku.current_stock, sku.unit_code)}
-            </p>
+            {sku.lot_groups && sku.lot_groups.length > 0 ? (
+              <LotBreakdown groups={sku.lot_groups} className="mt-1.5" />
+            ) : (
+              <p className="num text-[12px] text-ink-2 mt-1.5">
+                In stock {fmtQty(sku.current_stock, sku.unit_code)}
+              </p>
+            )}
           </div>
 
           <div>

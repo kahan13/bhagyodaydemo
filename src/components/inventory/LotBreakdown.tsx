@@ -4,6 +4,13 @@ import { fmtQty } from '@/lib/format';
 /** "4 × 50 mm" — how many pieces, how long each. */
 export const groupText = (g: LotGroup): string => `${g.pieces} × ${fmtQty(g.piece_qty)} mm`;
 
+/** One-line form for dropdown rows: "Cut 1 × 50 mm · Full 4 × 50 mm" (cut first). */
+export const groupsInline = (groups: LotGroup[]): string =>
+  [...groups]
+    .sort((a, b) => (a.status === b.status ? 0 : a.status === 'CUT_PCS' ? -1 : 1))
+    .map((g) => `${g.status === 'CUT_PCS' ? 'Cut' : 'Full'} ${groupText(g)}`)
+    .join(' · ');
+
 export const groupLabel = (g: LotGroup): string => (g.status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs');
 
 /**

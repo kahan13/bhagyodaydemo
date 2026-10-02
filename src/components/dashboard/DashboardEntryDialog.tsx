@@ -5,6 +5,7 @@ import { X, Check, Search, ChevronDown } from 'lucide-react';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
 import { fmtQty } from '@/lib/format';
 import type { ProductType, Sku } from '@/lib/types';
+import LotBreakdown, { groupsInline } from '@/components/inventory/LotBreakdown';
 
 interface User { id: string; full_name: string; }
 
@@ -182,7 +183,7 @@ export default function DashboardEntryDialog({
                       s.stock_status === 'OUT_OF_STOCK' ? 'text-danger' :
                       s.stock_status === 'LOW_STOCK' ? 'text-warn' : 'text-ink-2'
                     }`}>
-                      {fmtQty(s.current_stock, s.unit_code)}
+                      {s.lot_groups && s.lot_groups.length > 0 ? groupsInline(s.lot_groups) : fmtQty(s.current_stock, s.unit_code)}
                     </span>
                   </button>
                 ))}
@@ -198,12 +199,16 @@ export default function DashboardEntryDialog({
                   <p className="font-medium">{sku.exact_size}</p>
                   <p className="text-[11px] text-ink-3 mt-0.5">{sku.brand_name} · {sku.hier_l1} · {sku.sku_code}</p>
                 </div>
-                <span className={`num text-[12px] font-medium ${
-                  sku.stock_status === 'OUT_OF_STOCK' ? 'text-danger' :
-                  sku.stock_status === 'LOW_STOCK' ? 'text-warn' : 'text-ink-2'
-                }`}>
-                  {fmtQty(sku.current_stock, sku.unit_code)} in stock
-                </span>
+                {sku.lot_groups && sku.lot_groups.length > 0 ? (
+                  <LotBreakdown groups={sku.lot_groups} />
+                ) : (
+                  <span className={`num text-[12px] font-medium ${
+                    sku.stock_status === 'OUT_OF_STOCK' ? 'text-danger' :
+                    sku.stock_status === 'LOW_STOCK' ? 'text-warn' : 'text-ink-2'
+                  }`}>
+                    {fmtQty(sku.current_stock, sku.unit_code)} in stock
+                  </span>
+                )}
               </div>
             </div>
           )}
