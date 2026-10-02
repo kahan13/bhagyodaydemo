@@ -150,7 +150,7 @@ export default function DashboardEntryDialog({
               <button
                 key={t} type="button"
                 onClick={() => { setProductType(t); clearSku(); }}
-                className={`flex-1 py-1.5 text-[13px] rounded-md font-medium transition-colors ${
+                className={`flex-1 py-1.5 text-[15px] rounded-md font-medium transition-colors ${
                   productType === t ? 'bg-surface shadow-sm text-ink' : 'text-ink-3 hover:text-ink'
                 }`}
               >
@@ -189,7 +189,7 @@ export default function DashboardEntryDialog({
             {dropOpen && !sku && (
               <div ref={nav.listRef} className="absolute z-10 mt-1 w-full bg-surface border border-line rounded-lg shadow-lg max-h-52 overflow-y-auto">
                 {pool.length === 0 ? (
-                  <p className="px-3 py-4 text-[13px] text-ink-3 text-center">No matches</p>
+                  <p className="px-3 py-4 text-[15px] text-ink-3 text-center">No matches</p>
                 ) : pool.map((s, idx) => (
                   <button
                     key={s.id} type="button" tabIndex={-1}
@@ -200,10 +200,10 @@ export default function DashboardEntryDialog({
                     onMouseDown={() => selectSku(s)}
                   >
                     <span>
-                      <span className="text-[13px] font-medium">{s.exact_size}</span>
-                      <span className="text-[12px] text-ink-3 ml-1.5">{s.brand_name} · {s.hier_l1}</span>
+                      <span className="text-[15px] font-medium">{s.exact_size}</span>
+                      <span className="text-[14px] text-ink-3 ml-1.5">{s.brand_name} · {s.hier_l1}</span>
                     </span>
-                    <span className={`text-[12px] num font-medium shrink-0 ${
+                    <span className={`text-[14px] num font-medium shrink-0 ${
                       s.stock_status === 'OUT_OF_STOCK' ? 'text-danger' :
                       s.stock_status === 'LOW_STOCK' ? 'text-warn' : 'text-ink-2'
                     }`}>
@@ -217,16 +217,16 @@ export default function DashboardEntryDialog({
 
           {/* Selected product summary */}
           {sku && (
-            <div className="bg-subtle rounded-lg px-3.5 py-2.5 text-[13px]">
+            <div className="bg-subtle rounded-lg px-3.5 py-2.5 text-[15px]">
               <div className="flex justify-between items-start">
                 <div>
                   <p className="font-medium">{sku.exact_size}</p>
-                  <p className="text-[11px] text-ink-3 mt-0.5">{sku.brand_name} · {sku.hier_l1} · {sku.sku_code}</p>
+                  <p className="text-[13px] text-ink-3 mt-0.5">{sku.brand_name} · {sku.hier_l1} · {sku.sku_code}</p>
                 </div>
                 {sku.lot_groups && sku.lot_groups.length > 0 ? (
                   <LotBreakdown groups={sku.lot_groups} />
                 ) : (
-                  <span className={`num text-[12px] font-medium ${
+                  <span className={`num text-[14px] font-medium ${
                     sku.stock_status === 'OUT_OF_STOCK' ? 'text-danger' :
                     sku.stock_status === 'LOW_STOCK' ? 'text-warn' : 'text-ink-2'
                   }`}>
@@ -242,7 +242,7 @@ export default function DashboardEntryDialog({
             <div>
               <RollEntry len={rollLen} rows={rolls} onChange={setRolls} />
               {amount > 0 && sku && (
-                <p className="text-[12px] text-ink-3 mt-1 num">
+                <p className="text-[14px] text-ink-3 mt-1 num">
                   After: <span className="font-medium">{fmtQty(projected, sku.unit_code)}</span>
                 </p>
               )}
@@ -252,7 +252,7 @@ export default function DashboardEntryDialog({
             <label className="label" htmlFor="d-qty">Quantity ({sku?.unit_code ?? 'units'}) <span className="text-danger">*</span></label>
             <input
               id="d-qty"
-              className="field num text-[16px] h-11"
+              className="field num text-[18px] h-11"
               inputMode="decimal"
               value={qty}
               onChange={(e) => setQty(e.target.value.replace(/[^0-9.]/g, ''))}
@@ -260,14 +260,14 @@ export default function DashboardEntryDialog({
               autoFocus={!!sku}
             />
             {sku && qty && amount > 0 && (
-              <p className="text-[12px] text-ink-3 mt-1 num">
+              <p className="text-[14px] text-ink-3 mt-1 num">
                 After: <span className={projected < 0 ? 'text-danger' : 'font-medium'}>
                   {fmtQty(projected, sku.unit_code)}
                 </span>
               </p>
             )}
             {action === 'outward' && sku && amount > sku.current_stock && (
-              <p className="text-[12px] text-danger mt-1">Only {fmtQty(sku.current_stock, sku.unit_code)} available.</p>
+              <p className="text-[14px] text-danger mt-1">Only {fmtQty(sku.current_stock, sku.unit_code)} available.</p>
             )}
           </div>
           )}
@@ -330,7 +330,7 @@ export default function DashboardEntryDialog({
             />
           </div>
 
-          {error && <p className="text-[12px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>}
+          {error && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>}
         </div>
 
         <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl">

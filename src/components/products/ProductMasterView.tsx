@@ -139,19 +139,19 @@ export default function ProductMasterView({
   return (
     <div className="flex flex-col h-[calc(100vh-56px)]">
       <div className="px-4 lg:px-6 py-3.5 border-b border-line bg-surface flex flex-wrap items-center gap-3">
-        <h1 className="text-[17px] font-semibold">Product Master</h1>
+        <h1 className="text-[19px] font-semibold">Product Master</h1>
         <div className="relative ml-2">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-3" />
           <input value={query} onChange={(e) => setQuery(e.target.value)}
             placeholder="Search family, section, size, make or SKU…"
-            className="field pl-8 w-72 text-[13px]" />
+            className="field pl-8 w-72 text-[15px]" />
         </div>
-        <label className="flex items-center gap-1.5 text-[12px] text-ink-2 cursor-pointer ml-1">
+        <label className="flex items-center gap-1.5 text-[14px] text-ink-2 cursor-pointer ml-1">
           <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} className="rounded" />
           Show inactive
         </label>
         {can('products.create') && (
-          <button onClick={openAdd} className="btn btn-primary ml-auto flex items-center gap-1.5 text-[13px]">
+          <button onClick={openAdd} className="btn btn-primary ml-auto flex items-center gap-1.5 text-[15px]">
             <Plus size={14} /> Add Product
           </button>
         )}
@@ -160,7 +160,7 @@ export default function ProductMasterView({
       <div className="px-4 lg:px-6 border-b border-line flex gap-4 bg-surface">
         {(['ALL', ...PRODUCT_TYPES] as const).map((t) => (
           <button key={t} onClick={() => setTypeFilter(t)}
-            className={`py-2.5 text-[13px] border-b-2 transition-colors ${typeFilter === t ? 'border-primary text-primary font-medium' : 'border-transparent text-ink-2 hover:text-ink'}`}>
+            className={`py-2.5 text-[15px] border-b-2 transition-colors ${typeFilter === t ? 'border-primary text-primary font-medium' : 'border-transparent text-ink-2 hover:text-ink'}`}>
             {t === 'ALL' ? 'All' : TYPE_META[t].label}{' '}
             <span className="text-ink-3">{counts[t]}</span>
           </button>
@@ -169,13 +169,13 @@ export default function ProductMasterView({
 
       <div className="flex-1 min-h-0 overflow-auto">
         {loading ? (
-          <p className="py-16 text-center text-[13px] text-ink-3">Loading…</p>
+          <p className="py-16 text-center text-[15px] text-ink-3">Loading…</p>
         ) : filtered.length === 0 ? (
-          <p className="py-16 text-center text-[13px] text-ink-3">
+          <p className="py-16 text-center text-[15px] text-ink-3">
             No products yet. Use <strong>Import Data → 1 · Products</strong> or <strong>Add Product</strong>.
           </p>
         ) : (
-          <table className="table w-full text-[13px]">
+          <table className="table w-full text-[15px]">
             <thead>
               <tr>
                 <th>SKU</th>
@@ -194,7 +194,7 @@ export default function ProductMasterView({
             <tbody>
               {filtered.map((p) => (
                 <tr key={p.id} className={!p.is_active ? 'opacity-45' : ''}>
-                  <td className="font-mono text-[12px] whitespace-nowrap">{p.sku_code}</td>
+                  <td className="font-mono text-[14px] whitespace-nowrap">{p.sku_code}</td>
                   <td>{TYPE_META[p.product_type].short}</td>
                   <td>{p.hier_l1}</td>
                   <td>{p.section ?? p.colour ?? p.hier_l2}</td>
@@ -236,7 +236,7 @@ export default function ProductMasterView({
                 <label className="label">Product Type</label>
                 <div className="flex gap-4">
                   {PRODUCT_TYPES.map((t) => (
-                    <label key={t} className={`flex items-center gap-1.5 text-[13px] ${lockId ? 'opacity-60' : 'cursor-pointer'}`}>
+                    <label key={t} className={`flex items-center gap-1.5 text-[15px] ${lockId ? 'opacity-60' : 'cursor-pointer'}`}>
                       <input type="radio" disabled={lockId} checked={form.product_type === t} onChange={() => set('product_type', t)} />
                       {PRODUCT_TYPE_LABEL[t]}
                     </label>
@@ -246,7 +246,7 @@ export default function ProductMasterView({
 
               <div className="col-span-2">
                 <label className="label">SKU</label>
-                <p className="text-[13px] font-mono">
+                <p className="text-[15px] font-mono">
                   {dialog === 'edit' ? editing?.sku_code : (codePreview || <span className="text-ink-3 font-sans">Generated automatically once the fields below are filled</span>)}
                 </p>
               </div>
@@ -328,13 +328,13 @@ export default function ProductMasterView({
               </div>
 
               {dialog === 'add' && (
-                <p className="col-span-2 text-[11px] text-ink-3">
+                <p className="col-span-2 text-[13px] text-ink-3">
                   Stock is not entered here. After adding, receive it through Inward, or load it with Import Data → 2 · Inventory.
                 </p>
               )}
             </div>
 
-            {err && <p className="px-5 pb-2 text-[12px] text-danger">{err}</p>}
+            {err && <p className="px-5 pb-2 text-[14px] text-danger">{err}</p>}
             <div className="px-5 py-4 border-t border-line flex justify-end gap-3">
               <button onClick={close} className="btn">Cancel</button>
               <button onClick={save} disabled={saving} className="btn btn-primary">

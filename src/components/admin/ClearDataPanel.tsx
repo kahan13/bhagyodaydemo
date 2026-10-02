@@ -71,7 +71,7 @@ export default function ClearDataPanel() {
   const okStock = confirmStock.trim().toUpperCase() === 'ZERO STOCK' && (scope === 'all' || picked.length > 0);
 
   const Row = ({ label, value }: { label: string; value?: number }) => (
-    <li className="flex justify-between text-[12px]"><span className="text-ink-3">{label}</span>
+    <li className="flex justify-between text-[14px]"><span className="text-ink-3">{label}</span>
       <span className="num font-medium">{value ?? '…'}</span></li>
   );
 
@@ -82,18 +82,18 @@ export default function ClearDataPanel() {
         <h2 className="card-title">Clear data</h2>
         <span className="badge badge-danger">Super Admin · cannot be undone</span>
       </div>
-      <p className="text-[13px] text-ink-2 mt-2 leading-relaxed">
+      <p className="text-[15px] text-ink-2 mt-2 leading-relaxed">
         Use before handing the app to a client. Products (SKUs) are never deleted. Download a backup first.
       </p>
 
-      {err && <p className="text-[12px] text-danger bg-danger-soft rounded-lg px-3 py-2 mt-3">{err}</p>}
-      {msg && <p className="text-[12px] text-ok bg-ok-soft rounded-lg px-3 py-2 mt-3">{msg}</p>}
+      {err && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2 mt-3">{err}</p>}
+      {msg && <p className="text-[14px] text-ok bg-ok-soft rounded-lg px-3 py-2 mt-3">{msg}</p>}
 
       <div className="grid gap-4 lg:grid-cols-2 mt-4">
         {/* orders & transactions */}
         <div className="rounded-lg border border-line p-4 space-y-3">
-          <h3 className="text-[13px] font-semibold">1 · Clear orders &amp; transactions</h3>
-          <p className="text-[12px] text-ink-3 leading-relaxed">
+          <h3 className="text-[15px] font-semibold">1 · Clear orders &amp; transactions</h3>
+          <p className="text-[14px] text-ink-3 leading-relaxed">
             Deletes every purchase order, production order, transaction, import record and activity log.
             Keeps SKUs, current stock and roll lots — today&apos;s stock becomes the opening stock.
           </p>
@@ -115,15 +115,15 @@ export default function ClearDataPanel() {
 
         {/* zero stock */}
         <div className="rounded-lg border border-line p-4 space-y-3">
-          <h3 className="text-[13px] font-semibold">2 · Zero inventory quantities</h3>
-          <p className="text-[12px] text-ink-3 leading-relaxed">
+          <h3 className="text-[15px] font-semibold">2 · Zero inventory quantities</h3>
+          <p className="text-[14px] text-ink-3 leading-relaxed">
             Sets stock to 0 for the chosen SKUs, removes their roll lots and their transaction history.
             The SKUs stay.
           </p>
           <div className="inline-flex rounded-lg border border-line bg-subtle p-0.5">
             {([['all', `All SKUs (${pv?.skus ?? '…'})`], ['some', 'Choose SKUs']] as const).map(([v, label]) => (
               <button key={v} type="button" onClick={() => setScope(v)}
-                className={`px-3 py-1 rounded-md text-[12px] font-medium ${scope === v ? 'bg-surface shadow-sm text-ink' : 'text-ink-3'}`}>{label}</button>
+                className={`px-3 py-1 rounded-md text-[14px] font-medium ${scope === v ? 'bg-surface shadow-sm text-ink' : 'text-ink-3'}`}>{label}</button>
             ))}
           </div>
 
@@ -132,7 +132,7 @@ export default function ClearDataPanel() {
               <div className="relative">
                 <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-3 pointer-events-none" />
                 <input
-                  className="field pl-8 text-[13px]" placeholder="Search size, brand or SKU, then ↓ and Enter"
+                  className="field pl-8 text-[15px]" placeholder="Search size, brand or SKU, then ↓ and Enter"
                   value={q} autoComplete="off" role="combobox" aria-expanded={open}
                   onChange={(e) => { setQ(e.target.value); setOpen(true); }}
                   onFocus={() => setOpen(true)}
@@ -144,9 +144,9 @@ export default function ClearDataPanel() {
                       <button key={s.id} type="button" tabIndex={-1} data-nav-idx={idx}
                         onMouseEnter={() => nav.setCursor(idx)}
                         onMouseDown={(e) => { e.preventDefault(); setPicked((p) => [...p, s.id]); setQ(''); }}
-                        className={`w-full text-left px-3 py-2 text-[13px] border-b border-line last:border-0 ${idx === nav.cursor ? 'bg-brand-soft' : 'hover:bg-subtle'}`}>
+                        className={`w-full text-left px-3 py-2 text-[15px] border-b border-line last:border-0 ${idx === nav.cursor ? 'bg-brand-soft' : 'hover:bg-subtle'}`}>
                         <span className="font-medium">{s.exact_size}</span>
-                        <span className="text-ink-3 ml-1.5 text-[11px]">{s.brand_name}</span>
+                        <span className="text-ink-3 ml-1.5 text-[13px]">{s.brand_name}</span>
                       </button>
                     ))}
                   </div>
@@ -156,7 +156,7 @@ export default function ClearDataPanel() {
                 {picked.map((id) => {
                   const s = allSkus.find((x) => x.id === id);
                   return (
-                    <span key={id} className="inline-flex items-center gap-1 text-[11px] bg-subtle border border-line rounded-full pl-2 pr-1 py-0.5">
+                    <span key={id} className="inline-flex items-center gap-1 text-[13px] bg-subtle border border-line rounded-full pl-2 pr-1 py-0.5">
                       {s?.exact_size ?? id}
                       <button type="button" aria-label="Remove" onClick={() => setPicked((p) => p.filter((x) => x !== id))}><X size={11} /></button>
                     </span>

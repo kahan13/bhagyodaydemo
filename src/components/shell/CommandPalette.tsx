@@ -55,27 +55,27 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
           <Search size={16} className="text-ink-3 shrink-0" />
           <input
             ref={inputRef}
-            className="flex-1 bg-transparent outline-none text-[14px] placeholder:text-ink-3"
+            className="flex-1 bg-transparent outline-none text-[16px] placeholder:text-ink-3"
             placeholder="Search size, brand or SKU…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
           />
-          <kbd className="text-[10px] px-1.5 py-0.5 rounded border border-line bg-subtle text-ink-3">esc</kbd>
+          <kbd className="text-[12px] px-1.5 py-0.5 rounded border border-line bg-subtle text-ink-3">esc</kbd>
         </div>
 
         <div className="max-h-[340px] scroll">
-          {loading && <p className="px-4 py-6 text-[13px] text-ink-3">Loading catalogue…</p>}
+          {loading && <p className="px-4 py-6 text-[15px] text-ink-3">Loading catalogue…</p>}
 
           {!loading && !query.trim() && (
-            <p className="px-4 py-6 text-[13px] text-ink-3">
+            <p className="px-4 py-6 text-[15px] text-ink-3">
               Type a size like <span className="text-ink">1200</span>, a brand like{' '}
               <span className="text-ink">optibelt</span>, or both.
             </p>
           )}
 
           {!loading && query.trim() && results.length === 0 && (
-            <p className="px-4 py-6 text-[13px] text-ink-3">Nothing matches “{query}”.</p>
+            <p className="px-4 py-6 text-[15px] text-ink-3">Nothing matches “{query}”.</p>
           )}
 
           {results.map((sku, i) => (
@@ -88,8 +88,8 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
               }`}
             >
               <span className="min-w-0 flex-1">
-                <span className="block text-[13px] font-medium truncate">{sku.exact_size}</span>
-                <span className="block text-[11px] text-ink-3 truncate">
+                <span className="block text-[15px] font-medium truncate">{sku.exact_size}</span>
+                <span className="block text-[13px] text-ink-3 truncate">
                   {sku.brand_name} · {sku.family_code}
                 </span>
               </span>
@@ -97,7 +97,7 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
               {sku.stock_status === 'OUT_OF_STOCK' && <span className="badge badge-danger">Out</span>}
               {sku.stock_status === 'LOW_STOCK' && <span className="badge badge-warn">Low</span>}
 
-              <span className="num text-[13px] font-medium shrink-0">
+              <span className="num text-[15px] font-medium shrink-0">
                 {fmtQty(sku.current_stock, sku.unit_code)}
               </span>
 

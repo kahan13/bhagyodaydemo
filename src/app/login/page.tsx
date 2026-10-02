@@ -57,8 +57,8 @@ function SignIn() {
           <span className="inline-grid place-items-center h-14 w-14 rounded-2xl bg-white/10 backdrop-blur">
             <Boxes size={28} />
           </span>
-          <h1 className="text-[24px] font-semibold tracking-[-0.02em] mt-5">Bhagyoday Belt Company</h1>
-          <p className="text-[15px] text-white/55 mt-1.5">Inventory Management System</p>
+          <h1 className="text-[26px] font-semibold tracking-[-0.02em] mt-5">Bhagyoday Belt Company</h1>
+          <p className="text-[17px] text-white/55 mt-1.5">Inventory Management System</p>
         </div>
       </section>
 
@@ -69,8 +69,8 @@ function SignIn() {
               <Boxes size={18} />
             </span>
             <div className="leading-tight">
-              <p className="text-[14px] font-semibold">Bhagyoday Belt Company</p>
-              <p className="text-[11px] text-ink-3">Inventory Management System</p>
+              <p className="text-[16px] font-semibold">Bhagyoday Belt Company</p>
+              <p className="text-[13px] text-ink-3">Inventory Management System</p>
             </div>
           </div>
 
@@ -94,7 +94,7 @@ function SignIn() {
             </div>
 
             {error && (
-              <p className="text-[12px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>
+              <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>
             )}
 
             <button type="submit" className="btn btn-primary w-full h-11" disabled={busy}>
@@ -110,7 +110,7 @@ function SignIn() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<main className="min-h-screen grid place-items-center text-[13px] text-ink-3">Loading…</main>}>
+    <Suspense fallback={<main className="min-h-screen grid place-items-center text-[15px] text-ink-3">Loading…</main>}>
       <SignIn />
     </Suspense>
   );

@@ -9,6 +9,7 @@ import { useCatalog } from '@/components/catalog/CatalogProvider';
 import { fmtQty, fmtDate } from '@/lib/format';
 import { useListNav } from '@/lib/useListNav';
 import { onDataChanged } from '@/lib/dataSync';
+import { takeAction } from '@/lib/keytips';
 import type { ProductType, Sku } from '@/lib/types';
 
 type ItemStatus  = 'PENDING' | 'PARTIAL' | 'FULFILLED';
@@ -67,7 +68,7 @@ function StatusBadge({ status }: { status: OrderStatus | ItemStatus }) {
     PLACED: 'Placed', PENDING: 'Pending', PARTIAL: 'Partial', FULFILLED: 'Fulfilled',
   };
   return (
-    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${map[status] ?? ''}`}>
+    <span className={`text-[12px] font-semibold px-1.5 py-0.5 rounded ${map[status] ?? ''}`}>
       {label[status] ?? status}
     </span>
   );
@@ -118,7 +119,7 @@ function SkuPicker({ onSelect, selected }: { onSelect: (s: Sku) => void; selecte
           <button
             key={t} type="button"
             onClick={() => { setType(t); setSearch(''); }}
-            className={`flex-1 py-1 text-[12px] rounded font-medium transition-colors ${
+            className={`flex-1 py-1 text-[14px] rounded font-medium transition-colors ${
               type === t ? 'bg-surface shadow-sm text-ink' : 'text-ink-3 hover:text-ink'
             }`}
           >
@@ -131,7 +132,7 @@ function SkuPicker({ onSelect, selected }: { onSelect: (s: Sku) => void; selecte
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-3 pointer-events-none" />
           <input
             ref={inputRef}
-            className="field pl-8 text-[13px]"
+            className="field pl-8 text-[15px]"
             placeholder="Search size, brand or SKU…"
             value={search}
             autoComplete="off"
@@ -145,7 +146,7 @@ function SkuPicker({ onSelect, selected }: { onSelect: (s: Sku) => void; selecte
         {open && (
           <div ref={nav.listRef} className="absolute z-20 mt-1 w-full bg-surface border border-line rounded-lg shadow-lg max-h-64 overflow-y-auto">
             {pool.length === 0 ? (
-              <p className="px-3 py-4 text-[12px] text-ink-3 text-center">No matches</p>
+              <p className="px-3 py-4 text-[14px] text-ink-3 text-center">No matches</p>
             ) : (
               pool.map((s, idx) => {
                 const already = selected.includes(s.id);
@@ -161,11 +162,11 @@ function SkuPicker({ onSelect, selected }: { onSelect: (s: Sku) => void; selecte
                     onMouseDown={() => { if (!already) { onSelect(s); setSearch(''); setOpen(false); } }}
                   >
                     <span>
-                      <span className="text-[13px] font-medium">{s.exact_size}</span>
-                      <span className="text-[11px] text-ink-3 ml-1.5">{s.brand_name}</span>
-                      <span className="text-[10px] text-ink-3 ml-1.5">· {TYPE_LABEL[s.product_type]}</span>
+                      <span className="text-[15px] font-medium">{s.exact_size}</span>
+                      <span className="text-[13px] text-ink-3 ml-1.5">{s.brand_name}</span>
+                      <span className="text-[12px] text-ink-3 ml-1.5">· {TYPE_LABEL[s.product_type]}</span>
                     </span>
-                    <span className={`text-[12px] num shrink-0 ${
+                    <span className={`text-[14px] num shrink-0 ${
                       s.stock_status === 'OUT_OF_STOCK' ? 'text-danger' :
                       s.stock_status === 'LOW_STOCK'    ? 'text-warn'   : 'text-ink-3'
                     }`}>
@@ -247,16 +248,16 @@ function ReceiveDialog({
         </div>
         <div className="p-5 space-y-4">
           <div className="bg-subtle rounded-lg px-3.5 py-2.5 space-y-0.5">
-            <p className="text-[13px] font-medium">{item.skus?.exact_size ?? '—'}</p>
-            <p className="text-[11px] text-ink-3">
+            <p className="text-[15px] font-medium">{item.skus?.exact_size ?? '—'}</p>
+            <p className="text-[13px] text-ink-3">
               {item.skus?.brand_name ?? '—'}
               {item.skus?.product_type ? ` · ${TYPE_LABEL[item.skus.product_type] ?? ''}` : ''}
               {len ? ` · roll = ${len} mm` : ''}
             </p>
             <div className="flex gap-4 mt-1.5 flex-wrap">
-              <span className="text-[11px] text-ink-3">Ordered: <strong className="text-ink">{fmtQty(item.ordered_qty, unit)}</strong>{len ? ` (${fmtRolls(item.ordered_qty, len)})` : ''}</span>
-              <span className="text-[11px] text-ink-3">Received: <strong className="text-ok">{fmtQty(item.received_qty, unit)}</strong></span>
-              <span className="text-[11px] text-ink-3">Left: <strong className="text-warn">{fmtQty(remaining, unit)}</strong>{len ? ` (${fmtRolls(remaining, len)})` : ''}</span>
+              <span className="text-[13px] text-ink-3">Ordered: <strong className="text-ink">{fmtQty(item.ordered_qty, unit)}</strong>{len ? ` (${fmtRolls(item.ordered_qty, len)})` : ''}</span>
+              <span className="text-[13px] text-ink-3">Received: <strong className="text-ok">{fmtQty(item.received_qty, unit)}</strong></span>
+              <span className="text-[13px] text-ink-3">Left: <strong className="text-warn">{fmtQty(remaining, unit)}</strong>{len ? ` (${fmtRolls(remaining, len)})` : ''}</span>
             </div>
           </div>
 
@@ -265,7 +266,7 @@ function ReceiveDialog({
               <div>
                 <label className="label">Standard rolls received ({len} mm each)</label>
                 <input
-                  className="field num text-[16px] h-11"
+                  className="field num text-[18px] h-11"
                   inputMode="numeric"
                   value={rollCount}
                   onChange={(e) => setRollCount(e.target.value.replace(/[^0-9]/g, ''))}
@@ -290,15 +291,15 @@ function ReceiveDialog({
                   </button>
                 </div>
               ))}
-              <button type="button" className="text-[12px] text-brand font-medium"
+              <button type="button" className="text-[14px] text-brand font-medium"
                 onClick={() => setOdd((p) => [...p, { rolls: '1', length: '' }])}>
                 + Other length (a roll that is not {len} mm)
               </button>
-              <p className="text-[11px] text-ink-3">
+              <p className="text-[13px] text-ink-3">
                 Other-length rolls are one-time lots — the SKU&apos;s standard roll length stays {len} mm.
               </p>
 
-              <div className="bg-ok-soft/30 rounded-lg px-3 py-2 text-[12px]">
+              <div className="bg-ok-soft/30 rounded-lg px-3 py-2 text-[14px]">
                 Receiving <strong className="num">{rollsTotal} mm</strong>
                 {rollsPayload.length > 0 && (
                   <span className="text-ink-3"> = {rollsPayload.map((r) => `${r.rolls}×${r.roll_length}`).join(' + ')}</span>
@@ -309,7 +310,7 @@ function ReceiveDialog({
             <div>
               <label className="label">Quantity receiving ({unit ?? 'units'}) <span className="text-danger">*</span></label>
               <input
-                className="field num text-[16px] h-11"
+                className="field num text-[18px] h-11"
                 inputMode="decimal"
                 value={qty}
                 onChange={(e) => setQty(e.target.value.replace(/[^0-9.]/g, ''))}
@@ -322,8 +323,8 @@ function ReceiveDialog({
             <label className="label">Notes <span className="text-ink-3 font-normal">(optional)</span></label>
             <textarea rows={2} className="field" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. partial shipment, damaged items" />
           </div>
-          <p className="text-[11px] text-ink-3">Receiving does not change stock. Press “Record Inward” afterwards to add it to inventory.</p>
-          {err && <p className="text-[12px] text-danger bg-danger-soft rounded-lg px-3 py-2">{err}</p>}
+          <p className="text-[13px] text-ink-3">Receiving does not change stock. Press “Record Inward” afterwards to add it to inventory.</p>
+          {err && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{err}</p>}
         </div>
         <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
@@ -424,18 +425,18 @@ function CreateOrderDialog({
           {lines.length > 0 && (
             <div className="rounded-lg border border-line overflow-hidden">
               <div className="px-3 py-2 bg-subtle border-b border-line flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-ink-2 uppercase tracking-wide">
+                <span className="text-[13px] font-semibold text-ink-2 uppercase tracking-wide">
                   Items — {lines.length} product{lines.length !== 1 ? 's' : ''}
                 </span>
-                <span className="text-[10px] text-ink-3">
+                <span className="text-[12px] text-ink-3">
                   Each product will get its own PO number
                 </span>
               </div>
               {lines.map((l, i) => (
                 <div key={l.sku.id} className="flex items-center gap-4 px-4 py-3 border-b border-line last:border-0">
                   <div className="min-w-0 flex-1">
-                    <p className="text-[13px] font-medium truncate">{l.sku.exact_size}</p>
-                    <p className="text-[11px] text-ink-3">
+                    <p className="text-[15px] font-medium truncate">{l.sku.exact_size}</p>
+                    <p className="text-[13px] text-ink-3">
                       {l.sku.brand_name}
                       <span className="mx-1.5">·</span>
                       <span className="text-brand">{TYPE_LABEL[l.sku.product_type]}</span>
@@ -445,12 +446,12 @@ function CreateOrderDialog({
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     {l.sku.product_type === 'TIMING_BELT' && Number(l.sku.roll_length_mm) > 0 && Number(l.qty) > 0 && (
-                      <span className="text-[11px] text-ink-3 num whitespace-nowrap">
+                      <span className="text-[13px] text-ink-3 num whitespace-nowrap">
                         = {fmtRolls(Number(l.qty), Number(l.sku.roll_length_mm))}
                       </span>
                     )}
                     <input
-                      className="field num h-9 w-28 text-[13px]"
+                      className="field num h-9 w-28 text-[15px]"
                       inputMode="decimal"
                       value={l.qty}
                       onChange={(e) => setQty(i, e.target.value)}
@@ -466,11 +467,11 @@ function CreateOrderDialog({
             </div>
           )}
 
-          {err && <p className="text-[12px] text-danger bg-danger-soft rounded-lg px-3 py-2.5">{err}</p>}
+          {err && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2.5">{err}</p>}
         </div>
 
         <div className="flex items-center justify-between px-6 py-4 border-t border-line bg-subtle rounded-b-xl shrink-0">
-          <p className="text-[12px] text-ink-3">
+          <p className="text-[14px] text-ink-3">
             {lines.length === 0
               ? 'Search and add products above'
               : `${lines.length} item${lines.length !== 1 ? 's' : ''} → ${lines.length} separate PO${lines.length !== 1 ? 's' : ''} will be created`}
@@ -515,10 +516,10 @@ function DeleteDialog({
           <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={onClose}><X size={15} /></button>
         </div>
         <div className="p-5">
-          <p className="text-[13px] text-ink-2">
+          <p className="text-[15px] text-ink-2">
             Delete <strong>{order.order_no}</strong>? This will permanently remove the order and all its line items. This cannot be undone.
           </p>
-          {err && <p className="text-[12px] text-danger mt-3 bg-danger-soft rounded px-3 py-2">{err}</p>}
+          {err && <p className="text-[14px] text-danger mt-3 bg-danger-soft rounded px-3 py-2">{err}</p>}
         </div>
         <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
@@ -568,15 +569,15 @@ function OrderCard({
           />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[13px] font-semibold">{order.order_no}</span>
+              <span className="text-[15px] font-semibold">{order.order_no}</span>
               {order.supplier_name && (
-                <span className="text-[12px] text-ink-3">· {order.supplier_name}</span>
+                <span className="text-[14px] text-ink-3">· {order.supplier_name}</span>
               )}
               <StatusBadge status={order.status} />
             </div>
             <div className="flex items-center gap-3 mt-0.5">
-              <span className="text-[11px] text-ink-3">{fmtDate(order.created_at)}</span>
-              <span className="text-[11px] text-ink-3">
+              <span className="text-[13px] text-ink-3">{fmtDate(order.created_at)}</span>
+              <span className="text-[13px] text-ink-3">
                 {shown.length} item{shown.length !== 1 ? 's' : ''}
               </span>
             </div>
@@ -587,7 +588,7 @@ function OrderCard({
           {anyPending && (
             <button
               type="button"
-              className="btn btn-primary h-7 px-2.5 text-[12px]"
+              className="btn btn-primary h-7 px-2.5 text-[14px]"
               onClick={() => onRecordInward(order)}
             >
               <ArrowDownLeft size={12} /> Record Inward
@@ -608,7 +609,7 @@ function OrderCard({
       {expanded && (
         <div className="border-t border-line divide-y divide-line">
           {shown.length === 0 ? (
-            <p className="px-4 py-4 text-[12px] text-ink-3 text-center">No items — order may still be loading.</p>
+            <p className="px-4 py-4 text-[14px] text-ink-3 text-center">No items — order may still be loading.</p>
           ) : (
             shown.map((item) => {
               const itemRemaining = item.ordered_qty - item.received_qty;
@@ -621,36 +622,36 @@ function OrderCard({
                 <div key={item.id} className="flex items-center gap-3 px-4 py-3 bg-surface-2/40">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[13px] font-medium">{sizeName}</span>
-                      <span className="text-[11px] text-ink-3">{brandName}</span>
+                      <span className="text-[15px] font-medium">{sizeName}</span>
+                      <span className="text-[13px] text-ink-3">{brandName}</span>
                       {pType && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-subtle text-ink-3 font-medium">
+                        <span className="text-[12px] px-1.5 py-0.5 rounded bg-subtle text-ink-3 font-medium">
                           {TYPE_LABEL[pType]}
                         </span>
                       )}
                       <StatusBadge status={item.status} />
                     </div>
                     <div className="flex items-center gap-4 mt-1.5 flex-wrap">
-                      <span className="text-[11px] text-ink-3 num">
+                      <span className="text-[13px] text-ink-3 num">
                         Total <strong className="text-ink">{fmtQty(item.ordered_qty, item.skus?.unit_code)}</strong>
                         {itemLen > 0 && <span> ({fmtRolls(item.ordered_qty, itemLen)})</span>}
                       </span>
-                      <span className="text-[11px] text-ink-3 num">
+                      <span className="text-[13px] text-ink-3 num">
                         Received <strong className="text-ok">{fmtQty(item.received_qty, item.skus?.unit_code)}</strong>
                         {itemLen > 0 && <span> ({fmtRolls(item.received_qty, itemLen)})</span>}
                       </span>
                       {itemRemaining > 0 && (
-                        <span className="text-[11px] text-warn num font-medium">
+                        <span className="text-[13px] text-warn num font-medium">
                           Left {fmtQty(itemRemaining, item.skus?.unit_code)}
                           {itemLen > 0 && ` (${fmtRolls(itemRemaining, itemLen)})`}
                         </span>
                       )}
                       {view === 'received' && (itemPending > 0 ? (
-                        <span className="text-[11px] text-brand num font-medium">
+                        <span className="text-[13px] text-brand num font-medium">
                           {fmtQty(itemPending, item.skus?.unit_code)} waiting to be recorded
                         </span>
                       ) : (
-                        <span className="text-[11px] text-ok num font-medium">
+                        <span className="text-[13px] text-ok num font-medium">
                           In stock {fmtQty(Number(item.inwarded_qty ?? 0), item.skus?.unit_code)}
                         </span>
                       ))}
@@ -660,21 +661,23 @@ function OrderCard({
                     {view === 'received' && itemPending > 0 && (
                       <button
                         type="button"
-                        className="btn btn-primary h-8 px-3 text-[12px]"
+                        className="btn btn-primary h-8 px-3 text-[14px]"
+                        data-kt="K" data-kt-label="Record Inward (first waiting line)"
                         onClick={() => onRecordInward(order, item.id)}
                       >
                         <ClipboardCheck size={12} /> Record Inward
                       </button>
                     )}
                     {view === 'received' && itemPending === 0 && (
-                      <span className="text-[11px] text-ok font-medium flex items-center gap-1">
+                      <span className="text-[13px] text-ok font-medium flex items-center gap-1">
                         <Check size={12} /> Recorded
                       </span>
                     )}
                     {view === 'progress' && (
                       <button
                         type="button"
-                        className="btn btn-secondary h-8 px-3 text-[12px]"
+                        className="btn btn-secondary h-8 px-3 text-[14px]"
+                        data-kt="H" data-kt-label="Receive (first open line)"
                         onClick={() => onReceive(item)}
                       >
                         <ArrowDownLeft size={12} /> Receive
@@ -690,7 +693,7 @@ function OrderCard({
             <div className="px-4 py-3 bg-ok-soft/20 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-ok">
                 <ClipboardCheck size={14} />
-                <span className="text-[12px] font-medium">
+                <span className="text-[14px] font-medium">
                   Received stock is waiting — press &quot;Record Inward&quot; to add it to inventory
                 </span>
               </div>
@@ -770,6 +773,9 @@ export default function PurchaseOrdersView() {
   // live refresh when anything is saved (here, another screen, another tab)
   useEffect(() => onDataChanged(() => { load(); }), [load]);
 
+  // opened here from another page by Alt+M → OR
+  useEffect(() => { if (takeAction(['new-order'])) setShowCreate(true); }, []);
+
   // keyboard: "n" starts a new purchase order
   useEffect(() => {
     const h = (e: Event) => { if ((e as CustomEvent).detail === 'new-order') setShowCreate(true); };
@@ -805,17 +811,17 @@ export default function PurchaseOrdersView() {
   return (
     <div className="p-4 lg:p-6 max-w-[960px] mx-auto space-y-4">
       {toast && (
-        <div className="fixed bottom-4 right-4 z-[100] bg-ink text-white text-[13px] px-4 py-2.5 rounded-lg shadow-lg animate-fade-in">
+        <div className="fixed bottom-4 right-4 z-[100] bg-ink text-white text-[15px] px-4 py-2.5 rounded-lg shadow-lg animate-fade-in">
           {toast}
         </div>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-[19px] font-semibold">Purchase Orders</h1>
-          <p className="text-[13px] text-ink-3 mt-0.5">Track ordered stock and receive against items</p>
+          <h1 className="text-[21px] font-semibold">Purchase Orders</h1>
+          <p className="text-[15px] text-ink-3 mt-0.5">Track ordered stock and receive against items</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+        <button className="btn btn-primary" data-kt="N" data-kt-label="New purchase order" onClick={() => setShowCreate(true)}>
           <Plus size={14} /> New Order
         </button>
       </div>
@@ -828,14 +834,16 @@ export default function PurchaseOrdersView() {
         ] as const).map(({ key, label, count, warn }) => (
           <button
             key={key} type="button"
+            data-kt={key === 'in_progress' ? 'W' : 'F'}
+            data-kt-label={key === 'in_progress' ? 'In Progress tab' : 'Fulfilled / Received tab'}
             onClick={() => setTab(key)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-[13px] rounded-md font-medium transition-colors ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-[15px] rounded-md font-medium transition-colors ${
               tab === key ? 'bg-surface shadow-sm text-ink' : 'text-ink-3 hover:text-ink'
             }`}
           >
             {label}
             {count > 0 && (
-              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+              <span className={`text-[12px] font-semibold px-1.5 py-0.5 rounded ${
                 warn ? 'bg-warn-soft text-warn' : 'bg-subtle text-ink-3'
               }`}>{count}</span>
             )}
@@ -850,11 +858,11 @@ export default function PurchaseOrdersView() {
       ) : displayed.length === 0 ? (
         <div className="card px-5 py-12 text-center">
           <Package size={32} className="text-ink-3 mx-auto mb-3" />
-          <p className="text-[14px] text-ink-2 font-medium">
+          <p className="text-[16px] text-ink-2 font-medium">
             {tab === 'in_progress' ? 'No orders in progress' : 'Nothing received yet'}
           </p>
           {tab === 'in_progress' && (
-            <p className="text-[13px] text-ink-3 mt-1">Create a purchase order to start tracking received stock.</p>
+            <p className="text-[15px] text-ink-3 mt-1">Create a purchase order to start tracking received stock.</p>
           )}
         </div>
       ) : (
@@ -909,14 +917,14 @@ export default function PurchaseOrdersView() {
               </button>
             </div>
             <div className="p-5 space-y-3">
-              <p className="text-[13px] text-ink-2">
+              <p className="text-[15px] text-ink-2">
                 This adds what has been received so far (not yet recorded) from <strong>{recordTarget.order_no}</strong> to stock — book and physical. Timing belts go in as individual roll lots.
               </p>
               <div className="bg-subtle rounded-lg p-3 space-y-2">
                 {lines.map((item) => {
                   const len = rollLen(item);
                   return (
-                  <div key={item.id} className="flex items-center justify-between text-[12px] gap-2">
+                  <div key={item.id} className="flex items-center justify-between text-[14px] gap-2">
                     <div className="min-w-0">
                       <span className="font-medium">{item.skus?.exact_size ?? '—'}</span>
                       <span className="text-ink-3 ml-1.5">{item.skus?.brand_name ?? '—'}</span>

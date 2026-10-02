@@ -139,16 +139,16 @@ export default function ImportView() {
   return (
     <div className="flex flex-col h-[calc(100vh-56px)]">
       <div className="px-4 lg:px-6 py-3.5 border-b border-line bg-surface flex items-center gap-3">
-        <h1 className="text-[17px] font-semibold">Import Data</h1>
+        <h1 className="text-[19px] font-semibold">Import Data</h1>
         {step !== 'upload' && (
-          <button onClick={() => reset()} className="ml-auto btn text-[13px]">Start Over</button>
+          <button onClick={() => reset()} className="ml-auto btn text-[15px]">Start Over</button>
         )}
       </div>
 
       <div className="px-4 lg:px-6 border-b border-line flex gap-5 bg-surface">
         {([['SKU', '1 · Products'], ['INVENTORY', '2 · Inventory']] as [ImportKind, string][]).map(([k, label]) => (
           <button key={k} onClick={() => k !== kind && reset(k)}
-            className={`py-2.5 text-[13px] border-b-2 transition-colors ${kind === k ? 'border-primary text-primary font-medium' : 'border-transparent text-ink-2 hover:text-ink'}`}>
+            className={`py-2.5 text-[15px] border-b-2 transition-colors ${kind === k ? 'border-primary text-primary font-medium' : 'border-transparent text-ink-2 hover:text-ink'}`}>
             {label}
           </button>
         ))}
@@ -158,12 +158,12 @@ export default function ImportView() {
         {/* ── Upload ── */}
         {step === 'upload' && (
           <div className="max-w-3xl">
-            <p className="text-[13px] text-ink-2 mb-2">
+            <p className="text-[15px] text-ink-2 mb-2">
               {kind === 'SKU'
                 ? 'Builds the product master: Product Family → Section → Size → Make (Colour / L / W / T for conveyor). SKU numbers are generated automatically.'
                 : 'Loads current stock from your register and attaches it to products. Rows are matched to products by Family + Section + Size + Make — not by SKU code.'}
             </p>
-            <p className="text-[12px] text-ink-3 mb-6">
+            <p className="text-[14px] text-ink-3 mb-6">
               {kind === 'SKU'
                 ? 'Cut Pcs / Full Sleeve, UOM, QTY and Location are inventory details — they are handled in the Inventory import, not here.'
                 : 'A product that is not in Product Master yet is created automatically and listed in the result.'}
@@ -175,12 +175,12 @@ export default function ImportView() {
               className="border-2 border-dashed border-line rounded-xl p-12 text-center cursor-pointer hover:border-primary transition-colors"
             >
               <Upload size={28} className="mx-auto text-ink-3 mb-3" />
-              <p className="text-[14px] font-medium mb-1">Drop your file here or click to browse</p>
-              <p className="text-[12px] text-ink-3">.xlsx, .xls or .csv</p>
+              <p className="text-[16px] font-medium mb-1">Drop your file here or click to browse</p>
+              <p className="text-[14px] text-ink-3">.xlsx, .xls or .csv</p>
             </div>
             <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }} />
-            {err && <p className="mt-3 text-[13px] text-danger">{err}</p>}
+            {err && <p className="mt-3 text-[15px] text-danger">{err}</p>}
           </div>
         )}
 
@@ -210,12 +210,12 @@ export default function ImportView() {
 
             <ModePicker kind={kind} type={type} mode={mode} setMode={setMode} />
 
-            <p className="text-[12px] text-ink-3 mb-3">
+            <p className="text-[14px] text-ink-3 mb-3">
               <strong>{headers.length}</strong> columns found · <strong>{autoCount}</strong> of {fields.length} fields matched automatically
               by name. Change any that look wrong.
             </p>
 
-            <table className="w-full text-[13px] border border-line rounded-lg overflow-hidden">
+            <table className="w-full text-[15px] border border-line rounded-lg overflow-hidden">
               <thead>
                 <tr className="bg-surface-2">
                   <th className="text-left px-3 py-2.5 font-medium text-ink-2 w-[42%]">System expects</th>
@@ -231,7 +231,7 @@ export default function ImportView() {
                       <td className="px-3 py-2">
                         <span className="font-medium">{f.label}</span>
                         {f.required && <span className="text-danger ml-0.5">*</span>}
-                        {f.hint && <span className="block text-[11px] text-ink-3">{f.hint}</span>}
+                        {f.hint && <span className="block text-[13px] text-ink-3">{f.hint}</span>}
                       </td>
                       <td className="px-3 py-2">
                         <select className={`field w-full ${f.required && !ok ? 'border-danger' : ''}`}
@@ -256,7 +256,7 @@ export default function ImportView() {
               <button onClick={runPreview} disabled={!requiredMet || busy} className="btn btn-primary flex items-center gap-1.5">
                 {busy ? <Loader2 size={14} className="animate-spin" /> : <Eye size={14} />} Preview
               </button>
-              {!requiredMet && <p className="text-[12px] text-danger">Choose a column for every required (*) field.</p>}
+              {!requiredMet && <p className="text-[14px] text-danger">Choose a column for every required (*) field.</p>}
             </div>
           </div>
         )}
@@ -264,23 +264,23 @@ export default function ImportView() {
         {/* ── Preview ── */}
         {step === 'preview' && dry && (
           <div>
-            <button onClick={() => setStep('map')} className="btn text-[12px] flex items-center gap-1.5 mb-4">
+            <button onClick={() => setStep('map')} className="btn text-[14px] flex items-center gap-1.5 mb-4">
               <ArrowLeft size={13} /> Back to mapping
             </button>
 
             <SummaryCards kind={kind} summary={dry.summary} />
 
             {dry.blocked && (
-              <div className="mb-4 flex items-start gap-2 text-[13px] text-danger bg-red-50 border border-red-200 rounded-lg p-3">
+              <div className="mb-4 flex items-start gap-2 text-[15px] text-danger bg-red-50 border border-red-200 rounded-lg p-3">
                 <AlertCircle size={15} className="mt-0.5 shrink-0" /> {dry.blocked}
               </div>
             )}
 
-            <p className="text-[12px] text-ink-3 mb-2">
+            <p className="text-[14px] text-ink-3 mb-2">
               First {dry.preview.length} rows exactly as they will be saved:
             </p>
             <div className="overflow-auto border border-line rounded-lg">
-              <table className="w-full text-[12px]">
+              <table className="w-full text-[14px]">
                 <thead>
                   <tr className="bg-surface-2 text-left text-ink-2">
                     <th className="px-3 py-2 font-medium">Row</th>
@@ -316,17 +316,17 @@ export default function ImportView() {
 
             {dry.errors.length > 0 && (
               <div className="mt-4 border border-yellow-200 bg-yellow-50 rounded-lg p-3">
-                <p className="text-[12px] font-medium text-yellow-800 mb-1.5">
+                <p className="text-[14px] font-medium text-yellow-800 mb-1.5">
                   {dry.errors.length} row(s) will be skipped:
                 </p>
-                <ul className="text-[12px] text-yellow-700 space-y-0.5 max-h-40 overflow-auto">
+                <ul className="text-[14px] text-yellow-700 space-y-0.5 max-h-40 overflow-auto">
                   {dry.errors.map((e, i) => <li key={i}>• {e}</li>)}
                 </ul>
               </div>
             )}
 
             {wipes && !dry.blocked && (
-              <label className="mt-5 flex items-start gap-2 text-[13px] bg-amber-50 border border-amber-200 rounded-lg p-3 cursor-pointer">
+              <label className="mt-5 flex items-start gap-2 text-[15px] bg-amber-50 border border-amber-200 rounded-lg p-3 cursor-pointer">
                 <input type="checkbox" className="mt-0.5" checked={confirmWipe} onChange={(e) => setConfirmWipe(e.target.checked)} />
                 <span>
                   <AlertTriangle size={13} className="inline -mt-0.5 mr-1 text-warn" />
@@ -353,7 +353,7 @@ export default function ImportView() {
               <CheckCircle size={28} className="text-ok" />
               <div>
                 <p className="font-semibold">Import complete</p>
-                <p className="text-[13px] text-ink-2">
+                <p className="text-[15px] text-ink-2">
                   {kind === 'SKU'
                     ? `${result.created} products created · ${result.existing} already existed · ${result.duplicates} duplicate rows in sheet`
                     : `${result.skusUpdated} products updated · ${result.lotsCreated} lots created · ${(result.newSkus as string[]).length} new products auto-created`}
@@ -363,15 +363,15 @@ export default function ImportView() {
 
             {kind === 'INVENTORY' && (result.newSkus as string[]).length > 0 && (
               <div className="mb-4 border border-line rounded-lg p-3 bg-subtle">
-                <p className="text-[12px] font-medium mb-1">Created from this import (not in Product Master before):</p>
-                <p className="text-[12px] font-mono text-ink-2 break-words">{(result.newSkus as string[]).join(', ')}</p>
+                <p className="text-[14px] font-medium mb-1">Created from this import (not in Product Master before):</p>
+                <p className="text-[14px] font-mono text-ink-2 break-words">{(result.newSkus as string[]).join(', ')}</p>
               </div>
             )}
 
             {(result.errors as string[]).length > 0 && (
               <div className="border border-yellow-200 bg-yellow-50 rounded-lg p-4 mb-4">
-                <p className="text-[13px] font-medium text-yellow-800 mb-2">{(result.errors as string[]).length} rows skipped:</p>
-                <ul className="text-[12px] text-yellow-700 space-y-1 max-h-48 overflow-auto">
+                <p className="text-[15px] font-medium text-yellow-800 mb-2">{(result.errors as string[]).length} rows skipped:</p>
+                <ul className="text-[14px] text-yellow-700 space-y-1 max-h-48 overflow-auto">
                   {(result.errors as string[]).map((e, i) => <li key={i}>• {e}</li>)}
                 </ul>
               </div>
@@ -412,7 +412,7 @@ function ModePicker({ kind, type, mode, setMode }: {
       <label className="label">If data already exists in the system</label>
       <div className="flex flex-wrap gap-5 mt-1">
         {opts.map(([m, title, desc]) => (
-          <label key={m} className="flex items-start gap-1.5 text-[12px] cursor-pointer max-w-[300px]">
+          <label key={m} className="flex items-start gap-1.5 text-[14px] cursor-pointer max-w-[300px]">
             <input type="radio" className="mt-0.5" checked={mode === m} onChange={() => setMode(m)} />
             <span><strong>{title}</strong><span className="block text-ink-3">{desc}</span></span>
           </label>
@@ -435,19 +435,19 @@ function SummaryCards({ kind, summary }: { kind: ImportKind; summary: DryRun['su
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
         {cards.map(([label, v]) => (
           <div key={label} className="border border-line rounded-lg px-3 py-2.5 bg-surface">
-            <p className="text-[11px] text-ink-3">{label}</p>
-            <p className="text-[20px] font-semibold num">{String(v ?? 0)}</p>
+            <p className="text-[13px] text-ink-3">{label}</p>
+            <p className="text-[22px] font-semibold num">{String(v ?? 0)}</p>
           </div>
         ))}
       </div>
       {kind === 'SKU' && (brands.length > 0 || families.length > 0) && (
-        <p className="text-[12px] text-ink-3">
+        <p className="text-[14px] text-ink-3">
           {families.length > 0 && <>New product families: <strong className="text-ink-2">{families.join(', ')}</strong>. </>}
           {brands.length > 0 && <>New makes: <strong className="text-ink-2">{brands.join(', ')}</strong>.</>}
         </p>
       )}
       {kind === 'INVENTORY' && Number(s.newSkus) > 0 && (
-        <p className="text-[12px] text-ink-3">
+        <p className="text-[14px] text-ink-3">
           {String(s.newSkus)} product(s) in this sheet are not in Product Master — they will be created automatically.
         </p>
       )}
@@ -466,7 +466,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function ErrorBox({ text }: { text: string }) {
   return (
-    <div className="mt-4 flex items-start gap-2 text-[13px] text-danger bg-red-50 rounded-lg p-3">
+    <div className="mt-4 flex items-start gap-2 text-[15px] text-danger bg-red-50 rounded-lg p-3">
       <AlertCircle size={14} className="mt-0.5 shrink-0" /> {text}
     </div>
   );

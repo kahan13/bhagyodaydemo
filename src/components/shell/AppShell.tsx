@@ -12,6 +12,7 @@ import type { Permission, Session } from '@/lib/types';
 import SignOutButton from '@/components/shell/SignOutButton';
 import CommandPalette from '@/components/shell/CommandPalette';
 import ShortcutsList from '@/components/shell/ShortcutsList';
+import KeyTips from '@/components/shell/KeyTips';
 import { GO_KEYS } from '@/lib/shortcuts';
 import { DATA_CHANGED, installFetchWatcher, onDataChanged } from '@/lib/dataSync';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
@@ -164,7 +165,7 @@ export default function AppShell({
               href={href}
               prefetch
               aria-current={active(href) ? 'page' : undefined}
-              className={`flex items-center gap-2.5 h-9 px-3 rounded-lg text-[13px] transition-colors ${
+              className={`flex items-center gap-2.5 h-9 px-3 rounded-lg text-[15px] transition-colors ${
                 active(href)
                   ? 'bg-brand-soft text-brand font-medium'
                   : 'text-ink-2 hover:bg-hover hover:text-ink'
@@ -182,7 +183,7 @@ export default function AppShell({
   return (
     <div className="min-h-screen">
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-[228px] bg-surface border-r border-line flex flex-col
+        className={`fixed inset-y-0 left-0 z-50 w-[252px] bg-surface border-r border-line flex flex-col
                     transition-transform duration-200 lg:translate-x-0
                     ${navOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
@@ -192,8 +193,8 @@ export default function AppShell({
               <Boxes size={15} />
             </span>
             <span className="min-w-0 leading-tight">
-              <span className="block text-[13px] font-semibold truncate">Bhagyoday Belts</span>
-              <span className="block text-[10px] text-ink-3">Inventory</span>
+              <span className="block text-[15px] font-semibold truncate">Bhagyoday Belts</span>
+              <span className="block text-[12px] text-ink-3">Inventory</span>
             </span>
           </Link>
           <button className="btn btn-ghost lg:hidden h-7 w-7 p-0" onClick={() => setNavOpen(false)} aria-label="Close">
@@ -204,11 +205,11 @@ export default function AppShell({
         <div className="px-3 pb-3">
           <button
             onClick={() => setPaletteOpen(true)}
-            className="w-full flex items-center gap-2 h-8 px-2.5 rounded-lg border border-line text-[13px] text-ink-3 hover:bg-subtle transition-colors"
+            className="w-full flex items-center gap-2 h-8 px-2.5 rounded-lg border border-line text-[15px] text-ink-3 hover:bg-subtle transition-colors"
           >
             <Search size={14} />
             <span>Search</span>
-            <kbd className="ml-auto text-[10px] px-1.5 py-0.5 rounded border border-line bg-subtle text-ink-3">⌘K</kbd>
+            <kbd className="ml-auto text-[12px] px-1.5 py-0.5 rounded border border-line bg-subtle text-ink-3">⌘K</kbd>
           </button>
         </div>
 
@@ -220,10 +221,10 @@ export default function AppShell({
         <div className="px-3 py-3 border-t border-line">
           <Link
             href="/shortcuts"
-            className="flex items-center gap-2 h-8 px-2.5 rounded-lg text-[13px] text-ink-3 hover:bg-subtle transition-colors"
+            className="flex items-center gap-2 h-8 px-2.5 rounded-lg text-[15px] text-ink-3 hover:bg-subtle transition-colors"
           >
             <span>Keyboard shortcuts</span>
-            <kbd className="ml-auto text-[10px] px-1.5 py-0.5 rounded border border-line bg-subtle text-ink-3">?</kbd>
+            <kbd className="ml-auto text-[12px] px-1.5 py-0.5 rounded border border-line bg-subtle text-ink-3">?</kbd>
           </Link>
         </div>
       </aside>
@@ -232,7 +233,7 @@ export default function AppShell({
         <div className="fixed inset-0 z-40 bg-ink/25 lg:hidden" onClick={() => setNavOpen(false)} aria-hidden />
       )}
 
-      <div className="lg:pl-[228px] flex flex-col min-h-screen">
+      <div className="lg:pl-[252px] flex flex-col min-h-screen">
         <header className="sticky top-0 z-30 h-14 bg-canvas/85 backdrop-blur-md border-b border-line flex items-center gap-3 px-4 lg:px-6">
           <button className="btn btn-ghost lg:hidden h-8 w-8 p-0" onClick={() => setNavOpen(true)} aria-label="Menu">
             <Menu size={18} />
@@ -250,12 +251,12 @@ export default function AppShell({
               onClick={() => setMenuOpen((v) => !v)}
               aria-expanded={menuOpen}
             >
-              <span className="grid place-items-center h-7 w-7 rounded-lg bg-brand text-white text-[11px] font-semibold">
+              <span className="grid place-items-center h-7 w-7 rounded-lg bg-brand text-white text-[13px] font-semibold">
                 {initials(session.user.full_name)}
               </span>
               <span className="hidden sm:block text-left leading-tight">
-                <span className="block text-[12px] font-medium">{session.user.full_name}</span>
-                <span className="block text-[10px] text-ink-3">{ROLE_LABEL[session.user.role_code]}</span>
+                <span className="block text-[14px] font-medium">{session.user.full_name}</span>
+                <span className="block text-[12px] text-ink-3">{ROLE_LABEL[session.user.role_code]}</span>
               </span>
               <ChevronDown size={14} className="text-ink-3" />
             </button>
@@ -265,9 +266,9 @@ export default function AppShell({
                 <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} aria-hidden />
                 <div className="absolute right-0 mt-1.5 w-60 z-20 card p-1.5 shadow-md fade-in">
                   <div className="px-2.5 py-2">
-                    <p className="text-[13px] font-medium">{session.user.full_name}</p>
-                    <p className="text-[11px] text-ink-3 truncate">{session.user.email}</p>
-                    <p className="text-[11px] text-ink-3 mt-1.5">
+                    <p className="text-[15px] font-medium">{session.user.full_name}</p>
+                    <p className="text-[13px] text-ink-3 truncate">{session.user.email}</p>
+                    <p className="text-[13px] text-ink-3 mt-1.5">
                       {session.permissions.length} permissions via {ROLE_LABEL[session.user.role_code]}
                     </p>
                   </div>
@@ -283,13 +284,17 @@ export default function AppShell({
         <main className="flex-1 min-w-0">{children}</main>
       </div>
 
+      <KeyTips
+        allowedHrefs={[...MAIN, ...ADMIN].filter(allowed).map((i) => i.href)}
+        canWrite={session.permissions.includes('transactions.create')}
+      />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
 
       {helpOpen && (
         <div className="fixed inset-0 z-[80] bg-ink/25 backdrop-blur-[2px] grid place-items-center p-4" onClick={() => setHelpOpen(false)}>
           <div className="w-full max-w-[820px] max-h-[88vh] overflow-y-auto bg-canvas rounded-xl border border-line shadow-xl p-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-[15px] font-semibold">Keyboard shortcuts</h2>
+              <h2 className="text-[17px] font-semibold">Keyboard shortcuts</h2>
               <button className="btn btn-ghost h-7 w-7 p-0" aria-label="Close" onClick={() => setHelpOpen(false)}><X size={15} /></button>
             </div>
             <ShortcutsList />

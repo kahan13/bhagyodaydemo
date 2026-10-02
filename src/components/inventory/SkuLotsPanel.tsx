@@ -41,7 +41,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 function StatusBadge({ status }: { status: string }) {
   return (
-    <span className={`inline-flex items-center border rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS_STYLE[status] ?? 'bg-slate-100 text-slate-500'}`}>
+    <span className={`inline-flex items-center border rounded px-1.5 py-0.5 text-[12px] font-medium ${STATUS_STYLE[status] ?? 'bg-slate-100 text-slate-500'}`}>
       {STATUS_LABEL[status] ?? status}
     </span>
   );
@@ -79,13 +79,13 @@ function WasteModal({
         <div className="flex items-center justify-between px-5 py-4 border-b border-line">
           <div className="flex items-center gap-2">
             <AlertTriangle size={16} className="text-red-500" />
-            <h3 className="font-semibold text-[14px]">Mark Lot as Waste</h3>
+            <h3 className="font-semibold text-[16px]">Mark Lot as Waste</h3>
           </div>
           <button onClick={onClose} className="icon-btn"><X size={15} /></button>
         </div>
 
         <div className="px-5 py-4 space-y-3">
-          <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-[12px]">
+          <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-[14px]">
             <p className="font-medium text-red-800">{lot.lot_no} — <StatusBadge status={lot.status} /></p>
             <p className="text-red-700 mt-1">
               {fmtQty(lot.current_qty, lot.unit_code)} remaining of {fmtQty(lot.roll_length_mm, lot.unit_code)} roll will be written off.
@@ -96,7 +96,7 @@ function WasteModal({
           <div>
             <label className="label">Reason <span className="text-red-500">*</span></label>
             <textarea
-              className="input w-full resize-none h-20 text-[13px]"
+              className="input w-full resize-none h-20 text-[15px]"
               placeholder="e.g. Belt damaged beyond use, only 7mm left…"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -104,7 +104,7 @@ function WasteModal({
             />
           </div>
 
-          {err && <p className="text-[12px] text-red-500">{err}</p>}
+          {err && <p className="text-[14px] text-red-500">{err}</p>}
         </div>
 
         <div className="px-5 py-4 border-t border-line flex justify-end gap-3">
@@ -189,12 +189,12 @@ export default function SkuLotsPanel({
   }
 
   if (err) {
-    return <p className="text-[12px] text-red-500 px-1">{err}</p>;
+    return <p className="text-[14px] text-red-500 px-1">{err}</p>;
   }
 
   if (lots.length === 0) {
     return (
-      <p className="text-[12px] text-ink-3 px-1">
+      <p className="text-[14px] text-ink-3 px-1">
         No lots yet. Lots are created when stock is received via Purchase Orders.
       </p>
     );
@@ -203,7 +203,7 @@ export default function SkuLotsPanel({
   return (
     <div className="space-y-2">
       {/* ── Summary row ── */}
-      <div className="flex items-center gap-3 text-[12px] text-ink-2 flex-wrap">
+      <div className="flex items-center gap-3 text-[14px] text-ink-2 flex-wrap">
         <span className="font-medium text-ink">{fmtQty(totalActive, unitCode)} active</span>
         {fullCount > 0 && (
           <span className="flex items-center gap-1">
@@ -224,7 +224,7 @@ export default function SkuLotsPanel({
 
       {/* ── Active lots ── */}
       {active.length === 0 && (
-        <p className="text-[12px] text-ink-3">No active stock in lots.</p>
+        <p className="text-[14px] text-ink-3">No active stock in lots.</p>
       )}
 
       {active.map((lot) => (
@@ -241,7 +241,7 @@ export default function SkuLotsPanel({
       {exhausted.length > 0 && (
         <div className="border-t border-line pt-2 mt-1">
           <button
-            className="flex items-center gap-1.5 text-[11px] text-ink-3 hover:text-ink-2 w-full"
+            className="flex items-center gap-1.5 text-[13px] text-ink-3 hover:text-ink-2 w-full"
             onClick={() => setShowExhausted((v) => !v)}
           >
             {showExhausted ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
@@ -261,7 +261,7 @@ export default function SkuLotsPanel({
       {wasted.length > 0 && (
         <div className="border-t border-line pt-2 mt-1">
           <button
-            className="flex items-center gap-1.5 text-[11px] text-ink-3 hover:text-ink-2 w-full"
+            className="flex items-center gap-1.5 text-[13px] text-ink-3 hover:text-ink-2 w-full"
             onClick={() => setShowWasted((v) => !v)}
           >
             {showWasted ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
@@ -305,20 +305,20 @@ function LotRow({
   const isInactive = lot.status === 'EXHAUSTED' || lot.status === 'WASTED';
 
   return (
-    <div className={`rounded-lg border px-3 py-2 text-[12px] ${
+    <div className={`rounded-lg border px-3 py-2 text-[14px] ${
       isInactive ? 'border-line bg-subtle opacity-60' : 'border-line bg-surface'
     }`}>
       <div className="flex items-center justify-between gap-2">
         {/* Left: lot no + status */}
         <div className="flex items-center gap-2 min-w-0">
-          <span className="font-mono text-[11px] text-ink-3 shrink-0">{lot.lot_no}</span>
+          <span className="font-mono text-[13px] text-ink-3 shrink-0">{lot.lot_no}</span>
           <StatusBadge status={lot.status} />
         </div>
 
         {/* Right: qty + waste button */}
         <div className="flex items-center gap-2 shrink-0">
           <div className="text-right">
-            <span className="num font-semibold text-[13px]">
+            <span className="num font-semibold text-[15px]">
               {fmtQty(lot.current_qty, unitCode)}
             </span>
             {lot.current_qty !== lot.inward_qty && (

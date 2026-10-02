@@ -249,8 +249,8 @@ export default function ReportsView({
     <div className="flex flex-col h-[calc(100vh-56px)]">
       <div className="px-4 lg:px-6 py-3.5 border-b border-line bg-surface space-y-3">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-[17px] font-semibold">Reports</h1>
-          <span className="text-[12px] text-ink-3 num">{rows.length.toLocaleString('en-IN')} rows</span>
+          <h1 className="text-[19px] font-semibold">Reports</h1>
+          <span className="text-[14px] text-ink-3 num">{rows.length.toLocaleString('en-IN')} rows</span>
 
           <div className="ml-auto flex gap-2">
             <button className="btn btn-secondary btn-sm" onClick={() => void run()} disabled={loading}>
@@ -313,12 +313,12 @@ export default function ReportsView({
             </select>
           </div>
 
-          <p className="text-[11px] text-ink-3 pb-2 ml-1">{definition.note}</p>
+          <p className="text-[13px] text-ink-3 pb-2 ml-1">{definition.note}</p>
         </div>
       </div>
 
       <div className="flex-1 min-h-0 scroll">
-        {error && <p className="m-4 text-[13px] text-danger bg-danger-soft rounded-lg px-3.5 py-2.5">{error}</p>}
+        {error && <p className="m-4 text-[15px] text-danger bg-danger-soft rounded-lg px-3.5 py-2.5">{error}</p>}
 
         {loading && (
           <div className="p-4 space-y-2">
@@ -327,7 +327,7 @@ export default function ReportsView({
         )}
 
         {!loading && !error && rows.length === 0 && (
-          <p className="py-16 text-center text-[13px] text-ink-3">Nothing to report for these filters.</p>
+          <p className="py-16 text-center text-[15px] text-ink-3">Nothing to report for these filters.</p>
         )}
 
         {!loading && rows.length > 0 && (
@@ -352,14 +352,14 @@ export default function ReportsView({
         )}
 
         {!loading && rows.length > 500 && (
-          <p className="px-4 py-3 text-[12px] text-ink-3 border-t border-line">
+          <p className="px-4 py-3 text-[14px] text-ink-3 border-t border-line">
             Showing the first 500 rows. Exports include all {rows.length.toLocaleString('en-IN')}.
           </p>
         )}
       </div>
 
       <div className="border-t border-line bg-surface px-4 lg:px-6 h-11 flex items-center shrink-0">
-        <p className="text-[11px] text-ink-3">{title} · {period}</p>
+        <p className="text-[13px] text-ink-3">{title} · {period}</p>
       </div>
     </div>
   );

@@ -41,7 +41,7 @@ export default function RollEntry({
         <label className="label">Standard rolls received ({len} mm each) <span className="text-danger">*</span></label>
         <input
           id="roll-count"
-          className="field num text-[16px] h-11"
+          className="field num text-[18px] h-11"
           inputMode="numeric"
           value={rows.count}
           placeholder="0"
@@ -68,13 +68,13 @@ export default function RollEntry({
         </div>
       ))}
 
-      <button type="button" className="text-[12px] text-brand font-medium"
+      <button type="button" className="text-[14px] text-brand font-medium"
         onClick={() => onChange({ ...rows, odd: [...rows.odd, { rolls: '1', length: '' }] })}>
         + Other length (a roll that is not {len} mm)
       </button>
 
       {total > 0 && (
-        <div className="bg-ok-soft/30 rounded-lg px-3 py-2 text-[12px]">
+        <div className="bg-ok-soft/30 rounded-lg px-3 py-2 text-[14px]">
           Adding {payload.reduce((a, r) => a + r.rolls, 0)} roll{payload.reduce((a, r) => a + r.rolls, 0) === 1 ? '' : 's'}
           <span className="text-ink-3"> = {payload.map((r) => `${r.rolls}×${r.roll_length}`).join(' + ')}</span>
           <span className="num font-semibold"> · total {total} mm</span>

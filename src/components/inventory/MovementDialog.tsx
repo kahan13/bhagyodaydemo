@@ -89,14 +89,14 @@ export default function MovementDialog({
 
         <div className="p-5 space-y-3.5">
           <div className="bg-subtle rounded-lg px-3.5 py-3">
-            <p className="text-[14px] font-medium">{sku.exact_size}</p>
-            <p className="text-[11px] text-ink-3 mt-0.5">
+            <p className="text-[16px] font-medium">{sku.exact_size}</p>
+            <p className="text-[13px] text-ink-3 mt-0.5">
               {sku.brand_name} · {sku.family_name}
             </p>
             {sku.lot_groups && sku.lot_groups.length > 0 ? (
               <LotBreakdown groups={sku.lot_groups} className="mt-1.5" />
             ) : (
-              <p className="num text-[12px] text-ink-2 mt-1.5">
+              <p className="num text-[14px] text-ink-2 mt-1.5">
                 In stock {fmtQty(sku.current_stock, sku.unit_code)}
               </p>
             )}
@@ -113,7 +113,7 @@ export default function MovementDialog({
             </label>
             <input
               id="qty"
-              className="field num text-[16px] h-11"
+              className="field num text-[18px] h-11"
               inputMode="decimal"
               autoFocus
               value={qty}
@@ -135,7 +135,7 @@ export default function MovementDialog({
           </div>
 
           {amount > 0 && (
-            <div className="rounded-lg border border-line px-3.5 py-2.5 text-[13px] num space-y-1">
+            <div className="rounded-lg border border-line px-3.5 py-2.5 text-[15px] num space-y-1">
               <div className="flex justify-between text-ink-2">
                 <span>Current</span><span>{fmtQty(sku.current_stock, sku.unit_code)}</span>
               </div>
@@ -150,12 +150,12 @@ export default function MovementDialog({
           )}
 
           {action === 'outward' && amount > sku.current_stock && (
-            <p className="text-[12px] text-danger">
+            <p className="text-[14px] text-danger">
               Only {fmtQty(sku.current_stock, sku.unit_code)} available.
             </p>
           )}
 
-          {error && <p className="text-[12px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>}
+          {error && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>}
         </div>
 
         <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle sm:rounded-b-xl">

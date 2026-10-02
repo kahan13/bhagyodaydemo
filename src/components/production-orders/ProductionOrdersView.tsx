@@ -21,6 +21,7 @@ import type {
 } from '@/lib/types';
 import { useListNav } from '@/lib/useListNav';
 import { onDataChanged } from '@/lib/dataSync';
+import { takeAction } from '@/lib/keytips';
 import LotAllocationPicker, { type LotAllocation } from './LotAllocationPicker';
 import type { LotGroup, PendingAdjustment } from '@/lib/types';
 import { loadReceiptModel, printReceipt, downloadReceiptPdf, receiptHtml, type ReceiptModel } from '@/lib/order-receipt';
@@ -40,8 +41,8 @@ const STATUS_BADGE: Record<ProductionOrderStatus, string> = {
   CREATED:     'badge-warn',
   SENT:        'badge-brand',
   IN_PROGRESS: 'badge-ok',
-  COMPLETED:   'bg-subtle text-ink-3 px-2 py-0.5 rounded-full text-[11px] font-medium',
-  CANCELLED:   'bg-danger-soft text-danger px-2 py-0.5 rounded-full text-[11px] font-medium',
+  COMPLETED:   'bg-subtle text-ink-3 px-2 py-0.5 rounded-full text-[13px] font-medium',
+  CANCELLED:   'bg-danger-soft text-danger px-2 py-0.5 rounded-full text-[13px] font-medium',
 };
 
 const STATUS_NEXT: Partial<Record<ProductionOrderStatus, ProductionOrderStatus>> = {
@@ -199,7 +200,7 @@ function AtpBadge({ sku, qty, otherQty = 0 }: { sku: SkuWithAtp; qty: string; ot
   else colour = 'text-ok';
 
   return (
-    <p className="text-[10px] text-center mt-0.5 leading-tight">
+    <p className="text-[12px] text-center mt-0.5 leading-tight">
       <span className="text-ink-3">{sku.unit_code}</span>
       {' · '}
       <span
@@ -351,14 +352,14 @@ function SkuCombobox({
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => setTab(k)}
-                className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+                className={`px-2.5 py-1 rounded-full text-[13px] font-medium border transition-colors ${
                   tab === k ? 'bg-brand text-white border-brand' : 'bg-surface border-line text-ink-2 hover:border-brand'
                 }`}
               >{label}</button>
             ))}
           </div>
           {options.length === 0 && (
-            <p className="px-3 py-4 text-center text-[12px] text-ink-3">
+            <p className="px-3 py-4 text-center text-[14px] text-ink-3">
               Nothing in this tab — try {tab === 'CUT_PCS' ? 'Full Sleeve' : 'Show all'}.
             </p>
           )}
@@ -385,7 +386,7 @@ function SkuCombobox({
                 type="button"
               >
                 <div className="min-w-0">
-                  <div className="text-[13px] font-medium truncate">
+                  <div className="text-[15px] font-medium truncate">
                     <span className="font-mono text-brand">{sku.sku_code}</span>{' – '}{sku.display_name}
                     {group && (
                       <span className={`badge ml-2 ${group.status === 'FULL_SLEEVE' ? 'badge-ok' : 'badge-warn'}`}>
@@ -393,11 +394,11 @@ function SkuCombobox({
                       </span>
                     )}
                   </div>
-                  <div className="text-[11px] text-ink-3 truncate">{sku.brand_name} · {sku.exact_size}</div>
+                  <div className="text-[13px] text-ink-3 truncate">{sku.brand_name} · {sku.exact_size}</div>
                 </div>
                 <div className="text-right shrink-0">
-                  <div className="text-[11px] text-ink-3">{group ? groupText(group) : sku.unit_code}</div>
-                  <div className={`text-[11px] font-medium ${atpColour}`}>
+                  <div className="text-[13px] text-ink-3">{group ? groupText(group) : sku.unit_code}</div>
+                  <div className={`text-[13px] font-medium ${atpColour}`}>
                     {avail} {group ? 'mm ' : ''}avail
                   </div>
                 </div>
@@ -410,7 +411,7 @@ function SkuCombobox({
       {open && !loadingSkus && allOptions.length === 0 && value.query.length > 0 && (
         <div
           ref={dropdownRef}
-          className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg px-3 py-4 text-center text-[12px] text-ink-3"
+          className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg px-3 py-4 text-center text-[14px] text-ink-3"
         >
           No SKUs match &quot;{value.query}&quot;
         </div>
@@ -434,8 +435,8 @@ function DeleteConfirmModal({
             <AlertTriangle size={18} className="text-danger" />
           </div>
           <div>
-            <h3 className="text-[15px] font-semibold">Delete Order {orderNo}?</h3>
-            <p className="text-[13px] text-ink-3 mt-1">
+            <h3 className="text-[17px] font-semibold">Delete Order {orderNo}?</h3>
+            <p className="text-[15px] text-ink-3 mt-1">
               This will permanently delete the order and all its items. Physical stock will be restored.
             </p>
           </div>
@@ -489,8 +490,8 @@ function RecordOutwardModal({
             <ArrowDownCircle size={18} className="text-brand" />
           </div>
           <div>
-            <h3 className="text-[15px] font-semibold">Record Outward</h3>
-            <p className="text-[13px] text-ink-3 mt-1">
+            <h3 className="text-[17px] font-semibold">Record Outward</h3>
+            <p className="text-[15px] text-ink-3 mt-1">
               Record an OUTWARD inventory entry for{' '}
               <span className="font-medium text-ink">
                 {item.quantity} {item.unit_code}
@@ -560,13 +561,13 @@ function Pane({
         aria-expanded={open}
       >
         {open ? <ChevronDown size={15} className="text-ink-3" /> : <ChevronRight size={15} className="text-ink-3" />}
-        <span className="text-[14px] font-semibold">{title}</span>
+        <span className="text-[16px] font-semibold">{title}</span>
         {count != null && (
-          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+          <span className={`rounded-full px-2 py-0.5 text-[13px] font-semibold ${
             tone === 'warn' && count > 0 ? 'bg-warn/20 text-warn' : 'bg-subtle text-ink-3 border border-line'
           }`}>{count}</span>
         )}
-        {subtitle && <span className="text-[12px] text-ink-3 truncate">{subtitle}</span>}
+        {subtitle && <span className="text-[14px] text-ink-3 truncate">{subtitle}</span>}
       </button>
       {open && <div className="border-t border-line">{children}</div>}
     </section>
@@ -590,20 +591,20 @@ function MismatchPane({
 }) {
   if (loadingMismatches) {
     return (
-      <div className="p-4 flex items-center gap-2 text-[13px] text-ink-3">
+      <div className="p-4 flex items-center gap-2 text-[15px] text-ink-3">
         <Loader size={14} className="animate-spin" /> Checking stock status…
       </div>
     );
   }
   if (mismatches.length === 0 && pending.length === 0) {
-    return <p className="p-4 text-[13px] text-ink-3">Book and physical stock agree — nothing to reconcile.</p>;
+    return <p className="p-4 text-[15px] text-ink-3">Book and physical stock agree — nothing to reconcile.</p>;
   }
 
   return (
     <div className="divide-y divide-line">
       {pending.length > 0 && (
         <div className="p-4 space-y-2">
-          <p className="text-[11px] text-ink-3 font-medium uppercase tracking-wide">
+          <p className="text-[13px] text-ink-3 font-medium uppercase tracking-wide">
             Stock movements not yet applied to production stock
           </p>
           {pending.map((p) => {
@@ -611,10 +612,10 @@ function MismatchPane({
             const removed = p.delta < 0;
             return (
               <div key={p.id} className="flex items-center justify-between gap-3 rounded-lg bg-surface border border-line px-3 py-2">
-                <div className="text-[12px] min-w-0">
+                <div className="text-[14px] min-w-0">
                   <span className="font-mono text-brand font-medium">{p.skus?.sku_code}</span>
                   <span className="text-ink ml-1.5">{p.skus?.display_name}</span>
-                  <div className="text-[11px] text-ink-3 mt-0.5">
+                  <div className="text-[13px] text-ink-3 mt-0.5">
                     <span className={`font-semibold ${removed ? 'text-danger' : 'text-ok'}`}>
                       {removed ? '' : '+'}{p.delta} {unit}
                     </span>
@@ -640,16 +641,16 @@ function MismatchPane({
 
       {mismatches.length > 0 && (
         <div className="divide-y divide-warn/20">
-          <p className="px-4 pt-4 text-[11px] text-ink-3 font-medium uppercase tracking-wide">
+          <p className="px-4 pt-4 text-[13px] text-ink-3 font-medium uppercase tracking-wide">
             Pending outward
           </p>
           {mismatches.map((m) => (
             <div key={m.sku_id} className="p-4 space-y-3">
               <div>
-                <p className="text-[13px] font-semibold">
+                <p className="text-[15px] font-semibold">
                   <span className="font-mono text-brand">{m.sku_code}</span>{' – '}{m.display_name}
                 </p>
-                <div className="flex items-center gap-3 mt-1 text-[12px] flex-wrap">
+                <div className="flex items-center gap-3 mt-1 text-[14px] flex-wrap">
                   <span className="text-ink-3">
                     Book: <span className="font-medium text-ink">{m.current_stock} {m.unit_code}</span>
                   </span>
@@ -664,16 +665,16 @@ function MismatchPane({
 
               {m.open_order_items.length > 0 && m.stock_gap > 0 && (
                 <div className="space-y-1.5">
-                  <p className="text-[11px] text-ink-3 font-medium uppercase tracking-wide">
+                  <p className="text-[13px] text-ink-3 font-medium uppercase tracking-wide">
                     Open production orders consuming this stock:
                   </p>
                   {m.open_order_items.map((oi) => (
                     <div key={oi.poi_id} className="flex items-center justify-between gap-3 rounded-lg bg-surface border border-line px-3 py-2">
-                      <div className="text-[12px] min-w-0">
+                      <div className="text-[14px] min-w-0">
                         <span className="font-mono text-brand font-medium">{oi.order_no}</span>
                         {oi.customer_name && <span className="text-ink-3 ml-1.5">· {oi.customer_name}</span>}
                         <span className="text-ink ml-2 font-medium">{oi.quantity} {oi.unit_code}</span>
-                        <span className={`ml-2 text-[11px] px-1.5 py-0.5 rounded-full ${
+                        <span className={`ml-2 text-[13px] px-1.5 py-0.5 rounded-full ${
                           oi.order_status === 'IN_PROGRESS' ? 'bg-ok/10 text-ok' :
                           oi.order_status === 'SENT' ? 'bg-brand/10 text-brand' :
                           'bg-warn/10 text-warn'
@@ -692,7 +693,7 @@ function MismatchPane({
               )}
 
               {(m.open_order_items.length === 0 || m.stock_gap < 0) && (
-                <p className="text-[12px] text-ink-3 italic">
+                <p className="text-[14px] text-ink-3 italic">
                   No movement or open order explains this difference. Check the Movements pane for the
                   SKU, or record a manual entry from the Inventory page.
                 </p>
@@ -722,8 +723,8 @@ interface MovementRow {
 }
 
 function MovementsPane({ rows, loading, pendingMovementIds }: { rows: MovementRow[]; loading: boolean; pendingMovementIds: Set<string> }) {
-  if (loading) return <div className="p-4 flex items-center gap-2 text-[13px] text-ink-3"><Loader size={14} className="animate-spin" /> Loading…</div>;
-  if (rows.length === 0) return <p className="p-4 text-[13px] text-ink-3">No stock movements yet.</p>;
+  if (loading) return <div className="p-4 flex items-center gap-2 text-[15px] text-ink-3"><Loader size={14} className="animate-spin" /> Loading…</div>;
+  if (rows.length === 0) return <p className="p-4 text-[15px] text-ink-3">No stock movements yet.</p>;
   return (
     <div className="divide-y divide-line max-h-96 overflow-y-auto">
       {rows.map((m) => {
@@ -734,11 +735,11 @@ function MovementsPane({ rows, loading, pendingMovementIds }: { rows: MovementRo
           : m.txn_type === 'OUTWARD' ? 'Physical already planned'
           : pendingMovementIds.has(m.id) ? 'Awaiting production' : 'Reconciled';
         return (
-          <div key={m.id} className="px-4 py-2 flex items-center justify-between gap-3 text-[12px]">
+          <div key={m.id} className="px-4 py-2 flex items-center justify-between gap-3 text-[14px]">
             <div className="min-w-0">
               <span className="font-mono text-brand">{m.skus?.sku_code}</span>
               <span className="text-ink ml-1.5">{m.skus?.display_name}</span>
-              <div className="text-[11px] text-ink-3 truncate">
+              <div className="text-[13px] text-ink-3 truncate">
                 {m.txn_no} · {m.user_name} · {formatDateTime(m.occurred_at)}{m.notes ? ` · ${m.notes}` : ''}
               </div>
               {m.lot_breakdown && m.lot_breakdown.length > 0 && (
@@ -753,7 +754,7 @@ function MovementsPane({ rows, loading, pendingMovementIds }: { rows: MovementRo
             </div>
             <div className="text-right shrink-0">
               <div className="font-medium">{tag} {m.quantity} {m.unit_code}</div>
-              <div className={`text-[11px] ${sync === 'Awaiting production' ? 'text-warn font-semibold' : 'text-ink-3'}`}>{sync}</div>
+              <div className={`text-[13px] ${sync === 'Awaiting production' ? 'text-warn font-semibold' : 'text-ink-3'}`}>{sync}</div>
             </div>
           </div>
         );
@@ -843,6 +844,14 @@ export default function ProductionOrdersView({
 }) {
   const [orders, setOrders] = useState<ProductionOrder[]>(initialOrders);
   const [showForm, setShowForm] = useState(true);
+
+  // opened here from another page by Alt+M → OR
+  useEffect(() => {
+    if (takeAction(['new-order'])) {
+      setShowForm(true);
+      setTimeout(() => document.querySelector<HTMLInputElement>('[data-new-order-first]')?.focus(), 80);
+    }
+  }, []);
 
   // keyboard: "n" opens the new-order window and puts the cursor in the first field
   useEffect(() => {
@@ -1407,20 +1416,20 @@ export default function ProductionOrdersView({
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[11px] font-mono text-ink-3">{order.order_no}</span>
+                    <span className="text-[13px] font-mono text-ink-3">{order.order_no}</span>
                     <span className={`badge ${STATUS_BADGE[order.status]}`}>{STATUS_LABEL[order.status]}</span>
                     {order.is_direct && <span className="badge badge-brand">Direct</span>}
                     {order.time_tag && (
-                      <span className="text-[11px] bg-subtle border border-line rounded-full px-2 py-0.5 text-ink-2">
+                      <span className="text-[13px] bg-subtle border border-line rounded-full px-2 py-0.5 text-ink-2">
                         ⏱ {order.time_tag}
                       </span>
                     )}
                     {order.created_at && (
-                      <span className="text-[11px] text-ink-3">🕐 {formatDateTime(order.created_at)}</span>
+                      <span className="text-[13px] text-ink-3">🕐 {formatDateTime(order.created_at)}</span>
                     )}
                   </div>
 
-                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1.5 text-[12px] text-ink-3">
+                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1.5 text-[14px] text-ink-3">
                     {order.customer_name && (
                       <span>Customer: <span className="text-ink">{order.customer_name}</span></span>
                     )}
@@ -1438,14 +1447,14 @@ export default function ProductionOrdersView({
                   {order.items && order.items.length > 0 ? (
                     <ul className="mt-2 space-y-1">
                       {order.items.map((item, idx) => (
-                        <li key={item.id} className="flex items-center gap-2 text-[13px]">
-                          <span className="text-ink-3 font-mono text-[11px] w-4 shrink-0">{idx + 1}.</span>
+                        <li key={item.id} className="flex items-center gap-2 text-[15px]">
+                          <span className="text-ink-3 font-mono text-[13px] w-4 shrink-0">{idx + 1}.</span>
                           <span className="font-medium text-ink truncate">{item.display_name}</span>
                           {item.quantity != null && (
                             <span className="text-ink-3 shrink-0">× {item.quantity} {item.unit_code}</span>
                           )}
                           {item.is_fulfilled && (
-                            <span className="text-[10px] bg-ok/10 text-ok px-1.5 rounded-full shrink-0">Outward posted</span>
+                            <span className="text-[12px] bg-ok/10 text-ok px-1.5 rounded-full shrink-0">Outward posted</span>
                           )}
                           {(allocMap[item.id] ?? []).length > 0 && (
                             <span className="flex gap-1 flex-wrap">
@@ -1465,7 +1474,7 @@ export default function ProductionOrdersView({
                     </ul>
                   ) : (
                     order.product_description && (
-                      <p className="text-[13px] font-medium mt-1">{order.product_description}
+                      <p className="text-[15px] font-medium mt-1">{order.product_description}
                         {order.quantity != null && (
                           <span className="text-ink-3 font-normal ml-2">× {order.quantity} {order.unit_code ?? ''}</span>
                         )}
@@ -1474,7 +1483,7 @@ export default function ProductionOrdersView({
                   )}
 
                   {order.notes && (
-                    <p className="text-[12px] text-ink-3 mt-1 truncate max-w-[500px]">{order.notes}</p>
+                    <p className="text-[14px] text-ink-3 mt-1 truncate max-w-[500px]">{order.notes}</p>
                   )}
                 </div>
 
@@ -1536,7 +1545,7 @@ export default function ProductionOrdersView({
 
               {order.is_direct && (
                 <div className="mt-3 pt-3 border-t border-line flex flex-wrap items-center gap-2">
-                  <span className="text-[11px] text-ink-3 mr-1">Post in Inventory:</span>
+                  <span className="text-[13px] text-ink-3 mr-1">Post in Inventory:</span>
                   {(['INWARD', 'OUTWARD'] as const).map((step) => {
                     const at = step === 'INWARD' ? order.direct_inward_at : order.direct_outward_at;
                     const by = step === 'INWARD' ? order.direct_inward_by : order.direct_outward_by;
@@ -1605,7 +1614,7 @@ export default function ProductionOrdersView({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={() => setReceipt(null)}>
           <div className="bg-surface rounded-xl border border-line shadow-xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-line">
-              <p className="text-[14px] font-semibold">Thermal print preview · 80 mm</p>
+              <p className="text-[16px] font-semibold">Thermal print preview · 80 mm</p>
               <button className="btn btn-ghost h-7 w-7 p-0" onClick={() => setReceipt(null)}><X size={15} /></button>
             </div>
             <div className="overflow-auto bg-subtle p-4">
@@ -1622,13 +1631,13 @@ export default function ProductionOrdersView({
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-[19px] font-semibold">Production Orders</h1>
-          <p className="text-[13px] text-ink-3 mt-0.5">
+          <h1 className="text-[21px] font-semibold">Production Orders</h1>
+          <p className="text-[15px] text-ink-3 mt-0.5">
             {activeOrders.length} active · {closedOrders.length} closed
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 text-[13px]">
+          <div className="flex items-center gap-2 text-[15px]">
             <span className="text-ink-3 hidden sm:inline">WhatsApp:</span>
             {editingWhatsapp ? (
               <>
@@ -1645,14 +1654,14 @@ export default function ProductionOrdersView({
             ) : (
               <>
                 <span className="font-medium">{whatsapp || <span className="text-ink-3 italic">not set</span>}</span>
-                <button className="text-brand text-[12px] hover:underline" onClick={() => { setWhatsappDraft(whatsapp); setEditingWhatsapp(true); }}>
+                <button className="text-brand text-[14px] hover:underline" onClick={() => { setWhatsappDraft(whatsapp); setEditingWhatsapp(true); }}>
                   <Pencil size={12} className="inline mr-0.5" />Change
                 </button>
               </>
             )}
           </div>
           {canCreate && (
-            <button className="btn btn-primary" onClick={() => { setShowForm(true); setError(null); setForm(makeEmptyForm()); }}>
+            <button className="btn btn-primary" data-kt="N" data-kt-label="New production order" onClick={() => { setShowForm(true); setError(null); setForm(makeEmptyForm()); }}>
               <Plus size={14} /> New Order
             </button>
           )}
@@ -1663,7 +1672,7 @@ export default function ProductionOrdersView({
       <Pane title="New Production Order" open={showForm} onToggle={() => setShowForm((v) => !v)}>
         <div className="p-5 space-y-4">
 
-          {error && <p className="text-[13px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>}
+          {error && <p className="text-[15px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>}
 
           <div>
             <div className="inline-flex rounded-lg border border-line bg-subtle p-0.5">
@@ -1672,14 +1681,14 @@ export default function ProductionOrdersView({
                   key={label}
                   type="button"
                   onClick={() => setForm((f) => (f.isDirect === v ? f : { ...f, isDirect: v, items: [makeLineItem()] }))}
-                  className={`px-3.5 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
+                  className={`px-3.5 py-1.5 rounded-md text-[14px] font-medium transition-colors ${
                     form.isDirect === v ? 'bg-surface shadow-sm text-ink' : 'text-ink-3 hover:text-ink'
                   }`}
                 >{label}</button>
               ))}
             </div>
             {form.isDirect && (
-              <p className="text-[11px] text-ink-3 mt-1.5">
+              <p className="text-[13px] text-ink-3 mt-1.5">
                 Supplier ships straight to the customer — no SKU and no stock effect. It will be listed under Direct Orders so staff remember to post the inward and outward.
               </p>
             )}
@@ -1722,7 +1731,7 @@ export default function ProductionOrdersView({
                   return (
                     <div key={li.id} className="rounded-lg border border-line bg-subtle p-3">
                       <div className="flex gap-2 items-start">
-                        <span className="text-[11px] text-ink-3 font-mono mt-2.5 w-4 shrink-0 text-center">{idx + 1}</span>
+                        <span className="text-[13px] text-ink-3 font-mono mt-2.5 w-4 shrink-0 text-center">{idx + 1}</span>
                         <input
                           className="field flex-1 min-w-0"
                           data-name-for={li.id}
@@ -1808,7 +1817,7 @@ export default function ProductionOrdersView({
                 return (
                   <div key={li.id} className="rounded-lg border border-line bg-subtle p-3">
                     <div className="flex gap-2 items-start">
-                      <span className="text-[11px] text-ink-3 font-mono mt-2.5 w-4 shrink-0 text-center">{idx + 1}</span>
+                      <span className="text-[13px] text-ink-3 font-mono mt-2.5 w-4 shrink-0 text-center">{idx + 1}</span>
                       <div className="flex-1 min-w-0">
                         <SkuCombobox
                           value={li.skuSearch}
@@ -1821,7 +1830,7 @@ export default function ProductionOrdersView({
                           placeholder="Search SKU…"
                         />
                         {li.skuSearch.sku && (
-                          <p className="text-[11px] text-ink-3 mt-0.5 pl-0.5">
+                          <p className="text-[13px] text-ink-3 mt-0.5 pl-0.5">
                             {grp ? (
                               <>
                                 <span className={`badge mr-1.5 ${grp.status === 'FULL_SLEEVE' ? 'badge-ok' : 'badge-warn'}`}>{groupLabel(grp)}</span>
@@ -1854,7 +1863,7 @@ export default function ProductionOrdersView({
                         {li.skuSearch.sku && (
                           grp ? (
                             // Only the picked classification; live: what is left after THIS line's quantity
-                            <p className="text-[10px] text-center mt-0.5 leading-tight">
+                            <p className="text-[12px] text-center mt-0.5 leading-tight">
                               <span className="text-ink-3">{li.skuSearch.sku.unit_code} · </span>
                               <span className={Math.max(0, grpAvail - (parseFloat(li.quantity) || 0)) === 0 ? 'text-warn font-semibold' : 'text-ok'}>
                                 {Math.max(0, grpAvail - (parseFloat(li.quantity) || 0))} left
@@ -1911,7 +1920,7 @@ export default function ProductionOrdersView({
 
             <button
               type="button"
-              className="mt-2 w-full rounded-lg border border-dashed border-line py-2 text-[12px] text-ink-3 hover:border-brand hover:text-brand transition-colors"
+              className="mt-2 w-full rounded-lg border border-dashed border-line py-2 text-[14px] text-ink-3 hover:border-brand hover:text-brand transition-colors"
               onClick={() => addItem()}
             >
               <Plus size={12} className="inline mr-1" />Add another item
@@ -1926,7 +1935,7 @@ export default function ProductionOrdersView({
                   <button
                     key={tag} type="button"
                     onClick={() => setForm({ ...form, time_tag: form.time_tag === tag ? '' : tag })}
-                    className={`px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors ${
+                    className={`px-3 py-1.5 rounded-full text-[14px] font-medium border transition-colors ${
                       form.time_tag === tag
                         ? 'bg-brand text-white border-brand'
                         : 'bg-surface border-line text-ink-2 hover:border-brand hover:text-brand'
@@ -1943,7 +1952,7 @@ export default function ProductionOrdersView({
                   <button
                     key={mode} type="button"
                     onClick={() => setForm({ ...form, delivery_mode: form.delivery_mode === mode ? '' : mode, delivery_note: '' })}
-                    className={`px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors ${
+                    className={`px-3 py-1.5 rounded-full text-[14px] font-medium border transition-colors ${
                       form.delivery_mode === mode
                         ? 'bg-brand text-white border-brand'
                         : 'bg-surface border-line text-ink-2 hover:border-brand hover:text-brand'
@@ -1977,7 +1986,7 @@ export default function ProductionOrdersView({
 
           <div className="rounded-lg border border-line bg-subtle p-3">
             <p className="eyebrow mb-1.5">WhatsApp message preview</p>
-            <pre className="text-[12px] text-ink-2 whitespace-pre-wrap font-sans leading-relaxed">{previewMessage}</pre>
+            <pre className="text-[14px] text-ink-2 whitespace-pre-wrap font-sans leading-relaxed">{previewMessage}</pre>
           </div>
 
           <div className="flex justify-end gap-2">
@@ -2002,7 +2011,7 @@ export default function ProductionOrdersView({
       {/* Empty state */}
       {regularOrders.length === 0 && (
         <div className="card p-10 text-center">
-          <p className="text-[13px] text-ink-3">No production orders yet. Create one to get started.</p>
+          <p className="text-[15px] text-ink-3">No production orders yet. Create one to get started.</p>
         </div>
       )}
 
@@ -2016,7 +2025,7 @@ export default function ProductionOrdersView({
       {/* ── Closed Orders (Completed + Cancelled) ── */}
       {closedOrders.length > 0 && (
         <details className="group">
-          <summary className="cursor-pointer text-[12px] text-ink-3 hover:text-ink select-none py-1">
+          <summary className="cursor-pointer text-[14px] text-ink-3 hover:text-ink select-none py-1">
             Show {closedOrders.length} closed order{closedOrders.length !== 1 ? 's' : ''}
             {' (completed &amp; cancelled)'}
           </summary>
@@ -2024,18 +2033,18 @@ export default function ProductionOrdersView({
             {closedOrders.map((order) => (
               <div key={order.id} className="card p-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[11px] font-mono text-ink-3">{order.order_no}</span>
+                  <span className="text-[13px] font-mono text-ink-3">{order.order_no}</span>
                   <span className={`badge ${STATUS_BADGE[order.status]}`}>{STATUS_LABEL[order.status]}</span>
                   {order.customer_name && (
-                    <span className="text-[12px] text-ink-3">{order.customer_name}</span>
+                    <span className="text-[14px] text-ink-3">{order.customer_name}</span>
                   )}
                   {order.items && order.items.length > 0 && (
-                    <span className="text-[12px] text-ink-3">
+                    <span className="text-[14px] text-ink-3">
                       · {order.items.map((i) => `${i.display_name} ×${i.quantity}`).join(', ')}
                     </span>
                   )}
                   {order.created_at && (
-                    <span className="text-[11px] text-ink-3 ml-auto">{formatDateTime(order.created_at)}</span>
+                    <span className="text-[13px] text-ink-3 ml-auto">{formatDateTime(order.created_at)}</span>
                   )}
                   {canCreate && order.status !== 'CANCELLED' && (
                     <button
@@ -2066,7 +2075,7 @@ export default function ProductionOrdersView({
       >
         <div className="p-4 space-y-3">
           {directOrders.length === 0 && (
-            <p className="text-[13px] text-ink-3">No direct orders yet. Choose “Direct order” when creating one.</p>
+            <p className="text-[15px] text-ink-3">No direct orders yet. Choose “Direct order” when creating one.</p>
           )}
           {directOrders.map((order) => renderOrderCard(order))}
         </div>

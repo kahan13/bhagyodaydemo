@@ -35,10 +35,10 @@ function Stat({ label, value, sub, tone }: {
   return (
     <div className="card p-4">
       <p className="eyebrow">{label}</p>
-      <p className={`num text-[24px] font-semibold tracking-[-0.02em] mt-1.5 leading-none ${
+      <p className={`num text-[26px] font-semibold tracking-[-0.02em] mt-1.5 leading-none ${
         tone === 'danger' ? 'text-danger' : tone === 'warn' ? 'text-warn' : ''
       }`}>{value}</p>
-      {sub && <p className="text-[11px] text-ink-3 mt-1.5">{sub}</p>}
+      {sub && <p className="text-[13px] text-ink-3 mt-1.5">{sub}</p>}
     </div>
   );
 }
@@ -105,39 +105,39 @@ async function Transactions() {
 
   function MovList({ rows, sign, color }: { rows: MovRow[]; sign: string; color: string }) {
     if (rows.length === 0)
-      return <p className="py-6 text-[12px] text-ink-3 text-center">No movements yet.</p>;
+      return <p className="py-6 text-[14px] text-ink-3 text-center">No movements yet.</p>;
     return (
       <ul className="divide-y divide-line">
         {rows.map((m) => (
           <li key={m.id} className="flex items-center gap-3 px-4 py-2.5">
             <span className="min-w-0 flex-1">
-              <span className="block text-[12px] truncate">
+              <span className="block text-[14px] truncate">
                 <span className="font-medium">{m.exact_size}</span>
                 <span className="text-ink-3"> · {m.brand_name}</span>
               </span>
               <span className="flex items-center gap-1.5 mt-0.5">
                 {m.product_type && (
-                  <span className="text-[10px] px-1 py-0.5 rounded bg-subtle text-ink-3 font-medium">
+                  <span className="text-[12px] px-1 py-0.5 rounded bg-subtle text-ink-3 font-medium">
                     {TYPE_LABEL[m.product_type] ?? m.product_type}
                   </span>
                 )}
-                <span className="text-[11px] text-ink-3">{fmtRelative(m.occurred_at)}</span>
+                <span className="text-[13px] text-ink-3">{fmtRelative(m.occurred_at)}</span>
                 {m.invoice_no && (
-                  <span className="text-[11px] font-mono text-ink-3">· {m.invoice_no}</span>
+                  <span className="text-[13px] font-mono text-ink-3">· {m.invoice_no}</span>
                 )}
               </span>
             </span>
             <span className="shrink-0 text-right">
               {m.lot_tracked && m.lot_breakdown && m.lot_breakdown.length > 0 && (
-                <span className="block text-[11px] text-ink-2 num leading-tight">
+                <span className="block text-[13px] text-ink-2 num leading-tight">
                   {sign === '+' ? rollsText(m.lot_breakdown) : lotSplit(m.lot_breakdown)}
                 </span>
               )}
-              <span className={`num text-[12px] font-semibold ${color}`}>
+              <span className={`num text-[14px] font-semibold ${color}`}>
                 {sign}{fmtQty(Math.abs(m.quantity), m.unit_code)}
               </span>
               {m.lot_tracked && m.lot_breakdown && m.lot_breakdown.length > 0 && (
-                <span className="text-[10px] text-ink-3"> total</span>
+                <span className="text-[12px] text-ink-3"> total</span>
               )}
             </span>
           </li>
@@ -150,7 +150,7 @@ async function Transactions() {
     <section className="card">
       <div className="card-head">
         <h2 className="card-title">Transactions</h2>
-        <Link href="/transactions" className="text-[12px] text-brand hover:underline">View all</Link>
+        <Link href="/transactions" className="text-[14px] text-brand hover:underline">View all</Link>
       </div>
       <div className="grid grid-cols-2 divide-x divide-line">
         <div>
@@ -158,8 +158,8 @@ async function Transactions() {
             <span className="grid place-items-center h-5 w-5 rounded bg-ok-soft text-ok">
               <ArrowDownLeft size={11} />
             </span>
-            <span className="text-[12px] font-semibold">Inward</span>
-            <span className="ml-auto text-[11px] text-ink-3">{inward.length}</span>
+            <span className="text-[14px] font-semibold">Inward</span>
+            <span className="ml-auto text-[13px] text-ink-3">{inward.length}</span>
           </div>
           <MovList rows={inward} sign="+" color="text-ok" />
         </div>
@@ -168,8 +168,8 @@ async function Transactions() {
             <span className="grid place-items-center h-5 w-5 rounded bg-brand-soft text-brand">
               <ArrowUpRight size={11} />
             </span>
-            <span className="text-[12px] font-semibold">Outward</span>
-            <span className="ml-auto text-[11px] text-ink-3">{outward.length}</span>
+            <span className="text-[14px] font-semibold">Outward</span>
+            <span className="ml-auto text-[13px] text-ink-3">{outward.length}</span>
           </div>
           <MovList rows={outward} sign="−" color="text-brand" />
         </div>
@@ -251,7 +251,7 @@ async function OrdersPane() {
     };
     const lbl: Record<string, string> = { PENDING: 'Pending', PARTIAL: 'Partial', FULFILLED: 'Done' };
     return (
-      <span className={`text-[10px] font-semibold px-1 py-0.5 rounded ${map[status] ?? ''}`}>
+      <span className={`text-[12px] font-semibold px-1 py-0.5 rounded ${map[status] ?? ''}`}>
         {lbl[status] ?? status}
       </span>
     );
@@ -259,7 +259,7 @@ async function OrdersPane() {
 
   function ItemList({ rows }: { rows: POItem[] }) {
     if (rows.length === 0)
-      return <p className="py-6 text-[12px] text-ink-3 text-center">None.</p>;
+      return <p className="py-6 text-[14px] text-ink-3 text-center">None.</p>;
     return (
       <ul className="divide-y divide-line">
         {rows.map((i) => {
@@ -268,38 +268,38 @@ async function OrdersPane() {
             <li key={i.id} className="flex items-center gap-3 px-4 py-2.5">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[12px] font-medium truncate">{i.exact_size}</span>
-                  <span className="text-[11px] text-ink-3 shrink-0">{i.brand_name}</span>
+                  <span className="text-[14px] font-medium truncate">{i.exact_size}</span>
+                  <span className="text-[13px] text-ink-3 shrink-0">{i.brand_name}</span>
                   {i.product_type && (
-                    <span className="text-[10px] px-1 py-0.5 rounded bg-subtle text-ink-3 font-medium shrink-0">
+                    <span className="text-[12px] px-1 py-0.5 rounded bg-subtle text-ink-3 font-medium shrink-0">
                       {TYPE_LABEL[i.product_type]}
                     </span>
                   )}
                   <ItemBadge status={i.status} />
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-[11px] text-ink-3 font-mono">{i.order_no}</span>
-                  <span className="text-[11px] text-ink-3">{fmtDate(i.created_at)}</span>
+                  <span className="text-[13px] text-ink-3 font-mono">{i.order_no}</span>
+                  <span className="text-[13px] text-ink-3">{fmtDate(i.created_at)}</span>
                 </div>
               </div>
               <div className="text-right shrink-0">
                 {i.roll_len ? (
-                  <div className="text-[12px] font-semibold num">
+                  <div className="text-[14px] font-semibold num">
                     {Number(i.received_qty) / i.roll_len}
                     <span className="text-ink-3 font-normal">/{Number(i.ordered_qty) / i.roll_len} rolls</span>
                   </div>
                 ) : null}
-                <div className={i.roll_len ? 'text-[10px] text-ink-3 num' : 'text-[12px] font-semibold num'}>
+                <div className={i.roll_len ? 'text-[12px] text-ink-3 num' : 'text-[14px] font-semibold num'}>
                   {i.received_qty}
                   <span className="text-ink-3 font-normal">/{i.ordered_qty}</span>
-                  <span className="text-[10px] text-ink-3 ml-0.5">{i.unit_code}</span>
+                  <span className="text-[12px] text-ink-3 ml-0.5">{i.unit_code}</span>
                 </div>
                 {remaining > 0 ? (
-                  <div className="text-[10px] text-warn num">
+                  <div className="text-[12px] text-warn num">
                     {i.roll_len ? `${rollsOf(remaining, i.roll_len)} (${remaining} ${i.unit_code}) left` : `${remaining} left`}
                   </div>
                 ) : (
-                  <div className="text-[10px] text-ok flex items-center justify-end gap-0.5">
+                  <div className="text-[12px] text-ok flex items-center justify-end gap-0.5">
                     <Check size={10} /> done
                   </div>
                 )}
@@ -319,27 +319,27 @@ async function OrdersPane() {
         <div className="flex items-center gap-2">
           <h2 className="card-title">Purchase Orders</h2>
           {inProgressOrderCount > 0 && (
-            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-warn-soft text-warn">
+            <span className="text-[12px] font-semibold px-1.5 py-0.5 rounded bg-warn-soft text-warn">
               {inProgressOrderCount}
             </span>
           )}
         </div>
-        <Link href="/purchase-orders" className="text-[12px] text-brand hover:underline">View all</Link>
+        <Link href="/purchase-orders" className="text-[14px] text-brand hover:underline">View all</Link>
       </div>
       <div className="grid grid-cols-2 divide-x divide-line">
         <div>
           <div className="flex items-center gap-1.5 px-4 py-2 border-b border-line bg-subtle">
             <ShoppingCart size={11} className="text-warn" />
-            <span className="text-[12px] font-semibold">In Progress</span>
-            <span className="ml-auto text-[11px] text-ink-3">{inProgress.length}</span>
+            <span className="text-[14px] font-semibold">In Progress</span>
+            <span className="ml-auto text-[13px] text-ink-3">{inProgress.length}</span>
           </div>
           <ItemList rows={inProgress} />
         </div>
         <div>
           <div className="flex items-center gap-1.5 px-4 py-2 border-b border-line bg-subtle">
             <ShoppingCart size={11} className="text-ok" />
-            <span className="text-[12px] font-semibold">Fulfilled</span>
-            <span className="ml-auto text-[11px] text-ink-3">{fulfilled.length}</span>
+            <span className="text-[14px] font-semibold">Fulfilled</span>
+            <span className="ml-auto text-[13px] text-ink-3">{fulfilled.length}</span>
           </div>
           <ItemList rows={fulfilled} />
         </div>
@@ -408,17 +408,17 @@ async function ProductionOrdersPane() {
         <div className="flex items-center gap-2">
           <h2 className="card-title">Production Orders</h2>
           {orders.length > 0 && (
-            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-brand/10 text-brand">
+            <span className="text-[12px] font-semibold px-1.5 py-0.5 rounded bg-brand/10 text-brand">
               {orders.length} active
             </span>
           )}
         </div>
-        <Link href="/production-orders" className="text-[12px] text-brand hover:underline">View all</Link>
+        <Link href="/production-orders" className="text-[14px] text-brand hover:underline">View all</Link>
       </div>
 
       {/* Mini status summary bar */}
       {orders.length > 0 && (
-        <div className="flex items-center gap-3 px-4 py-2 border-b border-line bg-subtle text-[11px]">
+        <div className="flex items-center gap-3 px-4 py-2 border-b border-line bg-subtle text-[13px]">
           {created > 0 && (
             <span className="flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-warn inline-block" />
@@ -441,7 +441,7 @@ async function ProductionOrdersPane() {
       )}
 
       {orders.length === 0 ? (
-        <p className="px-5 py-6 text-[12px] text-ink-3 text-center">No active production orders.</p>
+        <p className="px-5 py-6 text-[14px] text-ink-3 text-center">No active production orders.</p>
       ) : (
         <ul className="divide-y divide-line">
           {orders.map((o) => {
@@ -452,18 +452,18 @@ async function ProductionOrdersPane() {
                 <div className="min-w-0 flex-1">
                   {/* Order no + status + customer */}
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[11px] font-mono text-ink-3">{o.order_no}</span>
-                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${PO_STATUS_STYLE[o.status] ?? 'bg-subtle text-ink-3'}`}>
+                    <span className="text-[13px] font-mono text-ink-3">{o.order_no}</span>
+                    <span className={`text-[12px] font-semibold px-1.5 py-0.5 rounded-full ${PO_STATUS_STYLE[o.status] ?? 'bg-subtle text-ink-3'}`}>
                       {PO_STATUS_LABEL[o.status] ?? o.status}
                     </span>
                     {o.customer_name && (
-                      <span className="text-[12px] font-medium text-ink truncate">{o.customer_name}</span>
+                      <span className="text-[14px] font-medium text-ink truncate">{o.customer_name}</span>
                     )}
                   </div>
 
                   {/* Items summary */}
                   {o.items.length > 0 && (
-                    <p className="text-[11px] text-ink-3 mt-0.5">
+                    <p className="text-[13px] text-ink-3 mt-0.5">
                       {o.items.map((i) => `${i.display_name} ×${i.quantity} ${i.unit_code}${splitByItem[i.id] ? ` (${splitByItem[i.id]})` : ''}`).join(' · ')}
                     </p>
                   )}
@@ -471,22 +471,22 @@ async function ProductionOrdersPane() {
                   {/* Meta row */}
                   <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                     {o.time_tag && (
-                      <span className="text-[10px] text-ink-3">⏱ {o.time_tag}</span>
+                      <span className="text-[12px] text-ink-3">⏱ {o.time_tag}</span>
                     )}
                     {o.delivery_mode && (
-                      <span className="text-[10px] text-ink-3">· {o.delivery_mode}</span>
+                      <span className="text-[12px] text-ink-3">· {o.delivery_mode}</span>
                     )}
                     {o.assigned_to && (
-                      <span className="text-[10px] text-ink-3">· {o.assigned_to}</span>
+                      <span className="text-[12px] text-ink-3">· {o.assigned_to}</span>
                     )}
-                    <span className="text-[10px] text-ink-3 ml-auto">{fmtRelative(o.created_at)}</span>
+                    <span className="text-[12px] text-ink-3 ml-auto">{fmtRelative(o.created_at)}</span>
                   </div>
                 </div>
 
                 {/* Fulfilment chip — only show if items exist */}
                 {totalItems > 0 && (
                   <div className="shrink-0 text-right">
-                    <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded ${
+                    <span className={`text-[13px] font-semibold px-1.5 py-0.5 rounded ${
                       fulfilledCount === totalItems
                         ? 'bg-ok/10 text-ok'
                         : fulfilledCount > 0
@@ -527,24 +527,24 @@ async function LowStock() {
         <div className="flex items-center gap-2">
           <h2 className="card-title">Needs reordering</h2>
           {rows.length > 0 && (
-            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-warn-soft text-warn">
+            <span className="text-[12px] font-semibold px-1.5 py-0.5 rounded bg-warn-soft text-warn">
               {rows.length}
             </span>
           )}
         </div>
-        <Link href="/inventory" className="text-[12px] text-brand hover:underline">View inventory</Link>
+        <Link href="/inventory" className="text-[14px] text-brand hover:underline">View inventory</Link>
       </div>
       {rows.length === 0 ? (
-        <p className="px-5 py-4 text-[12px] text-ink-3 text-center">All products at or above minimum.</p>
+        <p className="px-5 py-4 text-[14px] text-ink-3 text-center">All products at or above minimum.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="table text-[12px]">
+          <table className="table text-[14px]">
             <thead>
               <tr>
-                <th className="text-[11px]">Product</th>
-                <th className="text-[11px]">Brand</th>
-                <th className="text-right text-[11px]">Stock</th>
-                <th className="text-right text-[11px]">Order qty</th>
+                <th className="text-[13px]">Product</th>
+                <th className="text-[13px]">Brand</th>
+                <th className="text-right text-[13px]">Stock</th>
+                <th className="text-right text-[13px]">Order qty</th>
               </tr>
             </thead>
             <tbody>
@@ -597,8 +597,8 @@ export default async function DashboardPage({
   return (
     <div className="p-4 lg:p-6 max-w-[1400px] mx-auto space-y-4">
       {denied && (
-        <p className="text-[13px] text-warn bg-warn-soft rounded-lg px-3.5 py-2.5">
-          Your role does not include <span className="font-mono text-[12px]">{denied}</span>.
+        <p className="text-[15px] text-warn bg-warn-soft rounded-lg px-3.5 py-2.5">
+          Your role does not include <span className="font-mono text-[14px]">{denied}</span>.
           Ask a Super Admin if you need it.
         </p>
       )}
@@ -606,10 +606,10 @@ export default async function DashboardPage({
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[19px] font-semibold">
+          <h1 className="text-[21px] font-semibold">
             {greeting}, {session.user.full_name.split(' ')[0]}
           </h1>
-          <p className="text-[13px] text-ink-3 mt-0.5" suppressHydrationWarning>
+          <p className="text-[15px] text-ink-3 mt-0.5" suppressHydrationWarning>
             {new Date().toLocaleDateString('en-IN', {
               timeZone: 'Asia/Kolkata', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
             })}

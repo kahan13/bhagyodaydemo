@@ -45,9 +45,9 @@ export default function TransactionsView({
       {/* head */}
       <div className="px-4 lg:px-6 py-3.5 border-b border-line bg-surface space-y-3">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-[17px] font-semibold">Transactions</h1>
-          <span className="text-[12px] text-ink-3 num">{total}</span>
-          {pending && <span className="text-[11px] text-ink-3">Updating…</span>}
+          <h1 className="text-[19px] font-semibold">Transactions</h1>
+          <span className="text-[14px] text-ink-3 num">{total}</span>
+          {pending && <span className="text-[13px] text-ink-3">Updating…</span>}
 
           <div className="ml-auto flex items-center gap-2">
             <select className="field w-[128px]" value={filters.range}
@@ -56,11 +56,12 @@ export default function TransactionsView({
             </select>
             <button
               className={`btn btn-sm ${showFilters || activeCount ? 'btn-primary' : 'btn-secondary'}`}
+              data-kt="F" data-kt-label="Filters"
               onClick={() => setShowFilters((v) => !v)}>
               <SlidersHorizontal size={13} />
               Filters{activeCount ? ` (${activeCount})` : ''}
             </button>
-            <a className="btn btn-secondary btn-sm"
+            <a className="btn btn-secondary btn-sm" data-kt="X" data-kt-label="Export"
               href={`/api/export?kind=transactions&${params.toString()}`}>
               <Download size={13} /> Export
             </a>
@@ -100,7 +101,7 @@ export default function TransactionsView({
               options={facets.operators.map((u) => [u, u])} width="w-[150px]" />
             <div>
               <label className="label" htmlFor="search">Product search</label>
-              <input id="search" className="field w-[170px]" defaultValue={filters.search}
+              <input id="search" data-kt="S" data-kt-label="Search product" data-global-search className="field w-[170px]" defaultValue={filters.search}
                 placeholder="Size or brand"
                 onKeyDown={(e) => { if (e.key === 'Enter') setParam({ search: (e.target as HTMLInputElement).value }); }} />
             </div>
@@ -116,12 +117,12 @@ export default function TransactionsView({
 
       {/* table */}
       <div className="flex-1 min-h-0 scroll">
-        {error && <p className="m-4 text-[13px] text-danger bg-danger-soft rounded-lg px-3.5 py-2.5">{error}</p>}
+        {error && <p className="m-4 text-[15px] text-danger bg-danger-soft rounded-lg px-3.5 py-2.5">{error}</p>}
 
         {!error && rows.length === 0 ? (
           <div className="py-16 text-center">
-            <p className="text-[14px]">No movements in this period.</p>
-            <p className="text-[13px] text-ink-3 mt-1">Widen the period or clear the filters.</p>
+            <p className="text-[16px]">No movements in this period.</p>
+            <p className="text-[15px] text-ink-3 mt-1">Widen the period or clear the filters.</p>
           </div>
         ) : (
           <table className="table">
@@ -149,7 +150,7 @@ export default function TransactionsView({
                 <tr key={m.id} className={m.is_reversed ? 'opacity-55' : undefined}>
                   <td className="num text-ink-2" suppressHydrationWarning>{fmtDate(m.occurred_at)}</td>
                   <td className="num text-ink-3" suppressHydrationWarning>{fmtTime(m.occurred_at)}</td>
-                  <td className="font-mono text-[11px] text-ink-3">{m.txn_no}</td>
+                  <td className="font-mono text-[13px] text-ink-3">{m.txn_no}</td>
                   <td>
                     <span className={`badge ${
                       m.txn_type === 'INWARD' ? 'badge-ok'
@@ -160,7 +161,7 @@ export default function TransactionsView({
                     {m.txn_mode === 'REVERSAL' && <span className="badge badge-neutral ml-1">reversal</span>}
                     {m.is_reversed && <span className="badge badge-neutral ml-1">reversed</span>}
                   </td>
-                  <td className="text-ink-2 text-[12px]">
+                  <td className="text-ink-2 text-[14px]">
                     {({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt' } as Record<string, string>)[m.product_type] ?? '—'}
                   </td>
                   <td className="font-medium max-w-[160px] truncate" title={m.sku_code}>{m.exact_size}</td>
@@ -174,7 +175,7 @@ export default function TransactionsView({
                   <td className="text-ink-2">{m.user_name}</td>
                   <td className="text-ink-3">{(m as Movement & { operated_by_name?: string }).operated_by_name ?? '—'}</td>
                   <td><LotCell m={m} /></td>
-                  <td className="text-ink-3 font-mono text-[12px]">{(m as Movement & { invoice_no?: string }).invoice_no ?? '—'}</td>
+                  <td className="text-ink-3 font-mono text-[14px]">{(m as Movement & { invoice_no?: string }).invoice_no ?? '—'}</td>
                   {canReverse && (
                     <td className="text-right">
                       {m.txn_mode === 'NORMAL' && !m.is_reversed && (
@@ -193,13 +194,13 @@ export default function TransactionsView({
 
       {/* pagination */}
       <div className="border-t border-line bg-surface px-4 lg:px-6 h-12 flex items-center justify-between shrink-0">
-        <p className="text-[12px] text-ink-3 num">
+        <p className="text-[14px] text-ink-3 num">
           {total === 0 ? 'No rows'
             : `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} of ${total}`}
         </p>
         <div className="flex items-center gap-2">
           <button className="btn btn-secondary btn-sm" disabled={page <= 1} onClick={() => setParam({ page: String(page - 1) })}>Previous</button>
-          <span className="text-[12px] text-ink-3 num px-1">{page} / {pages}</span>
+          <span className="text-[14px] text-ink-3 num px-1">{page} / {pages}</span>
           <button className="btn btn-secondary btn-sm" disabled={page >= pages} onClick={() => setParam({ page: String(page + 1) })}>Next</button>
         </div>
       </div>
@@ -251,10 +252,10 @@ function lotLines(m: Movement): string[] {
 function LotCell({ m }: { m: Movement }) {
   if (!m.lot_tracked || m.txn_type === 'ADJUSTMENT') return <span className="text-ink-3">—</span>;
   const lines = lotLines(m);
-  if (lines.length === 0) return <span className="text-ink-3 text-[11px]">lot not recorded</span>;
+  if (lines.length === 0) return <span className="text-ink-3 text-[13px]">lot not recorded</span>;
   return (
     <div className="space-y-0.5 min-w-[200px]">
-      {lines.map((l, i) => <p key={i} className="text-[11px] text-ink-2 num leading-snug">{l}</p>)}
+      {lines.map((l, i) => <p key={i} className="text-[13px] text-ink-2 num leading-snug">{l}</p>)}
     </div>
   );
 }
@@ -291,12 +292,12 @@ function ReverseDialog({ movement, onClose, onDone }: {
           <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={onClose}><X size={15} /></button>
         </div>
         <div className="p-5 space-y-3.5">
-          <p className="text-[13px] text-ink-2 leading-relaxed">
+          <p className="text-[15px] text-ink-2 leading-relaxed">
             The original stays in the history untouched. A linked {opposite} of{' '}
             {fmtQty(Math.abs(movement.quantity), movement.unit_code)} is created to cancel it out.
           </p>
-          <div className="bg-subtle rounded-lg px-3.5 py-3 text-[12px]">
-            <p className="font-medium text-[13px]">{movement.exact_size} · {movement.brand_name}</p>
+          <div className="bg-subtle rounded-lg px-3.5 py-3 text-[14px]">
+            <p className="font-medium text-[15px]">{movement.exact_size} · {movement.brand_name}</p>
             <p className="text-ink-3 num mt-1">
               {movement.txn_type.toLowerCase()} {fmtQty(Math.abs(movement.quantity), movement.unit_code)} ·{' '}
               {fmtDate(movement.occurred_at)} {fmtTime(movement.occurred_at)} · {movement.user_name}
@@ -304,12 +305,12 @@ function ReverseDialog({ movement, onClose, onDone }: {
           </div>
           {movement.lot_tracked && lotLines(movement).length > 0 && (
             <div className="bg-brand-soft/40 rounded-lg px-3.5 py-2.5">
-              <p className="text-[11px] font-semibold text-ink-2 mb-1">
+              <p className="text-[13px] font-semibold text-ink-2 mb-1">
                 {movement.txn_type === 'OUTWARD' ? 'Will be put back into these lots' : 'These lots will be closed'}
               </p>
-              {lotLines(movement).map((l, i) => <p key={i} className="text-[12px] text-ink-2 num">{l}</p>)}
+              {lotLines(movement).map((l, i) => <p key={i} className="text-[14px] text-ink-2 num">{l}</p>)}
               {movement.txn_type === 'INWARD' && (
-                <p className="text-[11px] text-ink-3 mt-1">Blocked if any of these rolls has already been used.</p>
+                <p className="text-[13px] text-ink-3 mt-1">Blocked if any of these rolls has already been used.</p>
               )}
             </div>
           )}
@@ -318,7 +319,7 @@ function ReverseDialog({ movement, onClose, onDone }: {
             <textarea id="reason" rows={2} className="field" value={reason} required
               onChange={(e) => setReason(e.target.value)} placeholder="Wrong quantity entered" />
           </div>
-          {error && <p className="text-[12px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>}
+          {error && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>}
         </div>
         <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>

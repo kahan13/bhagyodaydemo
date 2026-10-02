@@ -26,6 +26,21 @@ export const GO_KEYS: Record<string, { href: string; label: string }> = {
 
 export const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
+    title: 'Excel-style key tips  (press Alt+M, then the letters)',
+    items: [
+      { keys: ['Alt', 'M'], label: 'Open key tips — shows this page\'s own keys too' },
+      { keys: ['D'], label: 'Dashboard' },
+      { keys: ['I'], label: 'Inventory' },
+      { keys: ['T'], label: 'Transactions' },
+      { keys: ['P', 'U'], label: 'Purchase Orders', then: true },
+      { keys: ['P', 'R'], label: 'Production Orders', then: true },
+      { keys: ['R'], label: 'Reports' },
+      { keys: ['I', 'N'], label: 'Record Inward', then: true },
+      { keys: ['O'], label: 'Record Outward' },
+      { keys: ['O', 'R'], label: 'New order', then: true },
+    ],
+  },
+  {
     title: 'Go to a page  (press g, then the letter)',
     items: Object.entries(GO_KEYS).map(([k, v]) => ({ keys: ['g', k], label: v.label, then: true })),
   },

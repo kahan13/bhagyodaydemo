@@ -23,7 +23,7 @@ export default function LotBreakdown({ groups, className = '' }: { groups?: LotG
   return (
     <div className={`space-y-0.5 ${className}`}>
       {groups.map((g) => (
-        <div key={`${g.status}-${g.piece_qty}`} className="flex items-center gap-1.5 text-[11px] leading-tight">
+        <div key={`${g.status}-${g.piece_qty}`} className="flex items-center gap-1.5 text-[13px] leading-tight">
           <span className={`inline-block h-1.5 w-1.5 rounded-full ${g.status === 'FULL_SLEEVE' ? 'bg-ok' : 'bg-warn'}`} />
           <span className="text-ink-2 w-[68px] shrink-0">{groupLabel(g)}</span>
           <span className="num font-medium">{groupText(g)}</span>

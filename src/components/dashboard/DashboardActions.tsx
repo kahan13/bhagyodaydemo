@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Plus, ShoppingCart } from 'lucide-react';
+import { takeAction } from '@/lib/keytips';
 import DashboardEntryDialog from '@/components/dashboard/DashboardEntryDialog';
 import Link from 'next/link';
 
@@ -16,6 +17,13 @@ export default function DashboardActions({
   lastInvoice: string | null;
 }) {
   const [open, setOpen] = useState<'inward' | 'outward' | null>(null);
+
+  // opened here from another page by Alt+M → IN / O
+  useEffect(() => {
+    if (!canWrite) return;
+    const a = takeAction(['inward', 'outward']);
+    if (a === 'inward' || a === 'outward') setOpen(a);
+  }, [canWrite]);
 
   // keyboard: i = inward, o = outward
   useEffect(() => {

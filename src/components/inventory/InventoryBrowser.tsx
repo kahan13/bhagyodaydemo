@@ -233,7 +233,7 @@ export default function InventoryBrowser({
   if (error) {
     return (
       <div className="p-6">
-        <p className="text-[13px] text-danger bg-danger-soft rounded-lg px-3.5 py-2.5">
+        <p className="text-[15px] text-danger bg-danger-soft rounded-lg px-3.5 py-2.5">
           Stock could not be loaded: {error}
         </p>
       </div>
@@ -244,12 +244,12 @@ export default function InventoryBrowser({
     return (
       <div className="p-6 max-w-lg">
         <div className="card p-6">
-          <h1 className="text-[15px] font-semibold">No products yet</h1>
-          <p className="text-[13px] text-ink-2 mt-2 leading-relaxed">
+          <h1 className="text-[17px] font-semibold">No products yet</h1>
+          <p className="text-[15px] text-ink-2 mt-2 leading-relaxed">
             The product master is empty. Import the master workbook to load brands, families,
             sizes and opening stock.
           </p>
-          <pre className="mt-3 text-[12px] bg-subtle border border-line rounded-lg p-3">npm run import:demo</pre>
+          <pre className="mt-3 text-[14px] bg-subtle border border-line rounded-lg p-3">npm run import:demo</pre>
         </div>
       </div>
     );
@@ -264,29 +264,32 @@ export default function InventoryBrowser({
             <button
               key={k}
               type="button"
+              data-kt={k === 'CUT_PCS' ? 'C' : k === 'FULL_SLEEVE' ? 'F' : 'W'}
+              data-kt-label={k === 'CUT_PCS' ? 'Cut Pcs tab' : k === 'FULL_SLEEVE' ? 'Full Sleeve tab' : 'Show all tab'}
               onClick={() => setTab(k)}
-              className={`px-3 py-1 rounded-full text-[12px] font-medium border transition-colors ${
+              className={`px-3 py-1 rounded-full text-[14px] font-medium border transition-colors ${
                 tab === k ? 'bg-brand text-white border-brand' : 'bg-surface border-line text-ink-2 hover:border-brand hover:text-brand'
               }`}
             >{label}</button>
           ))}
           {hiddenNoRoll > 0 && (
-            <label className="ml-auto flex items-center gap-1.5 text-[11px] text-ink-3 cursor-pointer select-none" title="Timing belts need a roll length before they can be tracked in rolls">
+            <label className="ml-auto flex items-center gap-1.5 text-[13px] text-ink-3 cursor-pointer select-none" title="Timing belts need a roll length before they can be tracked in rolls">
               <input type="checkbox" checked={showNoRoll} onChange={(e) => setShowNoRoll(e.target.checked)} />
               {showNoRoll ? 'Showing' : 'Hiding'} {hiddenNoRoll} timing belts with no roll size
             </label>
           )}
           {tab !== 'ALL' && type !== 'TIMING_BELT' && (
-            <span className="text-[11px] text-ink-3 ml-1">Tabs apply to timing belts only</span>
+            <span className="text-[13px] text-ink-3 ml-1">Tabs apply to timing belts only</span>
           )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-[17px] font-semibold">Inventory</h1>
+          <h1 className="text-[19px] font-semibold">Inventory</h1>
 
           <div className="relative flex-1 min-w-[200px] max-w-[320px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
             <input
               data-global-search
+              data-kt="S" data-kt-label="Search products"
               className="field pl-9"
               placeholder="Search size, brand or SKU   ( / )"
               value={query}
@@ -310,10 +313,10 @@ export default function InventoryBrowser({
                     className={`w-full text-left px-3 py-2 border-b border-line last:border-0 ${idx === nav.cursor ? 'bg-brand-soft' : 'hover:bg-subtle'}`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[13px] font-medium truncate">{s.exact_size} <span className="text-ink-2 font-normal">· {s.brand_name}</span></span>
-                      <span className="text-[11px] text-ink-3 shrink-0">{HIERARCHY[s.product_type].short}</span>
+                      <span className="text-[15px] font-medium truncate">{s.exact_size} <span className="text-ink-2 font-normal">· {s.brand_name}</span></span>
+                      <span className="text-[13px] text-ink-3 shrink-0">{HIERARCHY[s.product_type].short}</span>
                     </div>
-                    <div className="text-[11px] text-ink-3 truncate">
+                    <div className="text-[13px] text-ink-3 truncate">
                       {s.hier_l1} › {sectionOf(s)}
                       {s.lot_groups && s.lot_groups.length > 0
                         ? <span className="text-ink-2"> · {groupsInline(s.lot_groups)}</span>
@@ -331,6 +334,7 @@ export default function InventoryBrowser({
           </div>
 
           <button
+            data-kt="Z" data-kt-label="Below minimum only"
             onClick={() => setLowOnly((v) => !v)}
             className={`btn btn-sm ${lowOnly ? 'btn-primary' : 'btn-secondary'}`}
           >
@@ -343,14 +347,16 @@ export default function InventoryBrowser({
                 <button
                   key={v}
                   type="button"
+                  data-kt={v === 'list' ? 'V' : 'B'}
+                  data-kt-label={v === 'list' ? 'List view' : 'Drill-down view'}
                   onClick={() => switchView(v)}
-                  className={`px-3 py-1 rounded-md text-[12px] font-medium transition-colors ${
+                  className={`px-3 py-1 rounded-md text-[14px] font-medium transition-colors ${
                     view === v ? 'bg-surface shadow-sm text-ink' : 'text-ink-3 hover:text-ink'
                   }`}
                 >{label}</button>
               ))}
             </div>
-            <span className="text-[12px] text-ink-3 num">{(view === 'list' ? listRows : pool).length} SKUs</span>
+            <span className="text-[14px] text-ink-3 num">{(view === 'list' ? listRows : pool).length} SKUs</span>
           </div>
         </div>
 
@@ -359,19 +365,19 @@ export default function InventoryBrowser({
             <button
               key={t}
               onClick={() => switchType(t)}
-              className={`relative pb-2.5 text-[13px] transition-colors ${
+              className={`relative pb-2.5 text-[15px] transition-colors ${
                 type === t ? 'text-ink font-medium' : 'text-ink-3 hover:text-ink-2'
               }`}
             >
               {HIERARCHY[t].label}
-              <span className="ml-1.5 text-[11px] text-ink-3 num">
+              <span className="ml-1.5 text-[13px] text-ink-3 num">
                 {skus.filter((s) => s.product_type === t).length}
               </span>
               {type === t && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-brand rounded-full" />}
             </button>
           ))}
 
-          <span className="ml-auto pb-2.5 text-[11px] text-ink-3 hidden md:block">
+          <span className="ml-auto pb-2.5 text-[13px] text-ink-3 hidden md:block">
             {levels.join('  →  ')}  →  Stock
           </span>
         </div>
@@ -382,33 +388,33 @@ export default function InventoryBrowser({
         {view === 'list' ? (
           <div className="flex-1 min-w-0 flex flex-col">
             <div className="flex flex-wrap items-center gap-2 px-4 lg:px-6 py-2.5 border-b border-line bg-surface">
-              <select className="field w-auto h-8 text-[12px]" value={fFamily} onChange={(e) => setFFamily(e.target.value)}>
+              <select className="field w-auto h-8 text-[14px]" value={fFamily} onChange={(e) => setFFamily(e.target.value)}>
                 <option value="">All families</option>
                 {familyOpts.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
-              <select className="field w-auto h-8 text-[12px]" value={fSection} onChange={(e) => setFSection(e.target.value)}>
+              <select className="field w-auto h-8 text-[14px]" value={fSection} onChange={(e) => setFSection(e.target.value)}>
                 <option value="">All {type === 'CONVEYOR_BELT' ? 'colours' : 'sections'}</option>
                 {sectionOpts.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
-              <select className="field w-auto h-8 text-[12px]" value={fMake} onChange={(e) => setFMake(e.target.value)}>
+              <select className="field w-auto h-8 text-[14px]" value={fMake} onChange={(e) => setFMake(e.target.value)}>
                 <option value="">All makes</option>
                 {makeOpts.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>
               <input
-                className="field w-32 h-8 text-[12px]"
+                className="field w-32 h-8 text-[14px]"
                 placeholder="Size…"
                 value={fSize}
                 onChange={(e) => setFSize(e.target.value)}
               />
               {(fFamily || fSection || fMake || fSize) && (
                 <button
-                  className="text-[12px] text-brand hover:underline"
+                  className="text-[14px] text-brand hover:underline"
                   onClick={() => { setFFamily(''); setFSection(''); setFMake(''); setFSize(''); }}
                 >Clear filters</button>
               )}
             </div>
             <div className="flex-1 scroll bg-surface">
-              <table className="w-full text-[13px]">
+              <table className="w-full text-[15px]">
                 <thead className="sticky top-0 bg-surface z-10">
                   <tr className="text-left border-b border-line">
                     <th className="eyebrow px-4 lg:px-6 py-2 font-medium">Family</th>
@@ -485,7 +491,7 @@ export default function InventoryBrowser({
                       <span className="truncate">{key}</span>
                       <span className="flex items-center gap-1.5 shrink-0">
                         {low > 0 && <span className="badge badge-warn">{low}</span>}
-                        <span className="text-[11px] text-ink-3 num">{list.length}</span>
+                        <span className="text-[13px] text-ink-3 num">{list.length}</span>
                         <button
                           className="text-ink-3 hover:text-ink p-0.5"
                           onClick={(e) => { e.stopPropagation(); setExpandedL1(isExpanded ? null : key); }}
@@ -496,7 +502,7 @@ export default function InventoryBrowser({
                       </span>
                     </div>
                     {isExpanded && (
-                      <div className="mx-1.5 mb-1 px-3 py-2 rounded-md bg-subtle border border-line text-[12px] space-y-1">
+                      <div className="mx-1.5 mb-1 px-3 py-2 rounded-md bg-subtle border border-line text-[14px] space-y-1">
                         <p className="text-ink-3">SKUs: <span className="text-ink font-medium">{list.length}</span></p>
                         <p className="text-ink-3">Below min: <span className={low > 0 ? 'text-warn font-medium' : 'text-ink'}>{low}</span></p>
                         <p className="text-ink-3">In stock: <span className="text-ink font-medium">{list.filter(s => s.stock_status === 'OK').length}</span></p>
@@ -535,7 +541,7 @@ export default function InventoryBrowser({
                       <span className="truncate">{key}</span>
                       <span className="flex items-center gap-1.5 shrink-0">
                         {low > 0 && <span className="badge badge-warn">{low}</span>}
-                        <span className="text-[11px] text-ink-3 num">{list.length}</span>
+                        <span className="text-[13px] text-ink-3 num">{list.length}</span>
                         <button
                           className="text-ink-3 hover:text-ink p-0.5"
                           onClick={(e) => { e.stopPropagation(); setExpandedL2(isExpanded ? null : key); }}
@@ -546,7 +552,7 @@ export default function InventoryBrowser({
                       </span>
                     </div>
                     {isExpanded && (
-                      <div className="mx-1.5 mb-1 px-3 py-2 rounded-md bg-subtle border border-line text-[12px] space-y-1">
+                      <div className="mx-1.5 mb-1 px-3 py-2 rounded-md bg-subtle border border-line text-[14px] space-y-1">
                         <p className="text-ink-3">SKUs: <span className="text-ink font-medium">{list.length}</span></p>
                         <p className="text-ink-3">Below min: <span className={low > 0 ? 'text-warn font-medium' : 'text-ink'}>{low}</span></p>
                         <p className="text-ink-3">Brands: <span className="text-ink font-medium">{[...new Set(list.map(s => s.brand_name))].join(', ')}</span></p>
@@ -607,7 +613,7 @@ export default function InventoryBrowser({
                       </div>
                     </div>
                     {isExpanded && (
-                      <div className="mx-1.5 mb-1 px-3 py-2 rounded-md bg-subtle border border-line text-[12px] space-y-1">
+                      <div className="mx-1.5 mb-1 px-3 py-2 rounded-md bg-subtle border border-line text-[14px] space-y-1">
                         <p className="text-ink-3 font-mono">{s.sku_code}</p>
                         <p className="text-ink-3">Min: <span className="text-ink font-medium">{fmtQty(s.min_stock_level, s.unit_code)}</span></p>
                         {s.rack_location && <p className="text-ink-3">Location: <span className="text-ink font-medium">{s.rack_location}</span></p>}
@@ -670,13 +676,13 @@ function ColHeader({ label, right }: { label: string; right: string }) {
   return (
     <div className="flex items-baseline justify-between px-4 h-10 border-b border-line shrink-0">
       <span className="eyebrow">{label}</span>
-      <span className="text-[11px] text-ink-3 num">{right}</span>
+      <span className="text-[13px] text-ink-3 num">{right}</span>
     </div>
   );
 }
 
 function Empty({ text }: { text: string }) {
-  return <p className="px-3 py-4 text-[12px] text-ink-3">{text}</p>;
+  return <p className="px-3 py-4 text-[14px] text-ink-3">{text}</p>;
 }
 
 function Skelly() {
@@ -727,7 +733,7 @@ function DetailPanel({
       <div className="flex-1 grid place-items-center p-8 text-center">
         <div>
           <Package size={22} className="mx-auto text-ink-3 mb-2.5" strokeWidth={1.5} />
-          <p className="text-[13px] text-ink-3 max-w-[190px] leading-relaxed">
+          <p className="text-[15px] text-ink-3 max-w-[190px] leading-relaxed">
             Pick a product to see stock, settings and its full movement history.
           </p>
         </div>
@@ -752,8 +758,8 @@ function DetailPanel({
     <div className="flex-1 min-h-0 flex flex-col">
       <div className="card-head border-b shrink-0">
         <div className="min-w-0">
-          <p className="text-[14px] font-semibold truncate">{sku.exact_size}</p>
-          <p className="text-[11px] text-ink-3 truncate font-mono">{sku.brand_name} · {sku.sku_code}</p>
+          <p className="text-[16px] font-semibold truncate">{sku.exact_size}</p>
+          <p className="text-[13px] text-ink-3 truncate font-mono">{sku.brand_name} · {sku.sku_code}</p>
         </div>
         {onClose && (
           <button className="btn btn-ghost h-7 w-7 p-0" onClick={onClose} aria-label="Close"><X size={15} /></button>
@@ -764,7 +770,7 @@ function DetailPanel({
         <div className="px-5 py-4 border-b border-line">
           <p className="eyebrow">In stock</p>
           <div className="flex items-end justify-between mt-1">
-            <p className="num text-[30px] font-semibold tracking-[-0.025em] leading-none">
+            <p className="num text-[32px] font-semibold tracking-[-0.025em] leading-none">
               {fmtQty(sku.current_stock, sku.unit_code)}
             </p>
             {sku.stock_status === 'OUT_OF_STOCK' && <span className="badge badge-danger mb-1">Out of stock</span>}
@@ -775,7 +781,7 @@ function DetailPanel({
           <LotBreakdown groups={sku.lot_groups} className="mt-3" />
 
           {sku.stock_status !== 'OK' && (
-            <p className="text-[12px] text-warn mt-2.5 leading-relaxed">
+            <p className="text-[14px] text-warn mt-2.5 leading-relaxed">
               Minimum is {fmtQty(sku.min_stock_level, sku.unit_code)}.
             </p>
           )}
@@ -821,10 +827,10 @@ function DetailPanel({
         <div className="px-5 py-4">
           <p className="eyebrow mb-2.5">Movement history</p>
           {busy && <div className="space-y-2">{[0, 1, 2].map((i) => <div key={i} className="h-12 skeleton" />)}</div>}
-          {!busy && history.length === 0 && <p className="text-[12px] text-ink-3">No movements yet.</p>}
+          {!busy && history.length === 0 && <p className="text-[14px] text-ink-3">No movements yet.</p>}
           <ul className="space-y-2.5">
             {history.map((m) => (
-              <li key={m.id} className="text-[12px]">
+              <li key={m.id} className="text-[14px]">
                 <div className="flex items-center justify-between gap-2">
                   <span className={`badge ${
                     m.txn_type === 'INWARD' ? 'badge-ok'
@@ -879,16 +885,16 @@ function RemarkEditor({ sku, canEdit, onSaved }: { sku: Sku; canEdit: boolean; o
       <p className="eyebrow mb-2">Remark</p>
       {canEdit ? (
         <>
-          <textarea className="field w-full text-[12px] min-h-[56px]" value={text} placeholder="Add a manual remark…"
+          <textarea className="field w-full text-[14px] min-h-[56px]" value={text} placeholder="Add a manual remark…"
             onChange={(e) => { setText(e.target.value); setMsg(''); }} />
           <div className="flex items-center gap-2 mt-2">
             <button className="btn btn-secondary btn-sm" disabled={!dirty || saving} onClick={save}>
               {saving ? 'Saving…' : 'Save remark'}
             </button>
-            {msg && <span className="text-[11px] text-ink-3">{msg}</span>}
+            {msg && <span className="text-[13px] text-ink-3">{msg}</span>}
           </div>
         </>
-      ) : <p className="text-[12px] text-ink-2">{sku.remarks}</p>}
+      ) : <p className="text-[14px] text-ink-2">{sku.remarks}</p>}
     </div>
   );
 }
@@ -896,8 +902,8 @@ function RemarkEditor({ sku, canEdit, onSaved }: { sku: Sku; canEdit: boolean; o
 function Field({ label, value }: { label: string; value: string | null }) {
   return (
     <div>
-      <dt className="text-[11px] text-ink-3">{label}</dt>
-      <dd className="text-[13px] mt-0.5">{value ?? '—'}</dd>
+      <dt className="text-[13px] text-ink-3">{label}</dt>
+      <dd className="text-[15px] mt-0.5">{value ?? '—'}</dd>
     </div>
   );
 }

@@ -59,19 +59,19 @@ export default async function ActivityPage({
     <div className="flex flex-col h-[calc(100vh-56px)]">
       <div className="px-4 lg:px-6 py-3.5 border-b border-line bg-surface flex flex-wrap items-center gap-3">
         <div>
-          <h1 className="text-[17px] font-semibold">Activity trail</h1>
-          <p className="text-[12px] text-ink-3">
+          <h1 className="text-[19px] font-semibold">Activity trail</h1>
+          <p className="text-[14px] text-ink-3">
             Every action, every user, desktop and phone alike
           </p>
         </div>
-        <span className="ml-auto text-[12px] text-ink-3 num">
+        <span className="ml-auto text-[14px] text-ink-3 num">
           {count ?? 0} entries
         </span>
       </div>
 
       <div className="flex-1 min-h-0 scroll">
         {rows.length === 0 ? (
-          <p className="py-16 text-center text-[13px] text-ink-3">No activity recorded yet.</p>
+          <p className="py-16 text-center text-[15px] text-ink-3">No activity recorded yet.</p>
         ) : (
           <table className="table">
             <thead>
@@ -113,7 +113,7 @@ export default async function ActivityPage({
       </div>
 
       <div className="border-t border-line bg-surface px-4 lg:px-6 h-12 flex items-center justify-between shrink-0">
-        <p className="text-[12px] text-ink-3 num">Page {page} of {pages}</p>
+        <p className="text-[14px] text-ink-3 num">Page {page} of {pages}</p>
         <div className="flex gap-2">
           <a className={`btn btn-secondary btn-sm ${page <= 1 ? 'pointer-events-none opacity-45' : ''}`} href={link(page - 1)}>
             Previous

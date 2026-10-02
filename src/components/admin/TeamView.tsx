@@ -86,8 +86,8 @@ export default function TeamView() {
     <div className="p-4 lg:p-6 max-w-[1100px] mx-auto">
       <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
         <div>
-          <h1 className="text-[19px] font-semibold">Teams &amp; Users</h1>
-          <p className="text-[13px] text-ink-3 mt-0.5">
+          <h1 className="text-[21px] font-semibold">Teams &amp; Users</h1>
+          <p className="text-[15px] text-ink-3 mt-0.5">
             Accounts come from Supabase. Roles and names are set here.
           </p>
         </div>
@@ -97,16 +97,16 @@ export default function TeamView() {
       </div>
 
       {authDown && (
-        <p className="mb-3 text-[13px] text-warn bg-warn-soft rounded-lg px-3.5 py-2.5 flex items-start gap-2">
+        <p className="mb-3 text-[15px] text-warn bg-warn-soft rounded-lg px-3.5 py-2.5 flex items-start gap-2">
           <AlertCircle size={15} className="mt-0.5 shrink-0" />
           Supabase accounts could not be listed, so people who have never signed in are missing
-          from this list. Check that <span className="font-mono text-[12px]">SUPABASE_SERVICE_ROLE_KEY</span>{' '}
+          from this list. Check that <span className="font-mono text-[14px]">SUPABASE_SERVICE_ROLE_KEY</span>{' '}
           is set.
         </p>
       )}
 
       {pending > 0 && (
-        <p className="mb-3 text-[13px] text-ink-2 bg-brand-soft rounded-lg px-3.5 py-2.5 flex items-start gap-2">
+        <p className="mb-3 text-[15px] text-ink-2 bg-brand-soft rounded-lg px-3.5 py-2.5 flex items-start gap-2">
           <UserPlus size={15} className="mt-0.5 shrink-0 text-brand" />
           {pending === 1 ? 'One account is' : `${pending} accounts are`} waiting for a role. Until
           you give them one they can sign in but will see nothing.
@@ -114,10 +114,10 @@ export default function TeamView() {
       )}
 
       {error && (
-        <p className="mb-3 text-[13px] text-danger bg-danger-soft rounded-lg px-3.5 py-2.5">{error}</p>
+        <p className="mb-3 text-[15px] text-danger bg-danger-soft rounded-lg px-3.5 py-2.5">{error}</p>
       )}
       {notice && (
-        <p className="mb-3 text-[13px] text-ok bg-ok-soft rounded-lg px-3.5 py-2.5 flex items-center gap-1.5">
+        <p className="mb-3 text-[15px] text-ok bg-ok-soft rounded-lg px-3.5 py-2.5 flex items-center gap-1.5">
           <Check size={14} /> {notice}
         </p>
       )}
@@ -125,7 +125,7 @@ export default function TeamView() {
       <section className="card overflow-hidden">
         <div className="card-head">
           <h2 className="card-title">People</h2>
-          <span className="text-[12px] text-ink-3 num">{members.length}</span>
+          <span className="text-[14px] text-ink-3 num">{members.length}</span>
         </div>
 
         {loading && (
@@ -135,7 +135,7 @@ export default function TeamView() {
         )}
 
         {!loading && members.length === 0 && (
-          <p className="px-5 py-8 text-[13px] text-ink-3 text-center">
+          <p className="px-5 py-8 text-[15px] text-ink-3 text-center">
             Nobody yet. Add an account in Supabase → Authentication → Users.
           </p>
         )}
@@ -237,7 +237,7 @@ export default function TeamView() {
 
       <div className="card p-5 mt-4">
         <h2 className="card-title">How this works</h2>
-        <ol className="text-[13px] text-ink-2 mt-2.5 space-y-2 list-decimal pl-4 leading-relaxed">
+        <ol className="text-[15px] text-ink-2 mt-2.5 space-y-2 list-decimal pl-4 leading-relaxed">
           <li>
             Create the account in Supabase → Authentication → Users, with
             <span className="font-medium text-ink"> Auto Confirm User</span> ticked.
@@ -246,7 +246,7 @@ export default function TeamView() {
           <li>Pick a role. It applies the moment they sign in — they do not need to sign in first.</li>
           <li>Click a name to rename. Disable revokes access without deleting their history.</li>
         </ol>
-        <p className="text-[12px] text-ink-3 mt-3.5 leading-relaxed">
+        <p className="text-[14px] text-ink-3 mt-3.5 leading-relaxed">
           The account marked with a shield is the one set in
           <span className="font-mono"> ADMIN_EMAIL</span>. It stays Super Admin no matter what is
           clicked here — to move it, change the variable and redeploy. You cannot change your own

@@ -187,12 +187,12 @@ export default function LotAllocationPicker({
   }
 
   if (err) {
-    return <p className="text-[11px] text-danger mt-2">Could not load lots: {err}</p>;
+    return <p className="text-[13px] text-danger mt-2">Could not load lots: {err}</p>;
   }
 
   if (lots.length === 0) {
     return (
-      <div className="mt-2 flex items-start gap-1.5 text-[11px] text-ink-3 bg-subtle border border-line rounded-md px-2.5 py-2">
+      <div className="mt-2 flex items-start gap-1.5 text-[13px] text-ink-3 bg-subtle border border-line rounded-md px-2.5 py-2">
         <AlertTriangle size={12} className="mt-0.5 shrink-0 text-warn" />
         <span>
           No tracked lots for this SKU yet. Outward will still post to the book ledger normally —
@@ -205,7 +205,7 @@ export default function LotAllocationPicker({
   return (
     <div className="mt-2 rounded-md border border-line bg-subtle p-2.5 space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] text-ink-3">
+        <span className="text-[13px] text-ink-3">
           Allocate from lots — {fmtQty(totalAvailable, unitCode)} free across {lots.length} lot{lots.length > 1 ? 's' : ''}
         </span>
         <div className="flex items-center gap-1">
@@ -221,7 +221,7 @@ export default function LotAllocationPicker({
             <button
               type="button"
               onClick={autoFill}
-              className="btn btn-secondary btn-sm !h-6 !py-0 !px-2 text-[11px] flex items-center gap-1"
+              className="btn btn-secondary btn-sm !h-6 !py-0 !px-2 text-[13px] flex items-center gap-1"
             >
               <Wand2 size={11} /> Auto-fill
             </button>
@@ -233,12 +233,12 @@ export default function LotAllocationPicker({
         {lots.map((lot) => {
           const qty = valueFor(lot.id);
           return (
-            <div key={lot.id} className="flex items-center gap-2 text-[12px]">
-              <span className="font-mono text-[11px] text-ink-3 w-28 shrink-0 truncate">{lot.lot_no}</span>
+            <div key={lot.id} className="flex items-center gap-2 text-[14px]">
+              <span className="font-mono text-[13px] text-ink-3 w-28 shrink-0 truncate">{lot.lot_no}</span>
               <span className={`badge shrink-0 ${lot.status === 'FULL_SLEEVE' ? 'badge-ok' : 'badge-warn'}`}>
                 {lot.status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs'}
               </span>
-              <span className="text-ink-3 text-[11px] shrink-0 w-24">
+              <span className="text-ink-3 text-[13px] shrink-0 w-24">
                 {fmtQty(lot.free_qty, unitCode)} free
                 {lot.free_qty < lot.current_qty && ' *'}
               </span>
@@ -246,7 +246,7 @@ export default function LotAllocationPicker({
                 type="number"
                 min={0}
                 max={lot.free_qty}
-                className="field h-7 text-[12px] text-right w-24 ml-auto"
+                className="field h-7 text-[14px] text-right w-24 ml-auto"
                 value={qty || ''}
                 placeholder="0"
                 disabled={disabled}
@@ -257,7 +257,7 @@ export default function LotAllocationPicker({
         })}
       </div>
 
-      <div className={`flex items-center gap-1.5 text-[11px] pt-1 border-t border-line ${
+      <div className={`flex items-center gap-1.5 text-[13px] pt-1 border-t border-line ${
         isComplete ? 'text-ok' : remaining > 0 ? 'text-warn' : 'text-danger'
       }`}>
         {isComplete ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}

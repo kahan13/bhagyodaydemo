@@ -22,24 +22,24 @@ export default async function NoAccessPage() {
           <ShieldAlert size={18} />
         </span>
 
-        <h1 className="text-[15px] font-semibold">This account has no access yet</h1>
+        <h1 className="text-[17px] font-semibold">This account has no access yet</h1>
 
-        <p className="text-[13px] text-ink-2 leading-relaxed mt-2">
+        <p className="text-[15px] text-ink-2 leading-relaxed mt-2">
           You are signed in as <span className="text-ink font-medium">{state.email ?? 'an unknown account'}</span>.
           A profile is normally created automatically on first sign-in, so seeing this
           means one of the following:
         </p>
 
-        <ul className="text-[13px] text-ink-2 leading-relaxed mt-3 space-y-1.5 list-disc pl-4">
+        <ul className="text-[15px] text-ink-2 leading-relaxed mt-3 space-y-1.5 list-disc pl-4">
           <li>The profile exists but has been marked inactive.</li>
-          <li>Automatic provisioning is switched off in <span className="font-mono text-[12px]">app_settings</span>.</li>
-          <li>Migration <span className="font-mono text-[12px]">002_auth_provisioning.sql</span> has not been run yet.</li>
+          <li>Automatic provisioning is switched off in <span className="font-mono text-[14px]">app_settings</span>.</li>
+          <li>Migration <span className="font-mono text-[14px]">002_auth_provisioning.sql</span> has not been run yet.</li>
         </ul>
 
-        <p className="text-[13px] text-ink-2 leading-relaxed mt-3">
+        <p className="text-[15px] text-ink-2 leading-relaxed mt-3">
           A Super Admin can fix this in Supabase by setting{' '}
-          <span className="font-mono text-[12px]">is_active</span> on the{' '}
-          <span className="font-mono text-[12px]">app_users</span> row for this email.
+          <span className="font-mono text-[14px]">is_active</span> on the{' '}
+          <span className="font-mono text-[14px]">app_users</span> row for this email.
         </p>
 
         <div className="mt-5 pt-5 border-t border-line">
