@@ -516,17 +516,20 @@ function DeleteDialog({
 
 /* ── Order Card ───────────────────────────────────────────────────────────── */
 function OrderCard({
-  order, onReceive, onRecordInward, onDelete,
+  order, view, onReceive, onRecordInward, onDelete,
 }: {
   order: Order;
+  /** progress = what is still to come; received = what has arrived (and can be recorded into stock). */
+  view: 'progress' | 'received';
   onReceive: (item: OrderItem) => void;
   onRecordInward: (order: Order, itemId?: string) => void;
   onDelete: (order: Order) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
 
-  const allFulfilled = order.items.length > 0 && order.items.every((i) => i.status === 'FULFILLED');
-  const anyPending   = order.items.some((i) => pendingInward(i) > 0);
+  const shown        = order.items.filter((i) =>
+    view === 'progress' ? i.ordered_qty - i.received_qty > 0 : Number(i.received_qty) > 0);
+  const anyPending   = view === 'received' && shown.some((i) => pendingInward(i) > 0);
 
   return (
     <div className="border border-line rounded-lg overflow-hidden">
@@ -552,7 +555,7 @@ function OrderCard({
             <div className="flex items-center gap-3 mt-0.5">
               <span className="text-[11px] text-ink-3">{fmtDate(order.created_at)}</span>
               <span className="text-[11px] text-ink-3">
-                {order.items.length} item{order.items.length !== 1 ? 's' : ''}
+                {shown.length} item{shown.length !== 1 ? 's' : ''}
               </span>
             </div>
           </div>
@@ -582,10 +585,10 @@ function OrderCard({
       {/* Items */}
       {expanded && (
         <div className="border-t border-line divide-y divide-line">
-          {order.items.length === 0 ? (
+          {shown.length === 0 ? (
             <p className="px-4 py-4 text-[12px] text-ink-3 text-center">No items — order may still be loading.</p>
           ) : (
-            order.items.map((item) => {
+            shown.map((item) => {
               const itemRemaining = item.ordered_qty - item.received_qty;
               const itemPending   = pendingInward(item);
               const itemLen       = rollLen(item);
@@ -605,9 +608,9 @@ function OrderCard({
                       )}
                       <StatusBadge status={item.status} />
                     </div>
-                    <div className="flex items-center gap-4 mt-1.5">
+                    <div className="flex items-center gap-4 mt-1.5 flex-wrap">
                       <span className="text-[11px] text-ink-3 num">
-                        Ordered <strong className="text-ink">{fmtQty(item.ordered_qty, item.skus?.unit_code)}</strong>
+                        Total <strong className="text-ink">{fmtQty(item.ordered_qty, item.skus?.unit_code)}</strong>
                         {itemLen > 0 && <span> ({fmtRolls(item.ordered_qty, itemLen)})</span>}
                       </span>
                       <span className="text-[11px] text-ink-3 num">
@@ -616,23 +619,23 @@ function OrderCard({
                       </span>
                       {itemRemaining > 0 && (
                         <span className="text-[11px] text-warn num font-medium">
-                          {fmtQty(itemRemaining, item.skus?.unit_code)} left
+                          Left {fmtQty(itemRemaining, item.skus?.unit_code)}
                           {itemLen > 0 && ` (${fmtRolls(itemRemaining, itemLen)})`}
                         </span>
                       )}
-                      {itemPending > 0 ? (
+                      {view === 'received' && (itemPending > 0 ? (
                         <span className="text-[11px] text-brand num font-medium">
                           {fmtQty(itemPending, item.skus?.unit_code)} waiting to be recorded
                         </span>
-                      ) : Number(item.inwarded_qty ?? 0) > 0 ? (
-                        <span className="text-[11px] text-ink-3 num">
-                          In stock {fmtQty(Number(item.inwarded_qty), item.skus?.unit_code)}
+                      ) : (
+                        <span className="text-[11px] text-ok num font-medium">
+                          In stock {fmtQty(Number(item.inwarded_qty ?? 0), item.skus?.unit_code)}
                         </span>
-                      ) : null}
+                      ))}
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {itemPending > 0 && (
+                    {view === 'received' && itemPending > 0 && (
                       <button
                         type="button"
                         className="btn btn-primary h-8 px-3 text-[12px]"
@@ -641,7 +644,12 @@ function OrderCard({
                         <ClipboardCheck size={12} /> Record Inward
                       </button>
                     )}
-                    {item.status !== 'FULFILLED' ? (
+                    {view === 'received' && itemPending === 0 && (
+                      <span className="text-[11px] text-ok font-medium flex items-center gap-1">
+                        <Check size={12} /> Recorded
+                      </span>
+                    )}
+                    {view === 'progress' && (
                       <button
                         type="button"
                         className="btn btn-secondary h-8 px-3 text-[12px]"
@@ -649,23 +657,19 @@ function OrderCard({
                       >
                         <ArrowDownLeft size={12} /> Receive
                       </button>
-                    ) : itemPending === 0 ? (
-                      <span className="text-[11px] text-ok font-medium flex items-center gap-1">
-                        <Check size={12} /> Done
-                      </span>
-                    ) : null}
+                    )}
                   </div>
                 </div>
               );
             })
           )}
 
-          {allFulfilled && anyPending && (
+          {anyPending && (
             <div className="px-4 py-3 bg-ok-soft/20 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-ok">
                 <ClipboardCheck size={14} />
                 <span className="text-[12px] font-medium">
-                  All items received — press &quot;Record Inward&quot; to update stock
+                  Received stock is waiting — press &quot;Record Inward&quot; to add it to inventory
                 </span>
               </div>
             </div>
@@ -761,9 +765,9 @@ export default function PurchaseOrdersView() {
     load();
   };
 
-  const needsWork  = (o: Order) => o.status !== 'FULFILLED' || o.items.some((i) => pendingInward(i) > 0);
-  const inProgress = orders.filter(needsWork);
-  const fulfilled  = orders.filter((o) => !needsWork(o));
+  // A partly received order shows in both: what is left (In Progress) and what has arrived (Received).
+  const inProgress = orders.filter((o) => o.items.some((i) => i.ordered_qty - i.received_qty > 0));
+  const fulfilled  = orders.filter((o) => o.items.some((i) => Number(i.received_qty) > 0));
   const displayed  = tab === 'in_progress' ? inProgress : fulfilled;
 
   return (
@@ -788,7 +792,7 @@ export default function PurchaseOrdersView() {
       <div className="flex gap-1 p-1 bg-subtle rounded-lg w-fit">
         {([
           { key: 'in_progress', label: 'In Progress', count: inProgress.length, warn: true },
-          { key: 'fulfilled',   label: 'Fulfilled',   count: fulfilled.length,  warn: false },
+          { key: 'fulfilled',   label: 'Fulfilled / Received', count: fulfilled.length,  warn: false },
         ] as const).map(({ key, label, count, warn }) => (
           <button
             key={key} type="button"
@@ -815,7 +819,7 @@ export default function PurchaseOrdersView() {
         <div className="card px-5 py-12 text-center">
           <Package size={32} className="text-ink-3 mx-auto mb-3" />
           <p className="text-[14px] text-ink-2 font-medium">
-            {tab === 'in_progress' ? 'No orders in progress' : 'No fulfilled orders yet'}
+            {tab === 'in_progress' ? 'No orders in progress' : 'Nothing received yet'}
           </p>
           {tab === 'in_progress' && (
             <p className="text-[13px] text-ink-3 mt-1">Create a purchase order to start tracking received stock.</p>
@@ -826,6 +830,7 @@ export default function PurchaseOrdersView() {
           {displayed.map((o) => (
             <OrderCard
               key={o.id}
+              view={tab === 'in_progress' ? 'progress' : 'received'}
               order={o}
               onReceive={(item) => setReceiveItem(item)}
               onRecordInward={(order, itemId) => { setRecordItemId(itemId ?? null); setRecordTarget(order); }}

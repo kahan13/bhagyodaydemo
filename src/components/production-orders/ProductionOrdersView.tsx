@@ -437,11 +437,22 @@ function RecordOutwardModal({
   recording,
 }: {
   item: MismatchOrderItem;
-  onConfirm: (notes: string) => void;
+  onConfirm: (notes: string, invoiceNo: string, operatedBy: string) => void;
   onCancel: () => void;
   recording: boolean;
 }) {
   const [notes, setNotes] = useState('');
+  const [invoiceNo, setInvoiceNo] = useState('');
+  const [operatedBy, setOperatedBy] = useState('');
+  const [users, setUsers] = useState<{ id: string; full_name: string }[]>([]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data } = await supabaseBrowser().from('app_users').select('id,full_name').eq('is_active', true).order('full_name');
+      if (alive) setUsers((data ?? []) as { id: string; full_name: string }[]);
+    })();
+    return () => { alive = false; };
+  }, []);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
       <div className="bg-surface rounded-xl border border-line shadow-xl p-6 max-w-sm w-full space-y-4">
@@ -463,20 +474,31 @@ function RecordOutwardModal({
           </div>
         </div>
         <div>
+          <label className="eyebrow mb-1 block">Invoice no (optional)</label>
+          <input className="field" placeholder="INV-001" value={invoiceNo}
+            onChange={(e) => setInvoiceNo(e.target.value)} autoFocus />
+        </div>
+        <div>
+          <label className="eyebrow mb-1 block">Operated by</label>
+          <select className="field" value={operatedBy} onChange={(e) => setOperatedBy(e.target.value)}>
+            <option value="">— select team member —</option>
+            {users.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+          </select>
+        </div>
+        <div>
           <label className="eyebrow mb-1 block">Notes (optional)</label>
           <input
             className="field"
             placeholder="e.g. Dispatched via courier"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            autoFocus
           />
         </div>
         <div className="flex justify-end gap-2">
           <button className="btn btn-secondary" onClick={onCancel} disabled={recording}>Cancel</button>
           <button
             className="btn btn-primary"
-            onClick={() => onConfirm(notes)}
+            onClick={() => onConfirm(notes, invoiceNo, operatedBy)}
             disabled={recording}
           >
             {recording ? <Loader size={14} className="animate-spin" /> : <CheckSquare size={14} />}
@@ -1252,7 +1274,7 @@ export default function ProductionOrdersView({
 
   // ── Record Outward (from mismatch pane) ────────────────────────────────────
 
-  async function handleRecordOutward(notes: string) {
+  async function handleRecordOutward(notes: string, invoiceNo: string, operatedBy: string) {
     if (!outwardTarget) return;
     setRecordingOutward(true);
 
@@ -1263,6 +1285,8 @@ export default function ProductionOrdersView({
       p_poi_id:  outwardTarget.poi_id,
       p_notes:   notes || null,
       p_channel: 'WEB',
+      p_invoice_no:  invoiceNo.trim() || null,
+      p_operated_by: operatedBy || null,
     });
 
     setRecordingOutward(false);

@@ -5,6 +5,7 @@ import { X, Check } from 'lucide-react';
 import { fmtQty } from '@/lib/format';
 import type { Channel, Sku } from '@/lib/types';
 import LotBreakdown from '@/components/inventory/LotBreakdown';
+import RollEntry, { emptyRolls, rollsPayload, rollsTotal } from '@/components/inventory/RollEntry';
 
 /**
  * One dialog for inward, outward and adjustment, on desktop and phone alike.
@@ -22,11 +23,15 @@ export default function MovementDialog({
   onDone: (newStock: number) => void;
 }) {
   const [qty, setQty] = useState('');
+  const [rolls, setRolls] = useState(emptyRolls());
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const amount = Number(qty || 0);
+  const rollLen = Number(sku.roll_length_mm) > 0 && sku.product_type === 'TIMING_BELT' ? Number(sku.roll_length_mm) : 0;
+  const inRolls = action === 'inward' && rollLen > 0;
+  const rollList = inRolls ? rollsPayload(rollLen, rolls) : [];
+  const amount = inRolls ? rollsTotal(rollList) : Number(qty || 0);
   // For an adjustment the worker types the counted physical stock, not a delta.
   const delta = action === 'adjust' ? amount - sku.current_stock : amount;
   const projected = action === 'inward' ? sku.current_stock + amount
@@ -37,7 +42,8 @@ export default function MovementDialog({
     : action === 'outward' ? 'Record outward' : 'Adjust stock';
 
   const invalid =
-    !qty ||
+    (!inRolls && !qty) ||
+    (inRolls && amount <= 0) ||
     (action !== 'adjust' && amount <= 0) ||
     (action === 'outward' && amount > sku.current_stock) ||
     (action === 'adjust' && (delta === 0 || !notes.trim()));
@@ -58,6 +64,7 @@ export default function MovementDialog({
         reference: action === 'adjust' ? 'PHYSICAL COUNT' : null,
         notes: notes || null,
         channel,
+        ...(inRolls ? { rolls: rollList } : {}),
       }),
     });
 
@@ -95,6 +102,9 @@ export default function MovementDialog({
             )}
           </div>
 
+          {inRolls ? (
+            <RollEntry len={rollLen} rows={rolls} onChange={setRolls} />
+          ) : (
           <div>
             <label className="label" htmlFor="qty">
               {action === 'adjust'
@@ -111,6 +121,7 @@ export default function MovementDialog({
               placeholder="0"
             />
           </div>
+          )}
 
           <div>
             <label className="label" htmlFor="notes">
@@ -123,7 +134,7 @@ export default function MovementDialog({
             />
           </div>
 
-          {qty && (
+          {amount > 0 && (
             <div className="rounded-lg border border-line px-3.5 py-2.5 text-[13px] num space-y-1">
               <div className="flex justify-between text-ink-2">
                 <span>Current</span><span>{fmtQty(sku.current_stock, sku.unit_code)}</span>
