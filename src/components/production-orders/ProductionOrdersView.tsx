@@ -125,7 +125,7 @@ function fetchSkus(): Promise<SkuWithAtp[]> {
         'hier_l1,hier_l2,hier_l3,search_text,brand_code,family_code,profile_group,belt_form,' +
         'construction,standard,pitch_mm,pitch_length_mm,width_mm,teeth,nominal_length,' +
         'length_designation,rack_location,opening_stock,current_stock,min_stock_level,' +
-        'supplier_moq,reorder_quantity,supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty'
+        'supplier_moq,reorder_quantity,supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty,roll_length_mm'
       )
       .eq('is_active', true)
       .order('product_type')
@@ -156,7 +156,8 @@ function fetchSkus(): Promise<SkuWithAtp[]> {
     const atpMap: Record<string, SkuAtp> = {};
     for (const row of atpData) atpMap[row.sku_id] = row;
 
-    _skuCache = skuData.map((s) => ({
+    // Timing belts without a roll length can't be lot-tracked yet, so they stay out of the picker.
+    _skuCache = skuData.filter((s) => s.product_type !== 'TIMING_BELT' || Number(s.roll_length_mm) > 0).map((s) => ({
       ...s,
       physical_prod_stock: atpMap[s.id]?.physical_prod_stock ?? s.current_stock,
       atp_stock:           atpMap[s.id]?.atp_stock ?? s.current_stock,

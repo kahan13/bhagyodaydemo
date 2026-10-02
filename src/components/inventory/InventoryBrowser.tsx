@@ -26,7 +26,7 @@ export default function InventoryBrowser({
   initialType: ProductType;
   labelOverrides?: Partial<Record<ProductType, [string, string, string]>>;
 }) {
-  const { skus, loading, error, applyStock, refresh } = useCatalog();
+  const { skus, loading, error, applyStock, refresh, hiddenNoRoll, showNoRoll, setShowNoRoll } = useCatalog();
   const [type, setType] = useState<ProductType>(initialType);
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<'CUT_PCS' | 'FULL_SLEEVE' | 'ALL'>('ALL');
@@ -262,6 +262,12 @@ export default function InventoryBrowser({
               }`}
             >{label}</button>
           ))}
+          {hiddenNoRoll > 0 && (
+            <label className="ml-auto flex items-center gap-1.5 text-[11px] text-ink-3 cursor-pointer select-none" title="Timing belts need a roll length before they can be tracked in rolls">
+              <input type="checkbox" checked={showNoRoll} onChange={(e) => setShowNoRoll(e.target.checked)} />
+              {showNoRoll ? 'Showing' : 'Hiding'} {hiddenNoRoll} timing belts with no roll size
+            </label>
+          )}
           {tab !== 'ALL' && type !== 'TIMING_BELT' && (
             <span className="text-[11px] text-ink-3 ml-1">Tabs apply to timing belts only</span>
           )}

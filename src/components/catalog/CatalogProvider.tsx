@@ -71,8 +71,18 @@ async function load(force = false): Promise<Sku[]> {
   return inflight;
 }
 
+/** Timing belts only work in rolls; until a roll length is set the SKU stays out of every picker. */
+const needsRollSize = (s: Sku) => s.product_type === 'TIMING_BELT' && !(Number(s.roll_length_mm) > 0);
+
 interface CatalogValue {
+  /** SKUs you can pick stock from (timing belts without a roll size are left out unless switched on). */
   skus: Sku[];
+  /** Every active SKU, including those hidden for having no roll size. */
+  allSkus: Sku[];
+  /** How many timing-belt SKUs are hidden because no roll length is defined. */
+  hiddenNoRoll: number;
+  showNoRoll: boolean;
+  setShowNoRoll: (v: boolean) => void;
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
@@ -84,7 +94,12 @@ interface CatalogValue {
 const CatalogContext = createContext<CatalogValue | null>(null);
 
 export function CatalogProvider({ children }: { children: React.ReactNode }) {
-  const [skus, setSkus] = useState<Sku[]>(cache ?? []);
+  const [allSkus, setSkus] = useState<Sku[]>(cache ?? []);
+  const [showNoRoll, setShowNoRoll] = useState(false);
+  const skus = useMemo(
+    () => (showNoRoll ? allSkus : allSkus.filter((s) => !needsRollSize(s))),
+    [allSkus, showNoRoll]);
+  const hiddenNoRoll = useMemo(() => allSkus.filter(needsRollSize).length, [allSkus]);
   const [loading, setLoading] = useState(!cache);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
@@ -145,8 +160,8 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
   }, [skus]);
 
   const value = useMemo(
-    () => ({ skus, loading, error, refresh, applyStock, search }),
-    [skus, loading, error, refresh, applyStock, search],
+    () => ({ skus, allSkus, hiddenNoRoll, showNoRoll, setShowNoRoll, loading, error, refresh, applyStock, search }),
+    [skus, allSkus, hiddenNoRoll, showNoRoll, loading, error, refresh, applyStock, search],
   );
 
   return <CatalogContext.Provider value={value}>{children}</CatalogContext.Provider>;

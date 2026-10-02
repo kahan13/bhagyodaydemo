@@ -24,21 +24,21 @@ export async function GET() {
   if (orderIds.length > 0) {
     const { data, error: iErr } = await svc
       .from('purchase_order_items')
-      .select('id,order_id,sku_id,ordered_qty,received_qty,status,notes,created_at')
+      .select('id,order_id,sku_id,ordered_qty,received_qty,inwarded_qty,status,notes,created_at')
       .in('order_id', orderIds)
       .order('created_at');
 
     if (iErr) return NextResponse.json({ error: iErr.message }, { status: 500 });
 
     const skuIds = [...new Set((data ?? []).map((i: { sku_id: string }) => i.sku_id))];
-    let skuMap: Record<string, { sku_code: string; exact_size: string; brand_name: string; unit_code: string; current_stock: number; product_type: string }> = {};
+    let skuMap: Record<string, { sku_code: string; exact_size: string; brand_name: string; unit_code: string; current_stock: number; product_type: string; roll_length_mm: number | null }> = {};
 
     if (skuIds.length > 0) {
       const { data: skuRows } = await svc
         .from('v_sku_status')
-        .select('id,sku_code,exact_size,brand_name,unit_code,current_stock,product_type')
+        .select('id,sku_code,exact_size,brand_name,unit_code,current_stock,product_type,roll_length_mm')
         .in('id', skuIds);
-      for (const s of (skuRows ?? []) as { id: string; sku_code: string; exact_size: string; brand_name: string; unit_code: string; current_stock: number; product_type: string }[]) {
+      for (const s of (skuRows ?? []) as { id: string; sku_code: string; exact_size: string; brand_name: string; unit_code: string; current_stock: number; product_type: string; roll_length_mm: number | null }[]) {
         skuMap[s.id] = s;
       }
     }
@@ -110,44 +110,29 @@ export async function POST(request: Request) {
     return NextResponse.json({ orders: createdOrders }, { status: 201 });
   }
 
-  /* ── receive item ── */
+  /* ── receive item (one delivery; timing belts in rolls) ── */
   if (action === 'receive') {
-    const item_id      = String(body.item_id ?? '');
-    const qty_received = Number(body.qty_received);
-    const notes        = body.notes ? String(body.notes).slice(0, 500) : null;
-
+    const item_id = String(body.item_id ?? '');
+    const notes   = body.notes ? String(body.notes).slice(0, 500) : null;
     if (!item_id) return NextResponse.json({ error: 'item_id required.' }, { status: 400 });
-    if (!Number.isFinite(qty_received) || qty_received <= 0)
-      return NextResponse.json({ error: 'Enter a valid quantity.' }, { status: 400 });
 
-    const { data: item, error: fetchErr } = await svc
-      .from('purchase_order_items')
-      .select('id,order_id,ordered_qty,received_qty')
-      .eq('id', item_id)
-      .single();
+    const rolls = Array.isArray(body.rolls)
+      ? (body.rolls as { rolls: number; roll_length: number }[])
+          .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length) }))
+          .filter((r) => r.rolls > 0 && r.roll_length > 0)
+      : [];
+    const qty = Number(body.qty_received);
+    if (rolls.length === 0 && (!Number.isFinite(qty) || qty <= 0))
+      return NextResponse.json({ error: 'Enter what was received.' }, { status: 400 });
 
-    if (fetchErr || !item) return NextResponse.json({ error: 'Item not found.' }, { status: 404 });
-
-    const newReceived = (item.received_qty ?? 0) + qty_received;
-    const newStatus   = newReceived >= item.ordered_qty ? 'FULFILLED' : 'PARTIAL';
-
-    const { error: updateErr } = await svc
-      .from('purchase_order_items')
-      .update({ received_qty: newReceived, status: newStatus, notes })
-      .eq('id', item_id);
-
-    if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 400 });
-
-    const { data: siblings } = await svc
-      .from('purchase_order_items')
-      .select('status')
-      .eq('order_id', item.order_id);
-
-    const allDone    = siblings?.every((s: { status: string }) => s.status === 'FULFILLED');
-    const anyPartial = siblings?.some((s: { status: string }) => s.status === 'PARTIAL' || s.status === 'FULFILLED');
-    const orderStatus = allDone ? 'FULFILLED' : anyPartial ? 'PARTIAL' : 'PLACED';
-
-    await svc.from('purchase_orders').update({ status: orderStatus }).eq('id', item.order_id);
+    const userDb = await supabaseServer();
+    const { error } = await userDb.rpc('receive_po_item', {
+      p_item_id: item_id,
+      p_qty:     rolls.length ? null : qty,
+      p_rolls:   rolls.length ? rolls : null,
+      p_notes:   notes,
+    });
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
     return NextResponse.json({ ok: true });
   }
 
@@ -162,59 +147,37 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  /* ── record fulfilled order as inward transaction ── */
+  /* ── record inward: post everything received but not yet in stock (partial is fine) ── */
   if (action === 'record_inward') {
     const order_id = String(body.order_id ?? '');
-    if (!order_id) return NextResponse.json({ error: 'order_id required.' }, { status: 400 });
+    const item_id  = body.item_id ? String(body.item_id) : '';
+    if (!order_id && !item_id) return NextResponse.json({ error: 'order_id or item_id required.' }, { status: 400 });
 
-    const { data: items, error: iErr } = await svc
-      .from('purchase_order_items')
-      .select('id,sku_id,received_qty')
-      .eq('order_id', order_id)
-      .eq('status', 'FULFILLED');
-
-    if (iErr) return NextResponse.json({ error: iErr.message }, { status: 500 });
-    if (!items || items.length === 0)
-      return NextResponse.json({ error: 'No fulfilled items found.' }, { status: 400 });
-
-    const skuIds = items.map((i: { sku_id: string }) => i.sku_id);
-    const { data: skuRows } = await svc
-      .from('v_sku_status')
-      .select('id,sku_code,unit_code')
-      .in('id', skuIds);
-    const skuMap: Record<string, { sku_code: string; unit_code: string }> = {};
-    for (const s of (skuRows ?? []) as { id: string; sku_code: string; unit_code: string }[]) {
-      skuMap[s.id] = s;
+    let itemIds: string[] = [];
+    if (item_id) {
+      itemIds = [item_id];
+    } else {
+      const { data: items, error: iErr } = await svc
+        .from('purchase_order_items')
+        .select('id,received_qty,inwarded_qty')
+        .eq('order_id', order_id);
+      if (iErr) return NextResponse.json({ error: iErr.message }, { status: 500 });
+      itemIds = (items ?? [])
+        .filter((i: { received_qty: number; inwarded_qty: number }) => Number(i.received_qty) > Number(i.inwarded_qty))
+        .map((i: { id: string }) => i.id);
     }
-
-    const { data: order } = await svc
-      .from('purchase_orders')
-      .select('order_no')
-      .eq('id', order_id)
-      .single();
+    if (itemIds.length === 0)
+      return NextResponse.json({ error: 'Nothing received is waiting to be recorded.' }, { status: 400 });
 
     const userDb = await supabaseServer();
     const errors: string[] = [];
-    for (const item of items as { sku_id: string; received_qty: number }[]) {
-      const sku = skuMap[item.sku_id];
-      if (!sku) continue;
-      const { error } = await userDb.rpc('record_movement', {
-        p_sku_code:    sku.sku_code,
-        p_txn_type:    'INWARD',
-        p_quantity:    item.received_qty,
-        p_unit_code:   sku.unit_code,
-        p_reference:   (order as { order_no: string } | null)?.order_no ?? null,
-        p_notes:       'Recorded from purchase order',
-        p_channel:     'WEB',
-        p_invoice_no:  null,
-        p_operated_by: null,
-      });
-      if (error) errors.push(`${sku.sku_code}: ${error.message}`);
+    let posted = 0;
+    for (const id of itemIds) {
+      const { error } = await userDb.rpc('record_po_item_inward', { p_item_id: id });
+      if (error) errors.push(error.message); else posted += 1;
     }
-
-    if (errors.length > 0) return NextResponse.json({ error: errors.join('; ') }, { status: 400 });
-    await svc.from('purchase_orders').update({ status: 'FULFILLED' }).eq('id', order_id);
-    return NextResponse.json({ ok: true, recorded: items.length });
+    if (errors.length > 0) return NextResponse.json({ error: errors.join('; '), recorded: posted }, { status: 400 });
+    return NextResponse.json({ ok: true, recorded: posted });
   }
 
   return NextResponse.json({ error: 'Unknown action.' }, { status: 400 });

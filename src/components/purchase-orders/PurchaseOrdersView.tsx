@@ -18,12 +18,14 @@ interface OrderItem {
   sku_id: string;
   ordered_qty: number;
   received_qty: number;
+  inwarded_qty?: number;
   status: ItemStatus;
   notes: string | null;
   created_at: string;
   skus: {
     sku_code: string; exact_size: string; brand_name: string;
     unit_code: string; current_stock: number; product_type: string;
+    roll_length_mm?: number | null;
   } | null;
 }
 
@@ -36,6 +38,19 @@ interface Order {
   created_at: string;
   items: OrderItem[];
 }
+
+/** Roll length (mm) when this line is a roll-tracked timing belt, else 0. */
+const rollLen = (item: OrderItem): number =>
+  item.skus?.product_type === 'TIMING_BELT' && Number(item.skus?.roll_length_mm) > 0
+    ? Number(item.skus!.roll_length_mm) : 0;
+/** Received but not yet recorded into stock. */
+const pendingInward = (item: OrderItem): number =>
+  Math.max(0, Number(item.received_qty) - Number(item.inwarded_qty ?? 0));
+const fmtRolls = (mm: number, len: number): string => {
+  if (!len) return '';
+  const r = mm / len;
+  return Number.isInteger(r) ? `${r} roll${r === 1 ? '' : 's'}` : `${Math.round(r * 100) / 100} rolls`;
+};
 
 const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt' };
 
@@ -157,21 +172,49 @@ function ReceiveDialog({
   item, onClose, onDone,
 }: { item: OrderItem; onClose: () => void; onDone: () => void }) {
   const remaining = item.ordered_qty - item.received_qty;
+  const len       = rollLen(item);
+  const remRolls  = len ? Math.floor(remaining / len) : 0;
+
+  // Roll mode: N standard rolls + optional odd-length rolls (one-time lots)
+  const [rollCount, setRollCount] = useState(String(remRolls));
+  const [odd, setOdd]             = useState<{ rolls: string; length: string }[]>([]);
+  // Plain mode (V-belt / conveyor / timing belt without roll size)
   const [qty, setQty]     = useState(String(remaining));
   const [notes, setNotes] = useState('');
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState<string | null>(null);
 
+  const rollsPayload = useMemo(() => {
+    if (!len) return [];
+    const out: { rolls: number; roll_length: number }[] = [];
+    const n = Math.floor(Number(rollCount) || 0);
+    if (n > 0) out.push({ rolls: n, roll_length: len });
+    for (const o of odd) {
+      const r = Math.floor(Number(o.rolls) || 0), l = Number(o.length) || 0;
+      if (r > 0 && l > 0) out.push({ rolls: r, roll_length: l });
+    }
+    return out;
+  }, [len, rollCount, odd]);
+  const rollsTotal = rollsPayload.reduce((a, r) => a + r.rolls * r.roll_length, 0);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const n = Number(qty);
-    if (!n || n <= 0)        { setErr('Enter a valid quantity.'); return; }
-    if (n > remaining)       { setErr(`Maximum receivable is ${remaining}.`); return; }
+    let body: Record<string, unknown>;
+    if (len) {
+      if (rollsTotal <= 0)        { setErr('Enter at least one roll.'); return; }
+      if (rollsTotal > remaining) { setErr(`That is ${rollsTotal} mm but only ${remaining} mm is left on this order.`); return; }
+      body = { action: 'receive', item_id: item.id, rolls: rollsPayload, notes: notes || null };
+    } else {
+      const n = Number(qty);
+      if (!n || n <= 0)  { setErr('Enter a valid quantity.'); return; }
+      if (n > remaining) { setErr(`Maximum receivable is ${remaining}.`); return; }
+      body = { action: 'receive', item_id: item.id, qty_received: n, notes: notes || null };
+    }
     setBusy(true); setErr(null);
     const res  = await fetch('/api/purchase-orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'receive', item_id: item.id, qty_received: n, notes: notes || null }),
+      body: JSON.stringify(body),
     });
     const json = await res.json();
     setBusy(false);
@@ -179,9 +222,10 @@ function ReceiveDialog({
     onDone();
   };
 
+  const unit = item.skus?.unit_code;
   return (
     <div className="fixed inset-0 z-[90] grid place-items-center bg-ink/30 backdrop-blur-[2px] p-4">
-      <form onSubmit={submit} className="w-full max-w-[420px] bg-surface border border-line rounded-xl shadow-xl">
+      <form onSubmit={submit} className="w-full max-w-[440px] bg-surface border border-line rounded-xl shadow-xl max-h-[92vh] overflow-y-auto">
         <div className="card-head border-b">
           <h2 className="card-title">Receive Stock</h2>
           <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={onClose}><X size={15} /></button>
@@ -192,27 +236,78 @@ function ReceiveDialog({
             <p className="text-[11px] text-ink-3">
               {item.skus?.brand_name ?? '—'}
               {item.skus?.product_type ? ` · ${TYPE_LABEL[item.skus.product_type] ?? ''}` : ''}
+              {len ? ` · roll = ${len} mm` : ''}
             </p>
-            <div className="flex gap-4 mt-1.5">
-              <span className="text-[11px] text-ink-3">Ordered: <strong className="text-ink">{fmtQty(item.ordered_qty, item.skus?.unit_code)}</strong></span>
-              <span className="text-[11px] text-ink-3">Received: <strong className="text-ok">{fmtQty(item.received_qty, item.skus?.unit_code)}</strong></span>
-              <span className="text-[11px] text-ink-3">Left: <strong className="text-warn">{fmtQty(remaining, item.skus?.unit_code)}</strong></span>
+            <div className="flex gap-4 mt-1.5 flex-wrap">
+              <span className="text-[11px] text-ink-3">Ordered: <strong className="text-ink">{fmtQty(item.ordered_qty, unit)}</strong>{len ? ` (${fmtRolls(item.ordered_qty, len)})` : ''}</span>
+              <span className="text-[11px] text-ink-3">Received: <strong className="text-ok">{fmtQty(item.received_qty, unit)}</strong></span>
+              <span className="text-[11px] text-ink-3">Left: <strong className="text-warn">{fmtQty(remaining, unit)}</strong>{len ? ` (${fmtRolls(remaining, len)})` : ''}</span>
             </div>
           </div>
-          <div>
-            <label className="label">Quantity receiving ({item.skus?.unit_code ?? 'units'}) <span className="text-danger">*</span></label>
-            <input
-              className="field num text-[16px] h-11"
-              inputMode="decimal"
-              value={qty}
-              onChange={(e) => setQty(e.target.value.replace(/[^0-9.]/g, ''))}
-              autoFocus
-            />
-          </div>
+
+          {len ? (
+            <div className="space-y-3">
+              <div>
+                <label className="label">Standard rolls received ({len} mm each)</label>
+                <input
+                  className="field num text-[16px] h-11"
+                  inputMode="numeric"
+                  value={rollCount}
+                  onChange={(e) => setRollCount(e.target.value.replace(/[^0-9]/g, ''))}
+                  autoFocus
+                />
+              </div>
+
+              {odd.map((o, i) => (
+                <div key={i} className="flex items-end gap-2">
+                  <div className="flex-1">
+                    <label className="label">Odd rolls</label>
+                    <input className="field num" inputMode="numeric" value={o.rolls}
+                      onChange={(e) => setOdd((p) => p.map((x, j) => j === i ? { ...x, rolls: e.target.value.replace(/[^0-9]/g, '') } : x))} />
+                  </div>
+                  <div className="flex-1">
+                    <label className="label">Length (mm)</label>
+                    <input className="field num" inputMode="decimal" value={o.length} placeholder="e.g. 45"
+                      onChange={(e) => setOdd((p) => p.map((x, j) => j === i ? { ...x, length: e.target.value.replace(/[^0-9.]/g, '') } : x))} />
+                  </div>
+                  <button type="button" className="btn btn-ghost h-9 w-9 p-0" onClick={() => setOdd((p) => p.filter((_, j) => j !== i))}>
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+              <button type="button" className="text-[12px] text-brand font-medium"
+                onClick={() => setOdd((p) => [...p, { rolls: '1', length: '' }])}>
+                + Other length (a roll that is not {len} mm)
+              </button>
+              <p className="text-[11px] text-ink-3">
+                Other-length rolls are one-time lots — the SKU&apos;s standard roll length stays {len} mm.
+              </p>
+
+              <div className="bg-ok-soft/30 rounded-lg px-3 py-2 text-[12px]">
+                Receiving <strong className="num">{rollsTotal} mm</strong>
+                {rollsPayload.length > 0 && (
+                  <span className="text-ink-3"> = {rollsPayload.map((r) => `${r.rolls}×${r.roll_length}`).join(' + ')}</span>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div>
+              <label className="label">Quantity receiving ({unit ?? 'units'}) <span className="text-danger">*</span></label>
+              <input
+                className="field num text-[16px] h-11"
+                inputMode="decimal"
+                value={qty}
+                onChange={(e) => setQty(e.target.value.replace(/[^0-9.]/g, ''))}
+                autoFocus
+              />
+            </div>
+          )}
+
           <div>
             <label className="label">Notes <span className="text-ink-3 font-normal">(optional)</span></label>
             <textarea rows={2} className="field" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. partial shipment, damaged items" />
           </div>
+          <p className="text-[11px] text-ink-3">Receiving does not change stock. Press “Record Inward” afterwards to add it to inventory.</p>
           {err && <p className="text-[12px] text-danger bg-danger-soft rounded-lg px-3 py-2">{err}</p>}
         </div>
         <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl">
@@ -328,6 +423,11 @@ function CreateOrderDialog({
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    {l.sku.product_type === 'TIMING_BELT' && Number(l.sku.roll_length_mm) > 0 && Number(l.qty) > 0 && (
+                      <span className="text-[11px] text-ink-3 num whitespace-nowrap">
+                        = {fmtRolls(Number(l.qty), Number(l.sku.roll_length_mm))}
+                      </span>
+                    )}
                     <input
                       className="field num h-9 w-28 text-[13px]"
                       inputMode="decimal"
@@ -420,12 +520,13 @@ function OrderCard({
 }: {
   order: Order;
   onReceive: (item: OrderItem) => void;
-  onRecordInward: (order: Order) => void;
+  onRecordInward: (order: Order, itemId?: string) => void;
   onDelete: (order: Order) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
 
   const allFulfilled = order.items.length > 0 && order.items.every((i) => i.status === 'FULFILLED');
+  const anyPending   = order.items.some((i) => pendingInward(i) > 0);
 
   return (
     <div className="border border-line rounded-lg overflow-hidden">
@@ -458,7 +559,7 @@ function OrderCard({
         </button>
 
         <div className="flex items-center gap-1.5 shrink-0">
-          {allFulfilled && (
+          {anyPending && (
             <button
               type="button"
               className="btn btn-primary h-7 px-2.5 text-[12px]"
@@ -486,6 +587,8 @@ function OrderCard({
           ) : (
             order.items.map((item) => {
               const itemRemaining = item.ordered_qty - item.received_qty;
+              const itemPending   = pendingInward(item);
+              const itemLen       = rollLen(item);
               const sizeName  = item.skus?.exact_size  ?? '—';
               const brandName = item.skus?.brand_name  ?? '—';
               const pType     = item.skus?.product_type;
@@ -505,36 +608,59 @@ function OrderCard({
                     <div className="flex items-center gap-4 mt-1.5">
                       <span className="text-[11px] text-ink-3 num">
                         Ordered <strong className="text-ink">{fmtQty(item.ordered_qty, item.skus?.unit_code)}</strong>
+                        {itemLen > 0 && <span> ({fmtRolls(item.ordered_qty, itemLen)})</span>}
                       </span>
                       <span className="text-[11px] text-ink-3 num">
                         Received <strong className="text-ok">{fmtQty(item.received_qty, item.skus?.unit_code)}</strong>
+                        {itemLen > 0 && <span> ({fmtRolls(item.received_qty, itemLen)})</span>}
                       </span>
                       {itemRemaining > 0 && (
                         <span className="text-[11px] text-warn num font-medium">
                           {fmtQty(itemRemaining, item.skus?.unit_code)} left
+                          {itemLen > 0 && ` (${fmtRolls(itemRemaining, itemLen)})`}
                         </span>
                       )}
+                      {itemPending > 0 ? (
+                        <span className="text-[11px] text-brand num font-medium">
+                          {fmtQty(itemPending, item.skus?.unit_code)} waiting to be recorded
+                        </span>
+                      ) : Number(item.inwarded_qty ?? 0) > 0 ? (
+                        <span className="text-[11px] text-ink-3 num">
+                          In stock {fmtQty(Number(item.inwarded_qty), item.skus?.unit_code)}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
-                  {item.status !== 'FULFILLED' ? (
-                    <button
-                      type="button"
-                      className="btn btn-secondary h-8 px-3 text-[12px] shrink-0"
-                      onClick={() => onReceive(item)}
-                    >
-                      <ArrowDownLeft size={12} /> Receive
-                    </button>
-                  ) : (
-                    <span className="text-[11px] text-ok font-medium shrink-0 flex items-center gap-1">
-                      <Check size={12} /> Done
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {itemPending > 0 && (
+                      <button
+                        type="button"
+                        className="btn btn-primary h-8 px-3 text-[12px]"
+                        onClick={() => onRecordInward(order, item.id)}
+                      >
+                        <ClipboardCheck size={12} /> Record Inward
+                      </button>
+                    )}
+                    {item.status !== 'FULFILLED' ? (
+                      <button
+                        type="button"
+                        className="btn btn-secondary h-8 px-3 text-[12px]"
+                        onClick={() => onReceive(item)}
+                      >
+                        <ArrowDownLeft size={12} /> Receive
+                      </button>
+                    ) : itemPending === 0 ? (
+                      <span className="text-[11px] text-ok font-medium flex items-center gap-1">
+                        <Check size={12} /> Done
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
               );
             })
           )}
 
-          {allFulfilled && (
+          {allFulfilled && anyPending && (
             <div className="px-4 py-3 bg-ok-soft/20 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-ok">
                 <ClipboardCheck size={14} />
@@ -552,7 +678,7 @@ function OrderCard({
 
 /* ── Main ─────────────────────────────────────────────────────────────────── */
 export default function PurchaseOrdersView() {
-  const { skus: catalogSkus } = useCatalog();                    // ← catalog as SKU fallback
+  const { allSkus: catalogSkus } = useCatalog();                    // ← catalog as SKU fallback
 
   const [orders, setOrders]         = useState<Order[]>([]);
   const [loading, setLoading]       = useState(true);
@@ -560,6 +686,7 @@ export default function PurchaseOrdersView() {
   const [showCreate, setShowCreate] = useState(false);
   const [receiveItem, setReceiveItem]   = useState<OrderItem | null>(null);
   const [recordTarget, setRecordTarget] = useState<Order | null>(null);
+  const [recordItemId, setRecordItemId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Order | null>(null);
   const [recording, setRecording]       = useState(false);
   const [toast, setToast]               = useState<string | null>(null);
@@ -600,6 +727,7 @@ export default function PurchaseOrdersView() {
               unit_code:     cat.unit_code,
               current_stock: cat.current_stock,
               product_type:  cat.product_type,
+              roll_length_mm: cat.roll_length_mm ?? null,
             },
           };
         }),
@@ -618,18 +746,24 @@ export default function PurchaseOrdersView() {
     const res  = await fetch('/api/purchase-orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'record_inward', order_id: order.id }),
+      body: JSON.stringify(
+        recordItemId
+          ? { action: 'record_inward', item_id: recordItemId }
+          : { action: 'record_inward', order_id: order.id },
+      ),
     });
     const json = await res.json();
     setRecording(false);
     setRecordTarget(null);
+    setRecordItemId(null);
     if (!res.ok) { showToast(`Error: ${json.error}`); return; }
     showToast(`Recorded ${json.recorded} inward transaction${json.recorded !== 1 ? 's' : ''}.`);
     load();
   };
 
-  const inProgress = orders.filter((o) => o.status !== 'FULFILLED');
-  const fulfilled  = orders.filter((o) => o.status === 'FULFILLED');
+  const needsWork  = (o: Order) => o.status !== 'FULFILLED' || o.items.some((i) => pendingInward(i) > 0);
+  const inProgress = orders.filter(needsWork);
+  const fulfilled  = orders.filter((o) => !needsWork(o));
   const displayed  = tab === 'in_progress' ? inProgress : fulfilled;
 
   return (
@@ -694,7 +828,7 @@ export default function PurchaseOrdersView() {
               key={o.id}
               order={o}
               onReceive={(item) => setReceiveItem(item)}
-              onRecordInward={(order) => setRecordTarget(order)}
+              onRecordInward={(order, itemId) => { setRecordItemId(itemId ?? null); setRecordTarget(order); }}
               onDelete={(order) => setDeleteTarget(order)}
             />
           ))}
@@ -725,35 +859,42 @@ export default function PurchaseOrdersView() {
       )}
 
       {/* Record inward confirm */}
-      {recordTarget && (
+      {recordTarget && (() => {
+        const lines = recordTarget.items.filter((i) => pendingInward(i) > 0 && (!recordItemId || i.id === recordItemId));
+        const close = () => { setRecordTarget(null); setRecordItemId(null); };
+        return (
         <div className="fixed inset-0 z-[90] grid place-items-center bg-ink/30 backdrop-blur-[2px] p-4">
           <div className="w-full max-w-[440px] bg-surface border border-line rounded-xl shadow-xl">
             <div className="card-head border-b">
               <h2 className="card-title">Record as Inward?</h2>
-              <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={() => setRecordTarget(null)}>
+              <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={close}>
                 <X size={15} />
               </button>
             </div>
             <div className="p-5 space-y-3">
               <p className="text-[13px] text-ink-2">
-                This will create inward stock movements for all <strong>{recordTarget.items.length}</strong> item{recordTarget.items.length !== 1 ? 's' : ''} in <strong>{recordTarget.order_no}</strong>. Stock levels will update immediately and appear in Transactions.
+                This adds what has been received so far (not yet recorded) from <strong>{recordTarget.order_no}</strong> to stock — book and physical. Timing belts go in as individual roll lots.
               </p>
               <div className="bg-subtle rounded-lg p-3 space-y-2">
-                {recordTarget.items.map((item) => (
+                {lines.map((item) => {
+                  const len = rollLen(item);
+                  return (
                   <div key={item.id} className="flex items-center justify-between text-[12px] gap-2">
                     <div className="min-w-0">
                       <span className="font-medium">{item.skus?.exact_size ?? '—'}</span>
                       <span className="text-ink-3 ml-1.5">{item.skus?.brand_name ?? '—'}</span>
                     </div>
                     <span className="num font-semibold text-ok shrink-0">
-                      +{fmtQty(item.received_qty, item.skus?.unit_code)}
+                      +{fmtQty(pendingInward(item), item.skus?.unit_code)}
+                      {len > 0 && <span className="text-ink-3 font-normal"> ({fmtRolls(pendingInward(item), len)})</span>}
                     </span>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
             <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl">
-              <button type="button" className="btn btn-secondary" onClick={() => setRecordTarget(null)}>Cancel</button>
+              <button type="button" className="btn btn-secondary" onClick={close}>Cancel</button>
               <button
                 type="button" className="btn btn-primary" disabled={recording}
                 onClick={() => handleRecordInward(recordTarget)}
@@ -766,7 +907,8 @@ export default function PurchaseOrdersView() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
