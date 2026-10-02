@@ -20,6 +20,7 @@ import type {
   DeliveryMode,
 } from '@/lib/types';
 import { useListNav } from '@/lib/useListNav';
+import { onDataChanged } from '@/lib/dataSync';
 import LotAllocationPicker, { type LotAllocation } from './LotAllocationPicker';
 import type { LotGroup, PendingAdjustment } from '@/lib/types';
 import { loadReceiptModel, printReceipt, downloadReceiptPdf, receiptHtml, type ReceiptModel } from '@/lib/order-receipt';
@@ -960,6 +961,25 @@ export default function ProductionOrdersView({
   }
 
   useEffect(() => { if (movementsOpen) fetchMovements(); }, [movementsOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // live refresh when anything is saved (here, another screen, another tab)
+  const syncRef = useRef<() => void>(() => {});
+  syncRef.current = async () => {
+    invalidateSkuCache();
+    setSkuVersion(getSkuVersion());
+    fetchMismatches();
+    if (movementsOpen) fetchMovements();
+    const { data: fresh } = await db
+      .from('production_orders')
+      .select('*, production_order_items(*)')
+      .order('created_at', { ascending: false });
+    if (fresh) {
+      const next = fresh.map((o: any) => ({ ...o, items: o.production_order_items ?? [] })) as ProductionOrder[];
+      setOrders(next);
+      loadAllocs(next);
+    }
+  };
+  useEffect(() => onDataChanged(() => { syncRef.current(); }), []);
 
   const needsDeliveryNote = form.delivery_mode === 'Courier' || form.delivery_mode === 'Transportation';
 

@@ -28,10 +28,8 @@ export default function DashboardActions({
     return () => window.removeEventListener('bb:action', h);
   }, [canWrite]);
 
-  const done = () => {
-    setOpen(null);
-    window.location.reload();
-  };
+  // the shell notices the save and refreshes the page data by itself — no reload needed
+  const done = () => setOpen(null);
 
   return (
     <div className="flex flex-wrap gap-2">

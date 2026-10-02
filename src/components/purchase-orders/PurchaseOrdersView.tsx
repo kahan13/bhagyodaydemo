@@ -8,6 +8,7 @@ import {
 import { useCatalog } from '@/components/catalog/CatalogProvider';
 import { fmtQty, fmtDate } from '@/lib/format';
 import { useListNav } from '@/lib/useListNav';
+import { onDataChanged } from '@/lib/dataSync';
 import type { ProductType, Sku } from '@/lib/types';
 
 type ItemStatus  = 'PENDING' | 'PARTIAL' | 'FULFILLED';
@@ -765,6 +766,9 @@ export default function PurchaseOrdersView() {
   }, [catalogSkus]);                                             // ← re-enrich when catalog loads
 
   useEffect(() => { load(); }, [load]);
+
+  // live refresh when anything is saved (here, another screen, another tab)
+  useEffect(() => onDataChanged(() => { load(); }), [load]);
 
   // keyboard: "n" starts a new purchase order
   useEffect(() => {

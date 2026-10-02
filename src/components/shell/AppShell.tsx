@@ -13,6 +13,8 @@ import SignOutButton from '@/components/shell/SignOutButton';
 import CommandPalette from '@/components/shell/CommandPalette';
 import ShortcutsList from '@/components/shell/ShortcutsList';
 import { GO_KEYS } from '@/lib/shortcuts';
+import { DATA_CHANGED, installFetchWatcher, onDataChanged } from '@/lib/dataSync';
+import { useCatalog } from '@/components/catalog/CatalogProvider';
 
 type Item = { href: string; label: string; icon: typeof Boxes; needs?: Permission };
 
@@ -42,6 +44,29 @@ export default function AppShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { refresh: refreshCatalog } = useCatalog();
+
+  // Live refresh: after any save, re-read the server pages and the catalogue — no manual reload.
+  useEffect(() => {
+    installFetchWatcher();
+    const off = onDataChanged(() => { router.refresh(); refreshCatalog(); });
+
+    let last = Date.now();
+    const poke = () => {                       // coming back to the tab, or the minute timer
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - last < 15000) return;
+      last = Date.now();
+      window.dispatchEvent(new Event(DATA_CHANGED));
+    };
+    const iv = setInterval(poke, 60000);
+    document.addEventListener('visibilitychange', poke);
+    window.addEventListener('focus', poke);
+    return () => {
+      off(); clearInterval(iv);
+      document.removeEventListener('visibilitychange', poke);
+      window.removeEventListener('focus', poke);
+    };
+  }, [router, refreshCatalog]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);

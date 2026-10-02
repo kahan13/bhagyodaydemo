@@ -47,22 +47,32 @@ BEGIN
   PERFORM _assert_super_admin();
   v_before := admin_clear_preview();
 
-  -- orders first (lot_allocations go with their order items)
-  DELETE FROM prod_pending_adjustments;
-  DELETE FROM production_order_items;
-  DELETE FROM production_orders;
-  DELETE FROM purchase_order_receipts;
-  DELETE FROM purchase_order_items;
-  DELETE FROM purchase_orders;
+  -- Order matters (foreign keys): receipts and adjustments point at movements, movements point at
+  -- order items, so: receipts -> movements -> order items/orders.
+  DELETE FROM purchase_order_receipts WHERE true;
+  DELETE FROM prod_pending_adjustments WHERE true;
 
-  -- transactions (detaches lots, clears the immutability guard for this call only, resets TXN numbers)
-  PERFORM purge_transactional_data();
+  -- transactions: detach lots, lift the immutability guard for this call only, reset TXN numbers
+  -- (every statement has a WHERE: Supabase refuses DELETE/UPDATE without one)
+  UPDATE sku_lots SET inward_movement_id = NULL WHERE inward_movement_id IS NOT NULL;
+  UPDATE inventory_movements SET lot_id = NULL WHERE lot_id IS NOT NULL;
+  UPDATE inventory_movements SET reversed_by = NULL, reversal_of = NULL, is_reversed = false WHERE true;
+  PERFORM set_config('bhagyoday.allow_purge', 'on', true);
+  DELETE FROM inventory_movements WHERE true;
+  PERFORM set_config('bhagyoday.allow_purge', 'off', true);
+  PERFORM setval('movement_no_seq', 1, false);
+
+  -- now the orders (their lot plans go with the items)
+  DELETE FROM production_order_items WHERE true;
+  DELETE FROM production_orders WHERE true;
+  DELETE FROM purchase_order_items WHERE true;
+  DELETE FROM purchase_orders WHERE true;
 
   -- what is on the shelf now becomes the opening position
-  UPDATE skus SET opening_stock = current_stock, physical_prod_stock = current_stock, updated_at = now();
+  UPDATE skus SET opening_stock = current_stock, physical_prod_stock = current_stock, updated_at = now() WHERE true;
 
-  DELETE FROM import_batches;
-  DELETE FROM audit_logs;
+  DELETE FROM import_batches WHERE true;
+  DELETE FROM audit_logs WHERE true;
 
   PERFORM setval('purchase_order_no_seq', 1, false);
   PERFORM setval('production_order_no_seq', 1, false);
@@ -88,9 +98,13 @@ BEGIN
   DELETE FROM prod_pending_adjustments WHERE sku_id = ANY(v_ids);
 
   -- detach, then remove the history of these SKUs
+  UPDATE purchase_order_receipts
+     SET movement_id = NULL, inwarded_movement_id = NULL
+   WHERE movement_id IN (SELECT id FROM inventory_movements WHERE sku_id = ANY(v_ids))
+      OR inwarded_movement_id IN (SELECT id FROM inventory_movements WHERE sku_id = ANY(v_ids));
   UPDATE inventory_movements SET lot_id = NULL WHERE sku_id = ANY(v_ids) AND lot_id IS NOT NULL;
   UPDATE sku_lots SET inward_movement_id = NULL WHERE sku_id = ANY(v_ids) AND inward_movement_id IS NOT NULL;
-  UPDATE inventory_movements SET reversed_by = NULL, is_reversed = false WHERE sku_id = ANY(v_ids);
+  UPDATE inventory_movements SET reversed_by = NULL, reversal_of = NULL, is_reversed = false WHERE sku_id = ANY(v_ids);
   PERFORM set_config('bhagyoday.allow_purge', 'on', true);
   DELETE FROM inventory_movements WHERE sku_id = ANY(v_ids);
   PERFORM set_config('bhagyoday.allow_purge', 'off', true);
