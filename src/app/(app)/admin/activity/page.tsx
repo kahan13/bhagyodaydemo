@@ -56,7 +56,7 @@ export default async function ActivityPage({
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-56px)]">
+    <div className="flex flex-col h-[calc(100vh/var(--z,1)-56px)]">
       <div className="px-4 lg:px-6 py-3.5 border-b border-line bg-surface flex flex-wrap items-center gap-3">
         <div>
           <h1 className="text-[19px] font-semibold">Activity trail</h1>

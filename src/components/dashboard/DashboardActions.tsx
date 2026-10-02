@@ -43,15 +43,15 @@ export default function DashboardActions({
     <div className="flex flex-wrap gap-2">
       {canWrite && (
         <>
-          <button onClick={() => setOpen('inward')} className="btn btn-secondary">
+          <button onClick={() => setOpen('inward')} className="btn btn-secondary" data-kt="IN" data-kt-label="Record Inward">
             <Plus size={14} /> Inward
           </button>
-          <button onClick={() => setOpen('outward')} className="btn btn-primary">
+          <button onClick={() => setOpen('outward')} className="btn btn-primary" data-kt="O" data-kt-label="Record Outward">
             <Plus size={14} /> Outward
           </button>
         </>
       )}
-      <Link href="/purchase-orders" className="btn btn-secondary">
+      <Link href="/purchase-orders" className="btn btn-secondary" data-kt="OR" data-kt-label="Order">
         <ShoppingCart size={14} /> Order
       </Link>
 

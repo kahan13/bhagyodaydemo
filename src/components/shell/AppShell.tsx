@@ -12,7 +12,7 @@ import type { Permission, Session } from '@/lib/types';
 import SignOutButton from '@/components/shell/SignOutButton';
 import CommandPalette from '@/components/shell/CommandPalette';
 import ShortcutsList from '@/components/shell/ShortcutsList';
-import KeyTips from '@/components/shell/KeyTips';
+import KeyTips, { NAV_KEYS } from '@/components/shell/KeyTips';
 import { GO_KEYS } from '@/lib/shortcuts';
 import { DATA_CHANGED, installFetchWatcher, onDataChanged } from '@/lib/dataSync';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
@@ -35,6 +35,8 @@ const ADMIN: Item[] = [
   { href: '/admin', label: 'Admin', icon: Settings, needs: 'settings.view' },
   { href: '/admin/activity', label: 'Activity', icon: ShieldCheck, needs: 'audit.view' },
 ];
+
+const ZOOMS = [0.9, 1, 1.12, 1.25, 1.4];
 
 export default function AppShell({
   session, demo, children,
@@ -68,6 +70,10 @@ export default function AppShell({
       window.removeEventListener('focus', poke);
     };
   }, [router, refreshCatalog]);
+  const [zi, setZiState] = useState(1);
+  useEffect(() => { try { const v = Number(localStorage.getItem('bb-zoom')); if (v >= 0 && v < ZOOMS.length && localStorage.getItem('bb-zoom') !== null) setZiState(v); } catch {} }, []);
+  const setZi = (v: number) => { setZiState(v); try { localStorage.setItem('bb-zoom', String(v)); } catch {} };
+  const uiZoom = ZOOMS[zi];
   const [helpOpen, setHelpOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -164,6 +170,8 @@ export default function AppShell({
               key={href}
               href={href}
               prefetch
+              data-kt={NAV_KEYS[href]}
+              data-kt-label={label}
               aria-current={active(href) ? 'page' : undefined}
               className={`flex items-center gap-2.5 h-9 px-3 rounded-lg text-[15px] transition-colors ${
                 active(href)
@@ -181,7 +189,8 @@ export default function AppShell({
   };
 
   return (
-    <div className="min-h-screen">
+    <>
+    <div className="min-h-[calc(100vh/var(--z,1))]" style={{ zoom: uiZoom, ['--z' as string]: uiZoom } as React.CSSProperties}>
       <aside
         className={`fixed inset-y-0 left-0 z-50 w-[252px] bg-surface border-r border-line flex flex-col
                     transition-transform duration-200 lg:translate-x-0
@@ -233,7 +242,7 @@ export default function AppShell({
         <div className="fixed inset-0 z-40 bg-ink/25 lg:hidden" onClick={() => setNavOpen(false)} aria-hidden />
       )}
 
-      <div className="lg:pl-[252px] flex flex-col min-h-screen">
+      <div className="lg:pl-[252px] flex flex-col min-h-[calc(100vh/var(--z,1))]">
         <header className="sticky top-0 z-30 h-14 bg-canvas/85 backdrop-blur-md border-b border-line flex items-center gap-3 px-4 lg:px-6">
           <button className="btn btn-ghost lg:hidden h-8 w-8 p-0" onClick={() => setNavOpen(true)} aria-label="Menu">
             <Menu size={18} />
@@ -245,7 +254,13 @@ export default function AppShell({
             </span>
           )}
 
-          <div className="ml-auto relative">
+          <div className="ml-auto flex items-center gap-1 rounded-lg border-2 border-[#0b5fff] bg-white px-1 h-9" title="Text size">
+            <button className="h-7 w-8 rounded-md text-[14px] font-extrabold text-[#0b5fff] hover:bg-[#e6eeff] disabled:opacity-30" aria-label="Smaller text" disabled={zi <= 0} onClick={() => setZi(zi - 1)}>A−</button>
+            <span className="text-[13px] font-bold text-[#0b5fff] w-[42px] text-center">{Math.round(uiZoom * 100)}%</span>
+            <button className="h-7 w-8 rounded-md text-[18px] font-extrabold text-[#0b5fff] hover:bg-[#e6eeff] disabled:opacity-30" aria-label="Larger text" disabled={zi >= ZOOMS.length - 1} onClick={() => setZi(zi + 1)}>A+</button>
+          </div>
+
+          <div className="relative">
             <button
               className="flex items-center gap-2 h-9 pl-1.5 pr-2 rounded-lg hover:bg-hover transition-colors"
               onClick={() => setMenuOpen((v) => !v)}
@@ -284,10 +299,6 @@ export default function AppShell({
         <main className="flex-1 min-w-0">{children}</main>
       </div>
 
-      <KeyTips
-        allowedHrefs={[...MAIN, ...ADMIN].filter(allowed).map((i) => i.href)}
-        canWrite={session.permissions.includes('transactions.create')}
-      />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
 
       {helpOpen && (
@@ -302,5 +313,10 @@ export default function AppShell({
         </div>
       )}
     </div>
+    <KeyTips
+      allowedHrefs={[...MAIN, ...ADMIN].filter(allowed).map((i) => i.href)}
+      canWrite={session.permissions.includes('transactions.create')}
+    />
+    </>
   );
 }

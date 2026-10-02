@@ -41,7 +41,7 @@ export default function TransactionsView({
     .filter(([k, v]) => v && !['range', 'from', 'to'].includes(k)).length;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-56px)]">
+    <div className="flex flex-col h-[calc(100vh/var(--z,1)-56px)]">
       {/* head */}
       <div className="px-4 lg:px-6 py-3.5 border-b border-line bg-surface space-y-3">
         <div className="flex flex-wrap items-center gap-3">
@@ -166,12 +166,12 @@ export default function TransactionsView({
                   </td>
                   <td className="font-medium max-w-[160px] truncate" title={m.sku_code}>{m.exact_size}</td>
                   <td className="text-ink-2">{m.brand_name}</td>
-                  <td className="num text-right font-medium">
+                  <td className={`num text-right font-medium ${m.txn_type === 'OUTWARD' ? 'q-out' : m.txn_type === 'INWARD' ? 'q-in' : 'q-left'}`}>
                     {m.txn_type === 'OUTWARD' ? '−' : m.txn_type === 'INWARD' ? '+' : '±'}
                     {fmtQty(Math.abs(m.quantity), m.unit_code)}
                   </td>
-                  <td className="num text-right text-ink-3">{fmtQty(m.previous_stock)}</td>
-                  <td className="num text-right">{fmtQty(m.new_stock)}</td>
+                  <td className="num text-right">{fmtQty(m.previous_stock)}</td>
+                  <td className="num text-right q-total">{fmtQty(m.new_stock)}</td>
                   <td className="text-ink-2">{m.user_name}</td>
                   <td className="text-ink-3">{(m as Movement & { operated_by_name?: string }).operated_by_name ?? '—'}</td>
                   <td><LotCell m={m} /></td>

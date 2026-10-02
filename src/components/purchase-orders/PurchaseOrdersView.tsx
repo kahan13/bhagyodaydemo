@@ -256,8 +256,8 @@ function ReceiveDialog({
             </p>
             <div className="flex gap-4 mt-1.5 flex-wrap">
               <span className="text-[13px] text-ink-3">Ordered: <strong className="text-ink">{fmtQty(item.ordered_qty, unit)}</strong>{len ? ` (${fmtRolls(item.ordered_qty, len)})` : ''}</span>
-              <span className="text-[13px] text-ink-3">Received: <strong className="text-ok">{fmtQty(item.received_qty, unit)}</strong></span>
-              <span className="text-[13px] text-ink-3">Left: <strong className="text-warn">{fmtQty(remaining, unit)}</strong>{len ? ` (${fmtRolls(remaining, len)})` : ''}</span>
+              <span className="text-[13px] text-ink-3">Received: <strong className="q-in">{fmtQty(item.received_qty, unit)}</strong></span>
+              <span className="text-[13px] text-ink-3">Left: <strong className="q-left">{fmtQty(remaining, unit)}</strong>{len ? ` (${fmtRolls(remaining, len)})` : ''}</span>
             </div>
           </div>
 
@@ -637,7 +637,7 @@ function OrderCard({
                         {itemLen > 0 && <span> ({fmtRolls(item.ordered_qty, itemLen)})</span>}
                       </span>
                       <span className="text-[13px] text-ink-3 num">
-                        Received <strong className="text-ok">{fmtQty(item.received_qty, item.skus?.unit_code)}</strong>
+                        Received <strong className="q-in">{fmtQty(item.received_qty, item.skus?.unit_code)}</strong>
                         {itemLen > 0 && <span> ({fmtRolls(item.received_qty, itemLen)})</span>}
                       </span>
                       {itemRemaining > 0 && (

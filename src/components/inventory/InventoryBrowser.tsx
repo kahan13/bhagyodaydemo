@@ -256,7 +256,7 @@ export default function InventoryBrowser({
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-56px)]">
+    <div className="flex flex-col h-[calc(100vh/var(--z,1)-56px)]">
       {/* toolbar */}
       <div className="px-4 lg:px-6 pt-4 pb-0 border-b border-line bg-surface">
         <div className="flex flex-wrap items-center gap-1.5 mb-3">
