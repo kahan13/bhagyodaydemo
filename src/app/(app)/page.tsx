@@ -58,21 +58,45 @@ async function Stats() {
   );
 }
 
+/* ── Lot wording helpers (timing belts only) ─────────────────────────────── */
+type LotEntry = { lot_no?: string; status: string; qty: number };
+const LOT_NAME: Record<string, string> = { FULL_SLEEVE: 'Full Sleeve', CUT_PCS: 'Cut Pcs' };
+
+/** "30 Cut Pcs + 50 Full Sleeve" — grouped by classification. */
+function lotSplit(entries: LotEntry[]): string {
+  const by = new Map<string, number>();
+  for (const e of entries) by.set(e.status, (by.get(e.status) ?? 0) + Number(e.qty));
+  return [...by.entries()]
+    .sort((a, b) => (a[0] === 'CUT_PCS' ? -1 : 1) - (b[0] === 'CUT_PCS' ? -1 : 1))
+    .map(([st, q]) => `${q} ${LOT_NAME[st] ?? st}`).join(' + ');
+}
+/** "4 × 50 mm rolls" for an inward's new lots. */
+function rollsText(entries: LotEntry[]): string {
+  const by = new Map<number, number>();
+  for (const e of entries) by.set(Number(e.qty), (by.get(Number(e.qty)) ?? 0) + 1);
+  return [...by.entries()].map(([len, n]) => `${n} × ${len} mm roll${n === 1 ? '' : 's'}`).join(' + ');
+}
+const rollsOf = (mm: number, len: number) => {
+  const r = mm / len;
+  return `${Number.isInteger(r) ? r : Math.round(r * 100) / 100} roll${r === 1 ? '' : 's'}`;
+};
+
 /* ── Transactions pane ───────────────────────────────────────────────────── */
 type MovRow = {
   id: string; occurred_at: string; quantity: number; unit_code: string;
   exact_size: string; brand_name: string; invoice_no: string | null;
   product_type: string;
+  txn_type?: string; lot_breakdown?: LotEntry[] | null; lot_tracked?: boolean;
 };
 
 async function Transactions() {
   const db = await supabaseServer();
   const [inRes, outRes] = await Promise.all([
     db.from('v_movements')
-      .select('id,occurred_at,quantity,unit_code,exact_size,brand_name,invoice_no,product_type')
+      .select('id,occurred_at,quantity,unit_code,exact_size,brand_name,invoice_no,product_type,lot_breakdown,lot_tracked')
       .eq('txn_type', 'INWARD').order('occurred_at', { ascending: false }).limit(7),
     db.from('v_movements')
-      .select('id,occurred_at,quantity,unit_code,exact_size,brand_name,invoice_no,product_type')
+      .select('id,occurred_at,quantity,unit_code,exact_size,brand_name,invoice_no,product_type,lot_breakdown,lot_tracked')
       .eq('txn_type', 'OUTWARD').order('occurred_at', { ascending: false }).limit(7),
   ]);
 
@@ -103,8 +127,18 @@ async function Transactions() {
                 )}
               </span>
             </span>
-            <span className={`num text-[12px] font-semibold shrink-0 ${color}`}>
-              {sign}{fmtQty(Math.abs(m.quantity), m.unit_code)}
+            <span className="shrink-0 text-right">
+              {m.lot_tracked && m.lot_breakdown && m.lot_breakdown.length > 0 && (
+                <span className="block text-[11px] text-ink-2 num leading-tight">
+                  {sign === '+' ? rollsText(m.lot_breakdown) : lotSplit(m.lot_breakdown)}
+                </span>
+              )}
+              <span className={`num text-[12px] font-semibold ${color}`}>
+                {sign}{fmtQty(Math.abs(m.quantity), m.unit_code)}
+              </span>
+              {m.lot_tracked && m.lot_breakdown && m.lot_breakdown.length > 0 && (
+                <span className="text-[10px] text-ink-3"> total</span>
+              )}
             </span>
           </li>
         ))}
@@ -150,6 +184,7 @@ type POItem = {
   ordered_qty: number; received_qty: number; status: string;
   order_no: string; supplier_name: string | null; order_status: string; created_at: string;
   exact_size: string; brand_name: string; unit_code: string; product_type: string;
+  roll_len?: number;
 };
 
 async function OrdersPane() {
@@ -179,11 +214,11 @@ async function OrdersPane() {
       const skuIds = [...new Set(its.map((i) => i.sku_id))];
       const { data: skuRows } = await svc
         .from('v_sku_status')
-        .select('id,exact_size,brand_name,unit_code,product_type')
+        .select('id,exact_size,brand_name,unit_code,product_type,roll_length_mm')
         .in('id', skuIds);
 
-      const skuMap: Record<string, { exact_size: string; brand_name: string; unit_code: string; product_type: string }> = {};
-      for (const s of (skuRows ?? []) as { id: string; exact_size: string; brand_name: string; unit_code: string; product_type: string }[]) {
+      const skuMap: Record<string, { exact_size: string; brand_name: string; unit_code: string; product_type: string; roll_length_mm: number | null }> = {};
+      for (const s of (skuRows ?? []) as { id: string; exact_size: string; brand_name: string; unit_code: string; product_type: string; roll_length_mm: number | null }[]) {
         skuMap[s.id] = s;
       }
 
@@ -200,6 +235,7 @@ async function OrdersPane() {
         brand_name:    skuMap[i.sku_id]?.brand_name        ?? '—',
         unit_code:     skuMap[i.sku_id]?.unit_code         ?? '',
         product_type:  skuMap[i.sku_id]?.product_type      ?? '',
+        roll_len:      skuMap[i.sku_id]?.product_type === 'TIMING_BELT' ? Number(skuMap[i.sku_id]?.roll_length_mm ?? 0) : 0,
       }));
     }
   }
@@ -247,13 +283,21 @@ async function OrdersPane() {
                 </div>
               </div>
               <div className="text-right shrink-0">
-                <div className="text-[12px] font-semibold num">
+                {i.roll_len ? (
+                  <div className="text-[12px] font-semibold num">
+                    {Number(i.received_qty) / i.roll_len}
+                    <span className="text-ink-3 font-normal">/{Number(i.ordered_qty) / i.roll_len} rolls</span>
+                  </div>
+                ) : null}
+                <div className={i.roll_len ? 'text-[10px] text-ink-3 num' : 'text-[12px] font-semibold num'}>
                   {i.received_qty}
                   <span className="text-ink-3 font-normal">/{i.ordered_qty}</span>
                   <span className="text-[10px] text-ink-3 ml-0.5">{i.unit_code}</span>
                 </div>
                 {remaining > 0 ? (
-                  <div className="text-[10px] text-warn num">{remaining} left</div>
+                  <div className="text-[10px] text-warn num">
+                    {i.roll_len ? `${rollsOf(remaining, i.roll_len)} (${remaining} ${i.unit_code}) left` : `${remaining} left`}
+                  </div>
                 ) : (
                   <div className="text-[10px] text-ok flex items-center justify-end gap-0.5">
                     <Check size={10} /> done
@@ -338,6 +382,21 @@ async function ProductionOrdersPane() {
     items: o.production_order_items ?? [],
   })) as ProdOrderRow[];
 
+  // Lots planned on each item (timing belts) -> "20 Cut Pcs + 50 Full Sleeve"
+  const itemIds = orders.flatMap((o) => o.items.map((i) => i.id));
+  const splitByItem: Record<string, string> = {};
+  if (itemIds.length > 0) {
+    const { data: allocs } = await db
+      .from('lot_allocations')
+      .select('item_id,allocated_qty,lot_status')
+      .in('item_id', itemIds);
+    const grouped: Record<string, LotEntry[]> = {};
+    for (const a of (allocs ?? []) as { item_id: string; allocated_qty: number; lot_status: string | null }[]) {
+      (grouped[a.item_id] ??= []).push({ status: a.lot_status ?? 'FULL_SLEEVE', qty: Number(a.allocated_qty) });
+    }
+    for (const [k, v] of Object.entries(grouped)) splitByItem[k] = lotSplit(v);
+  }
+
   // Count summary
   const created    = orders.filter((o) => o.status === 'CREATED').length;
   const sent       = orders.filter((o) => o.status === 'SENT').length;
@@ -404,8 +463,8 @@ async function ProductionOrdersPane() {
 
                   {/* Items summary */}
                   {o.items.length > 0 && (
-                    <p className="text-[11px] text-ink-3 mt-0.5 truncate">
-                      {o.items.map((i) => `${i.display_name} ×${i.quantity} ${i.unit_code}`).join(' · ')}
+                    <p className="text-[11px] text-ink-3 mt-0.5">
+                      {o.items.map((i) => `${i.display_name} ×${i.quantity} ${i.unit_code}${splitByItem[i.id] ? ` (${splitByItem[i.id]})` : ''}`).join(' · ')}
                     </p>
                   )}
 
