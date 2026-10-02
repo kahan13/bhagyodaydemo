@@ -4,7 +4,7 @@ import { useState, useTransition, useEffect, useRef } from 'react';
 import {
   Plus, Send, CheckCircle, Clock, Loader, Pencil, X,
   Search, Trash2, AlertTriangle, AlertCircle, Ban,
-  ArrowDownCircle, CheckSquare,
+  ArrowDownCircle, CheckSquare, ChevronDown, ChevronRight, Trash,
 } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import type {
@@ -19,7 +19,7 @@ import type {
   DeliveryMode,
 } from '@/lib/types';
 import LotAllocationPicker, { type LotAllocation } from './LotAllocationPicker';
-import type { LotGroup } from '@/lib/types';
+import type { LotGroup, PendingAdjustment } from '@/lib/types';
 import { groupText, groupLabel } from '@/components/inventory/LotBreakdown';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -130,7 +130,7 @@ function fetchSkus(): Promise<SkuWithAtp[]> {
       .from('v_sku_atp')
       .select('sku_id,current_stock,physical_prod_stock,reserved_qty,atp_stock'),
     supabaseBrowser()
-      .from('v_sku_lot_groups')
+      .from('v_sku_lot_groups_free')
       .select('sku_id,status,piece_qty,pieces,total_qty'),
   ]).then(([skuRes, atpRes, grpRes]) => {
     const groups: Record<string, LotGroup[]> = {};
@@ -225,6 +225,7 @@ function SkuCombobox({
   const [skus, setSkus] = useState<SkuWithAtp[]>(_skuCache ?? []);
   const [loadingSkus, setLoadingSkus] = useState(!_skuCache);
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<'CUT_PCS' | 'FULL_SLEEVE' | 'ALL'>('CUT_PCS');
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -257,11 +258,18 @@ function SkuCombobox({
 
   // One option per classification: a timing belt with 4×50 Full Sleeve and 1×50 Cut Pcs
   // appears as two separate, tagged entries. Other SKUs stay a single entry.
-  const options: { sku: SkuWithAtp; group: LotGroup | null }[] = filtered.flatMap((sku): { sku: SkuWithAtp; group: LotGroup | null }[] =>
+  const allOptions: { sku: SkuWithAtp; group: LotGroup | null }[] = filtered.flatMap((sku): { sku: SkuWithAtp; group: LotGroup | null }[] =>
     sku.lot_groups && sku.lot_groups.length > 0
       ? sku.lot_groups.map((g) => ({ sku, group: g }))
       : [{ sku, group: null }],
   );
+  // Tabs only apply to lot-tracked entries; V-belts / conveyor / no-lot SKUs always show.
+  const cutCount = allOptions.filter((o) => o.group?.status === 'CUT_PCS').length;
+  const fullCount = allOptions.filter((o) => o.group?.status === 'FULL_SLEEVE').length;
+  const options = allOptions
+    .filter((o) => !o.group || tab === 'ALL' || o.group.status === tab)
+    // Cut pieces always first
+    .sort((a, b) => (a.group?.status === 'CUT_PCS' ? 0 : 1) - (b.group?.status === 'CUT_PCS' ? 0 : 1));
 
   function selectOption(sku: SkuWithAtp, group: LotGroup | null) {
     onChange({
@@ -297,11 +305,29 @@ function SkuCombobox({
         )}
       </div>
 
-      {open && options.length > 0 && (
+      {open && (allOptions.length > 0) && (
         <div
           ref={dropdownRef}
-          className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg max-h-56 overflow-y-auto"
+          className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg max-h-72 overflow-y-auto"
         >
+          <div className="sticky top-0 z-10 flex gap-1 bg-surface border-b border-line px-2 py-1.5">
+            {([['CUT_PCS', `Cut Pcs (${cutCount})`], ['FULL_SLEEVE', `Full Sleeve (${fullCount})`], ['ALL', 'Show all']] as const).map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setTab(k)}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+                  tab === k ? 'bg-brand text-white border-brand' : 'bg-surface border-line text-ink-2 hover:border-brand'
+                }`}
+              >{label}</button>
+            ))}
+          </div>
+          {options.length === 0 && (
+            <p className="px-3 py-4 text-center text-[12px] text-ink-3">
+              Nothing in this tab — try {tab === 'CUT_PCS' ? 'Full Sleeve' : 'Show all'}.
+            </p>
+          )}
           {options.map(({ sku, group }) => {
             const avail = group ? group.total_qty : sku.atp_stock;
             const atpColour =
@@ -340,7 +366,7 @@ function SkuCombobox({
         </div>
       )}
 
-      {open && !loadingSkus && filtered.length === 0 && value.query.length > 0 && (
+      {open && !loadingSkus && allOptions.length === 0 && value.query.length > 0 && (
         <div
           ref={dropdownRef}
           className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg px-3 py-4 text-center text-[12px] text-ink-3"
@@ -449,116 +475,216 @@ function RecordOutwardModal({
   );
 }
 
-// ─── Mismatch Pane ────────────────────────────────────────────────────────────
+// ─── Collapsible pane ─────────────────────────────────────────────────────────
+
+function Pane({
+  title, subtitle, count, tone = 'neutral', open, onToggle, children,
+}: {
+  title: string;
+  subtitle?: string;
+  count?: number;
+  tone?: 'neutral' | 'warn';
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className={`rounded-xl border bg-surface overflow-hidden ${tone === 'warn' && (count ?? 0) > 0 ? 'border-warn/60' : 'border-line'}`}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-subtle transition-colors"
+        aria-expanded={open}
+      >
+        {open ? <ChevronDown size={15} className="text-ink-3" /> : <ChevronRight size={15} className="text-ink-3" />}
+        <span className="text-[14px] font-semibold">{title}</span>
+        {count != null && (
+          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+            tone === 'warn' && count > 0 ? 'bg-warn/20 text-warn' : 'bg-subtle text-ink-3 border border-line'
+          }`}>{count}</span>
+        )}
+        {subtitle && <span className="text-[12px] text-ink-3 truncate">{subtitle}</span>}
+      </button>
+      {open && <div className="border-t border-line">{children}</div>}
+    </section>
+  );
+}
+
+// ─── Mismatch Pane (content) ──────────────────────────────────────────────────
+// Two traced kinds of difference between book and physical stock:
+//   1. Pending outward  — production planned/consumed stock, outward not posted yet
+//   2. Book-only moves  — a waste or adjustment changed book stock; apply it to physical
 
 function MismatchPane({
-  mismatches,
-  onRecordOutward,
-  loadingMismatches,
+  mismatches, pending, onRecordOutward, onResolve, resolvingId, loadingMismatches,
 }: {
   mismatches: SkuMismatch[];
+  pending: PendingAdjustment[];
   onRecordOutward: (item: MismatchOrderItem) => void;
+  onResolve: (p: PendingAdjustment) => void;
+  resolvingId: string | null;
   loadingMismatches: boolean;
 }) {
   if (loadingMismatches) {
     return (
-      <div className="rounded-xl border border-warn/40 bg-warn/5 p-4 flex items-center gap-2 text-[13px] text-ink-3">
+      <div className="p-4 flex items-center gap-2 text-[13px] text-ink-3">
         <Loader size={14} className="animate-spin" /> Checking stock status…
       </div>
     );
   }
-
-  if (mismatches.length === 0) return null;
+  if (mismatches.length === 0 && pending.length === 0) {
+    return <p className="p-4 text-[13px] text-ink-3">Book and physical stock agree — nothing to reconcile.</p>;
+  }
 
   return (
-    <div className="rounded-xl border border-warn/60 bg-warn/5 space-y-0 overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 bg-warn/10 border-b border-warn/30">
-        <AlertCircle size={16} className="text-warn shrink-0" />
-        <div>
-          <p className="text-[13px] font-semibold text-ink">
-            Stock Mismatch Detected — {mismatches.length} SKU{mismatches.length > 1 ? 's' : ''}
+    <div className="divide-y divide-line">
+      {pending.length > 0 && (
+        <div className="p-4 space-y-2">
+          <p className="text-[11px] text-ink-3 font-medium uppercase tracking-wide">
+            Stock movements not yet applied to production stock
           </p>
-          <p className="text-[11px] text-ink-3 mt-0.5">
-            Physical production stock is lower than book stock. Record an outward entry to reconcile.
-          </p>
+          {pending.map((p) => {
+            const unit = p.skus?.unit_code ?? '';
+            const removed = p.delta < 0;
+            return (
+              <div key={p.id} className="flex items-center justify-between gap-3 rounded-lg bg-surface border border-line px-3 py-2">
+                <div className="text-[12px] min-w-0">
+                  <span className="font-mono text-brand font-medium">{p.skus?.sku_code}</span>
+                  <span className="text-ink ml-1.5">{p.skus?.display_name}</span>
+                  <div className="text-[11px] text-ink-3 mt-0.5">
+                    <span className={`font-semibold ${removed ? 'text-danger' : 'text-ok'}`}>
+                      {removed ? '' : '+'}{p.delta} {unit}
+                    </span>
+                    {' · '}{p.source === 'WASTE' ? `Lot ${p.lot_no ?? ''} marked as waste` : 'Stock adjustment'}
+                    {p.reason && p.source !== 'WASTE' ? ` — ${p.reason}` : ''}
+                    {' · '}{p.created_by ?? 'system'} · {formatDateTime(p.created_at)}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-primary btn-sm shrink-0"
+                  disabled={resolvingId === p.id}
+                  onClick={() => onResolve(p)}
+                  title="Apply this change to production (physical) stock so both match"
+                >
+                  {resolvingId === p.id ? <Loader size={12} className="animate-spin" /> : <Trash size={12} />}
+                  {p.source === 'WASTE' ? 'Mark here as waste' : 'Apply to production'}
+                </button>
+              </div>
+            );
+          })}
         </div>
-      </div>
+      )}
 
-      {/* Per-SKU rows */}
-      <div className="divide-y divide-warn/20">
-        {mismatches.map((m) => (
-          <div key={m.sku_id} className="p-4 space-y-3">
-            {/* SKU header */}
-            <div className="flex items-start justify-between gap-3 flex-wrap">
+      {mismatches.length > 0 && (
+        <div className="divide-y divide-warn/20">
+          <p className="px-4 pt-4 text-[11px] text-ink-3 font-medium uppercase tracking-wide">
+            Pending outward
+          </p>
+          {mismatches.map((m) => (
+            <div key={m.sku_id} className="p-4 space-y-3">
               <div>
                 <p className="text-[13px] font-semibold">
-                  <span className="font-mono text-brand">{m.sku_code}</span>
-                  {' – '}{m.display_name}
+                  <span className="font-mono text-brand">{m.sku_code}</span>{' – '}{m.display_name}
                 </p>
-                <div className="flex items-center gap-3 mt-1 text-[12px]">
+                <div className="flex items-center gap-3 mt-1 text-[12px] flex-wrap">
                   <span className="text-ink-3">
-                    Book stock: <span className="font-medium text-ink">{m.current_stock} {m.unit_code}</span>
+                    Book: <span className="font-medium text-ink">{m.current_stock} {m.unit_code}</span>
                   </span>
                   <span className="text-ink-3">
                     Physical: <span className="font-medium text-danger">{m.physical_prod_stock} {m.unit_code}</span>
                   </span>
                   <span className="rounded-full bg-warn/20 text-warn px-2 py-0.5 font-semibold">
-                    −{m.stock_gap} {m.unit_code} unposted
+                    {m.stock_gap > 0 ? `−${m.stock_gap} ${m.unit_code} outward not posted` : `+${-m.stock_gap} ${m.unit_code} physical above book`}
                   </span>
                 </div>
               </div>
-            </div>
 
-            {/* Underlying production order items */}
-            {m.open_order_items.length > 0 && (
-              <div className="space-y-1.5">
-                <p className="text-[11px] text-ink-3 font-medium uppercase tracking-wide">
-                  Open production orders consuming this stock:
-                </p>
-                {m.open_order_items.map((oi) => (
-                  <div
-                    key={oi.poi_id}
-                    className="flex items-center justify-between gap-3 rounded-lg bg-surface border border-line px-3 py-2"
-                  >
-                    <div className="text-[12px] min-w-0">
-                      <span className="font-mono text-brand font-medium">{oi.order_no}</span>
-                      {oi.customer_name && (
-                        <span className="text-ink-3 ml-1.5">· {oi.customer_name}</span>
-                      )}
-                      <span className="text-ink ml-2 font-medium">
-                        {oi.quantity} {oi.unit_code}
-                      </span>
-                      <span className={`ml-2 text-[11px] px-1.5 py-0.5 rounded-full ${
-                        oi.order_status === 'IN_PROGRESS' ? 'bg-ok/10 text-ok' :
-                        oi.order_status === 'SENT' ? 'bg-brand/10 text-brand' :
-                        'bg-warn/10 text-warn'
-                      }`}>
-                        {STATUS_LABEL[oi.order_status]}
-                      </span>
+              {m.open_order_items.length > 0 && m.stock_gap > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] text-ink-3 font-medium uppercase tracking-wide">
+                    Open production orders consuming this stock:
+                  </p>
+                  {m.open_order_items.map((oi) => (
+                    <div key={oi.poi_id} className="flex items-center justify-between gap-3 rounded-lg bg-surface border border-line px-3 py-2">
+                      <div className="text-[12px] min-w-0">
+                        <span className="font-mono text-brand font-medium">{oi.order_no}</span>
+                        {oi.customer_name && <span className="text-ink-3 ml-1.5">· {oi.customer_name}</span>}
+                        <span className="text-ink ml-2 font-medium">{oi.quantity} {oi.unit_code}</span>
+                        <span className={`ml-2 text-[11px] px-1.5 py-0.5 rounded-full ${
+                          oi.order_status === 'IN_PROGRESS' ? 'bg-ok/10 text-ok' :
+                          oi.order_status === 'SENT' ? 'bg-brand/10 text-brand' :
+                          'bg-warn/10 text-warn'
+                        }`}>{STATUS_LABEL[oi.order_status]}</span>
+                      </div>
+                      <button
+                        className="btn btn-primary btn-sm shrink-0"
+                        onClick={() => onRecordOutward(oi)}
+                        title="Record OUTWARD inventory entry for this production order item"
+                      >
+                        <ArrowDownCircle size={12} /> Record Outward
+                      </button>
                     </div>
-                    <button
-                      className="btn btn-primary btn-sm shrink-0"
-                      onClick={() => onRecordOutward(oi)}
-                      title="Record OUTWARD inventory entry for this production order item"
-                    >
-                      <ArrowDownCircle size={12} />
-                      Record Outward
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
 
-            {m.open_order_items.length === 0 && (
-              <p className="text-[12px] text-ink-3 italic">
-                No open order items found — the mismatch may be from a deleted order.
-                Record a manual OUTWARD from the Inventory page to reconcile.
-              </p>
-            )}
+              {(m.open_order_items.length === 0 || m.stock_gap < 0) && (
+                <p className="text-[12px] text-ink-3 italic">
+                  No movement or open order explains this difference. Check the Movements pane for the
+                  SKU, or record a manual entry from the Inventory page.
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Movements pane (content) ─────────────────────────────────────────────────
+
+interface MovementRow {
+  id: string;
+  txn_no: string;
+  txn_type: string;
+  txn_mode: string;
+  quantity: number;
+  unit_code: string;
+  occurred_at: string;
+  user_name: string;
+  notes: string | null;
+  skus: { sku_code: string; display_name: string } | null;
+}
+
+function MovementsPane({ rows, loading, pendingMovementIds }: { rows: MovementRow[]; loading: boolean; pendingMovementIds: Set<string> }) {
+  if (loading) return <div className="p-4 flex items-center gap-2 text-[13px] text-ink-3"><Loader size={14} className="animate-spin" /> Loading…</div>;
+  if (rows.length === 0) return <p className="p-4 text-[13px] text-ink-3">No stock movements yet.</p>;
+  return (
+    <div className="divide-y divide-line max-h-96 overflow-y-auto">
+      {rows.map((m) => {
+        const isAdj = m.txn_type === 'ADJUSTMENT';
+        const tag = isAdj ? (m.notes?.includes(' wasted:') ? 'Waste' : 'Adjustment') : m.txn_type === 'INWARD' ? 'Inward' : 'Outward';
+        const sync = m.txn_type === 'INWARD'
+          ? 'Book + physical'
+          : m.txn_type === 'OUTWARD' ? 'Physical already planned'
+          : pendingMovementIds.has(m.id) ? 'Awaiting production' : 'Reconciled';
+        return (
+          <div key={m.id} className="px-4 py-2 flex items-center justify-between gap-3 text-[12px]">
+            <div className="min-w-0">
+              <span className="font-mono text-brand">{m.skus?.sku_code}</span>
+              <span className="text-ink ml-1.5">{m.skus?.display_name}</span>
+              <div className="text-[11px] text-ink-3 truncate">
+                {m.txn_no} · {m.user_name} · {formatDateTime(m.occurred_at)}{m.notes ? ` · ${m.notes}` : ''}
+              </div>
+            </div>
+            <div className="text-right shrink-0">
+              <div className="font-medium">{tag} {m.quantity} {m.unit_code}</div>
+              <div className={`text-[11px] ${sync === 'Awaiting production' ? 'text-warn font-semibold' : 'text-ink-3'}`}>{sync}</div>
+            </div>
           </div>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
 }
@@ -615,7 +741,14 @@ export default function ProductionOrdersView({
   defaultWhatsapp: string;
 }) {
   const [orders, setOrders] = useState<ProductionOrder[]>(initialOrders);
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(true);
+  const [ordersOpen, setOrdersOpen] = useState(false);
+  const [movementsOpen, setMovementsOpen] = useState(false);
+  const [mismatchOpen, setMismatchOpen] = useState(false);
+  const [pending, setPending] = useState<PendingAdjustment[]>([]);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [movements, setMovements] = useState<MovementRow[]>([]);
+  const [loadingMovements, setLoadingMovements] = useState(false);
   const [form, setForm] = useState(makeEmptyForm);
   const [whatsapp, setWhatsapp] = useState(defaultWhatsapp);
   const [editingWhatsapp, setEditingWhatsapp] = useState(false);
@@ -649,17 +782,46 @@ export default function ProductionOrdersView({
     if (!err && data) {
       setMismatches(data as unknown as SkuMismatch[]);
     }
+
+    const pend = await db
+      .from('prod_pending_adjustments')
+      .select('*, skus(sku_code,display_name,unit_code)')
+      .is('resolved_at', null)
+      .order('created_at', { ascending: false });
+    if (!pend.error && pend.data) setPending(pend.data as unknown as PendingAdjustment[]);
     setLoadingMismatches(false);
+  }
+
+  async function fetchMovements() {
+    setLoadingMovements(true);
+    const { data } = await db
+      .from('inventory_movements')
+      .select('id,txn_no,txn_type,txn_mode,quantity,unit_code,occurred_at,user_name,notes,skus(sku_code,display_name)')
+      .order('occurred_at', { ascending: false })
+      .limit(40);
+    setMovements((data ?? []) as unknown as MovementRow[]);
+    setLoadingMovements(false);
+  }
+
+  async function handleResolve(p: PendingAdjustment) {
+    setResolvingId(p.id);
+    const { error: rerr } = await db.rpc('resolve_prod_adjustment', { p_id: p.id });
+    setResolvingId(null);
+    if (rerr) { window.alert(rerr.message); return; }
+    refreshAll();
   }
 
   // Fetch mismatches on mount and after any action
   useEffect(() => { fetchMismatches(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function refreshAll() {
+    if (movementsOpen) fetchMovements();
     invalidateSkuCache();
     setSkuVersion(getSkuVersion());
     fetchMismatches();
   }
+
+  useEffect(() => { if (movementsOpen) fetchMovements(); }, [movementsOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const needsDeliveryNote = form.delivery_mode === 'Courier' || form.delivery_mode === 'Transportation';
 
@@ -822,7 +984,6 @@ export default function ProductionOrdersView({
 
     setOrders((prev) => [newOrder, ...prev]);
     setForm(makeEmptyForm());
-    setShowForm(false);
     refreshAll();
   }
 
@@ -1011,20 +1172,9 @@ export default function ProductionOrdersView({
         </div>
       </div>
 
-      {/* ── Mismatch Pane ── */}
-      <MismatchPane
-        mismatches={mismatches}
-        onRecordOutward={setOutwardTarget}
-        loadingMismatches={loadingMismatches}
-      />
-
-      {/* Create form */}
-      {showForm && (
-        <div className="card p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[15px] font-semibold">New Production Order</h2>
-            <button className="btn btn-ghost h-7 w-7 p-0" onClick={() => setShowForm(false)}><X size={15} /></button>
-          </div>
+      {/* ── 1. New order window (top) ── */}
+      <Pane title="New Production Order" open={showForm} onToggle={() => setShowForm((v) => !v)}>
+        <div className="p-5 space-y-4">
 
           {error && <p className="text-[13px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>}
 
@@ -1073,8 +1223,12 @@ export default function ProductionOrdersView({
                         o.skuSearch.group?.status === grp.status && o.skuSearch.group?.piece_qty === grp.piece_qty)
                       .reduce((sum, o) => sum + (parseFloat(o.quantity) || 0), 0)
                   : otherQty;
+                // A Cut Pcs pick may be topped up from new sleeves, so its limit includes free Full Sleeve stock.
+                const freshExtra = grp?.status === 'CUT_PCS'
+                  ? (li.skuSearch.sku?.lot_groups ?? []).filter((g) => g.status === 'FULL_SLEEVE').reduce((a, g) => a + g.total_qty, 0)
+                  : 0;
                 const effectiveAtp = li.skuSearch.sku
-                  ? (grp ? grp.total_qty - otherGroupQty : li.skuSearch.sku.atp_stock - otherQty)
+                  ? (grp ? grp.total_qty + freshExtra - otherGroupQty : li.skuSearch.sku.atp_stock - otherQty)
                   : Infinity;
 
                 // Lot tracking only applies once the SKU has a roll length defined
@@ -1125,7 +1279,7 @@ export default function ProductionOrdersView({
                         />
                         {li.skuSearch.sku && (
                           <AtpBadge
-                            sku={grp ? { ...li.skuSearch.sku, atp_stock: grp.total_qty } : li.skuSearch.sku}
+                            sku={grp ? { ...li.skuSearch.sku, atp_stock: grp.total_qty + freshExtra } : li.skuSearch.sku}
                             qty={li.quantity}
                             otherQty={grp ? otherGroupQty : otherQty}
                           />
@@ -1236,10 +1390,19 @@ export default function ProductionOrdersView({
             </button>
           </div>
         </div>
-      )}
+      </Pane>
 
+      {/* ── 2. Orders ── */}
+      <Pane
+        title="Orders"
+        subtitle={`${activeOrders.length} active · ${closedOrders.length} closed`}
+        count={activeOrders.length}
+        open={ordersOpen}
+        onToggle={() => setOrdersOpen((v) => !v)}
+      >
+      <div className="p-4 space-y-3">
       {/* Empty state */}
-      {orders.length === 0 && !showForm && (
+      {orders.length === 0 && (
         <div className="card p-10 text-center">
           <p className="text-[13px] text-ink-3">No production orders yet. Create one to get started.</p>
         </div>
@@ -1394,6 +1557,37 @@ export default function ProductionOrdersView({
           </div>
         </details>
       )}
+      </div>
+      </Pane>
+
+      {/* ── 3. Movements ── */}
+      <Pane
+        title="Movements"
+        subtitle="latest stock movements and whether production stock has caught up"
+        open={movementsOpen}
+        onToggle={() => setMovementsOpen((v) => !v)}
+      >
+        <MovementsPane rows={movements} loading={loadingMovements} pendingMovementIds={new Set(pending.map((p) => p.movement_id))} />
+      </Pane>
+
+      {/* ── 4. Mismatch ── */}
+      <Pane
+        title="Mismatch"
+        subtitle="book vs physical production stock, traced to its cause"
+        count={mismatches.length + pending.length}
+        tone="warn"
+        open={mismatchOpen}
+        onToggle={() => setMismatchOpen((v) => !v)}
+      >
+        <MismatchPane
+          mismatches={mismatches}
+          pending={pending}
+          onRecordOutward={setOutwardTarget}
+          onResolve={handleResolve}
+          resolvingId={resolvingId}
+          loadingMismatches={loadingMismatches}
+        />
+      </Pane>
 
     </div>
   );

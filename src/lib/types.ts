@@ -211,6 +211,21 @@ export interface SkuMismatch {
   stock_gap: number;          // current_stock - physical_prod_stock (always > 0 for mismatch)
   is_mismatched: boolean;
   open_order_items: MismatchOrderItem[];
+  pending_net?: number;
+}
+
+/** Book-only movement (waste / adjustment) awaiting reconciliation with physical stock */
+export interface PendingAdjustment {
+  id: string;
+  movement_id: string;
+  sku_id: string;
+  delta: number;
+  source: 'WASTE' | 'ADJUSTMENT';
+  lot_no: string | null;
+  reason: string | null;
+  created_by: string | null;
+  created_at: string;
+  skus?: { sku_code: string; display_name: string; unit_code: string } | null;
 }
 
 export interface ProductionOrder {
