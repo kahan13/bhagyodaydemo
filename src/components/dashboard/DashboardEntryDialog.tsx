@@ -128,7 +128,7 @@ export default function DashboardEntryDialog({
         <div className="p-5 space-y-4">
           {/* Product type */}
           <div className="flex gap-1 p-1 bg-subtle rounded-lg">
-            {(['TIMING_BELT', 'V_BELT'] as ProductType[]).map((t) => (
+            {(['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT'] as ProductType[]).map((t) => (
               <button
                 key={t} type="button"
                 onClick={() => { setProductType(t); clearSku(); }}
@@ -136,7 +136,7 @@ export default function DashboardEntryDialog({
                   productType === t ? 'bg-surface shadow-sm text-ink' : 'text-ink-3 hover:text-ink'
                 }`}
               >
-                {t === 'TIMING_BELT' ? 'Timing Belt' : 'V-Belt'}
+                {({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor' } as Record<string, string>)[t]}
               </button>
             ))}
           </div>

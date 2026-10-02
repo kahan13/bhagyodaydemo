@@ -1,4 +1,4 @@
-export type ProductType = 'TIMING_BELT' | 'V_BELT';
+export type ProductType = 'TIMING_BELT' | 'V_BELT' | 'CONVEYOR_BELT';
 export type TxnType = 'INWARD' | 'OUTWARD' | 'ADJUSTMENT';
 export type TxnMode = 'NORMAL' | 'REVERSAL';
 export type Channel = 'WEB' | 'MOBILE_PWA' | 'MOBILE_VOICE' | 'IMPORT' | 'SYSTEM';
@@ -47,6 +47,11 @@ export interface Sku {
   hier_l2: string;
   hier_l3: string;
   search_text: string;
+  section?: string | null;
+  colour?: string | null;
+  length_mm?: number | null;
+  thickness_mm?: number | null;
+  remarks?: string | null;
   brand_code: string;
   brand_name: string;
   family_code: string;
@@ -226,11 +231,19 @@ export interface ProductionOrder {
 }
 
 /**
- * Both product types now follow the same three-level drill pattern:
- *   Category/Profile  →  Size  →  Brand
- * hier_l1/l2/l3 are resolved at import time per this mapping.
+ * Inventory drill-down — three panes, matching the real sheets:
+ *   Product Family  →  Section (Colour for conveyor)  →  Size · Brand
+ * hier_l1/l2/l3 are filled at import time from the sheet (see sheet-config.ts).
  */
 export const HIERARCHY: Record<ProductType, { label: string; short: string; levels: [string, string, string] }> = {
-  TIMING_BELT: { label: 'Timing Belts', short: 'Timing', levels: ['Family',  'Size', 'Brand'] },
-  V_BELT:      { label: 'V-Belts',      short: 'V-Belt', levels: ['Profile', 'Size', 'Brand'] },
+  TIMING_BELT:   { label: 'Timing Belts',   short: 'Timing',   levels: ['Product Family', 'Section', 'Size · Brand'] },
+  V_BELT:        { label: 'V-Belts',        short: 'V-Belt',   levels: ['Product Family', 'Section', 'Size · Brand'] },
+  CONVEYOR_BELT: { label: 'Conveyor Belts', short: 'Conveyor', levels: ['Product Family', 'Colour',  'Size · Brand'] },
+};
+
+/** Display names for a product type, used by filters, badges and reports. */
+export const PRODUCT_TYPE_LABEL: Record<ProductType, string> = {
+  TIMING_BELT: 'Timing Belt',
+  V_BELT: 'V-Belt',
+  CONVEYOR_BELT: 'Conveyor Belt',
 };

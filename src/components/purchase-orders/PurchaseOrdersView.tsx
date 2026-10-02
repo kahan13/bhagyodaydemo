@@ -37,7 +37,7 @@ interface Order {
   items: OrderItem[];
 }
 
-const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt' };
+const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt' };
 
 function StatusBadge({ status }: { status: OrderStatus | ItemStatus }) {
   const map: Record<string, string> = {
@@ -89,7 +89,7 @@ function SkuPicker({ onSelect, selected }: { onSelect: (s: Sku) => void; selecte
   return (
     <div className="space-y-2">
       <div className="flex gap-1 p-0.5 bg-subtle rounded-md">
-        {(['TIMING_BELT', 'V_BELT'] as ProductType[]).map((t) => (
+        {(['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT'] as ProductType[]).map((t) => (
           <button
             key={t} type="button"
             onClick={() => { setType(t); setSearch(''); }}
@@ -97,7 +97,7 @@ function SkuPicker({ onSelect, selected }: { onSelect: (s: Sku) => void; selecte
               type === t ? 'bg-surface shadow-sm text-ink' : 'text-ink-3 hover:text-ink'
             }`}
           >
-            {t === 'TIMING_BELT' ? 'Timing Belt' : 'V-Belt'}
+            {TYPE_LABEL[t]}
           </button>
         ))}
       </div>

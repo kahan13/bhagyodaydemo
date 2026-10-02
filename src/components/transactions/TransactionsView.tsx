@@ -89,7 +89,7 @@ export default function TransactionsView({
             <Select label="Entry" value={filters.mode} onChange={(v) => setParam({ mode: v })}
               options={[['NORMAL', 'Normal'], ['REVERSAL', 'Reversal']]} />
             <Select label="Product Type" value={filters.product} onChange={(v) => setParam({ product: v })}
-              options={[['TIMING_BELT', 'Timing Belt'], ['V_BELT', 'V-Belt']]} width="w-[132px]" />
+              options={[['TIMING_BELT', 'Timing Belt'], ['V_BELT', 'V-Belt'], ['CONVEYOR_BELT', 'Conveyor Belt']]} width="w-[140px]" />
             <Select label="Brand" value={filters.brand} onChange={(v) => setParam({ brand: v })}
               options={facets.brands.map((b) => [b, b])} width="w-[150px]" />
             <Select label="Family" value={filters.family} onChange={(v) => setParam({ family: v })}
@@ -160,7 +160,7 @@ export default function TransactionsView({
                     {m.is_reversed && <span className="badge badge-neutral ml-1">reversed</span>}
                   </td>
                   <td className="text-ink-2 text-[12px]">
-                    {m.product_type === 'TIMING_BELT' ? 'Timing Belt' : m.product_type === 'V_BELT' ? 'V-Belt' : '—'}
+                    {({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt' } as Record<string, string>)[m.product_type] ?? '—'}
                   </td>
                   <td className="font-medium max-w-[160px] truncate" title={m.sku_code}>{m.exact_size}</td>
                   <td className="text-ink-2">{m.brand_name}</td>

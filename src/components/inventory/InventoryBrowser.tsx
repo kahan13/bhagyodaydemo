@@ -12,7 +12,7 @@ import SkuLotsPanel from '@/components/inventory/SkuLotsPanel';
 const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
 
 export default function InventoryBrowser({
-  permissions, initialSku, initialAction, initialType, labelOverrides,
+  permissions, initialSku, initialAction, initialType,
 }: {
   permissions: Permission[];
   initialSku?: string;
@@ -40,7 +40,7 @@ export default function InventoryBrowser({
   const dragRef = useRef<{ divider: 0 | 1; startX: number; startWidths: [number, number, number] } | null>(null);
 
   const can = (p: Permission) => permissions.includes(p);
-  const levels: [string, string, string] = labelOverrides?.[type] ?? HIERARCHY[type].levels;
+  const levels: [string, string, string] = HIERARCHY[type].levels;
 
   useEffect(() => {
     if (!initialSku || !skus.length) return;
@@ -86,7 +86,9 @@ export default function InventoryBrowser({
   );
   const leaves = useMemo(() => {
     if (!l1 || !l2) return [];
-    return [...(tree.get(l1)?.get(l2) ?? [])].sort((a, b) => collator.compare(a.hier_l3, b.hier_l3));
+    return [...(tree.get(l1)?.get(l2) ?? [])].sort(
+      (a, b) => collator.compare(a.hier_l3, b.hier_l3) || collator.compare(a.brand_name, b.brand_name),
+    );
   }, [tree, l1, l2]);
 
   useEffect(() => {
@@ -337,7 +339,8 @@ export default function InventoryBrowser({
                       onClick={() => setSelected(s)}
                     >
                       <span className="truncate">
-                        {s.hier_l3}
+                        <span className="font-medium">{s.hier_l3}</span>
+                        <span className="ml-2 text-ink-2">{s.brand_name}</span>
                         {s.rack_location && <span className="ml-2 text-[11px] text-ink-3">{s.rack_location}</span>}
                       </span>
                       <span className="flex items-center gap-2 shrink-0">
@@ -357,8 +360,8 @@ export default function InventoryBrowser({
                       <div className="mx-1.5 mb-1 px-3 py-2 rounded-md bg-subtle border border-line text-[12px] space-y-1">
                         <p className="text-ink-3 font-mono">{s.sku_code}</p>
                         <p className="text-ink-3">Min: <span className="text-ink font-medium">{fmtQty(s.min_stock_level, s.unit_code)}</span></p>
-                        <p className="text-ink-3">Reorder: <span className="text-ink font-medium">{fmtQty(s.suggested_purchase_qty, s.unit_code)}</span></p>
-                        {s.rack_location && <p className="text-ink-3">Rack: <span className="text-ink font-medium">{s.rack_location}</span></p>}
+                        {s.rack_location && <p className="text-ink-3">Location: <span className="text-ink font-medium">{s.rack_location}</span></p>}
+                        {s.remarks && <p className="text-ink-3">Remark: <span className="text-ink">{s.remarks}</span></p>}
                       </div>
                     )}
                   </div>
@@ -481,21 +484,17 @@ function DetailPanel({
     );
   }
 
-  const specs: [string, string | null][] = sku.product_type === 'TIMING_BELT'
+  const specs: [string, string | null][] = sku.product_type === 'CONVEYOR_BELT'
     ? [
-        ['Family', sku.family_name],
-        ['Form', sku.belt_form === 'OPEN_ENDED' ? 'Open-ended roll' : 'Endless'],
-        ['Pitch', sku.pitch_mm ? `${sku.pitch_mm} mm` : null],
-        ['Pitch length', sku.pitch_length_mm ? `${sku.pitch_length_mm} mm` : null],
-        ['Width', sku.width_mm ? `${sku.width_mm} mm` : null],
-        ['Teeth', sku.teeth ? String(sku.teeth) : null],
-        ['Standard', sku.standard],
+        ['Product Family', sku.family_name],
+        ['Colour', sku.colour ?? null],
+        ['Length', sku.length_mm ? `${sku.length_mm}` : null],
+        ['Width', sku.width_mm ? `${sku.width_mm}` : null],
+        ['Thickness', sku.thickness_mm ? `${sku.thickness_mm}` : null],
       ]
     : [
-        ['Profile', sku.family_name],
-        ['Group', sku.profile_group],
-        ['Construction', sku.construction],
-        ['Length', sku.nominal_length ? `${sku.nominal_length} ${sku.length_designation ?? ''}` : null],
+        ['Product Family', sku.family_name],
+        ['Section', sku.section ?? null],
       ];
 
   return (
@@ -524,9 +523,7 @@ function DetailPanel({
 
           {sku.stock_status !== 'OK' && (
             <p className="text-[12px] text-warn mt-2.5 leading-relaxed">
-              Minimum is {fmtQty(sku.min_stock_level, sku.unit_code)} and supplier MOQ is{' '}
-              {fmtQty(sku.supplier_moq, sku.unit_code)} — order{' '}
-              <span className="font-semibold">{fmtQty(sku.suggested_purchase_qty, sku.unit_code)}</span>.
+              Minimum is {fmtQty(sku.min_stock_level, sku.unit_code)}.
             </p>
           )}
         </div>
@@ -543,13 +540,12 @@ function DetailPanel({
           </button>
         </div>
 
+        <RemarkEditor key={sku.id} sku={sku} canEdit={can('products.edit')} onSaved={() => onStockChange?.()} />
+
         <dl className="px-5 py-4 border-b border-line grid grid-cols-2 gap-y-3 gap-x-4">
           <Field label="Unit" value={sku.unit_code} />
           <Field label="Minimum" value={fmtQty(sku.min_stock_level, sku.unit_code)} />
-          <Field label="Supplier MOQ" value={fmtQty(sku.supplier_moq, sku.unit_code)} />
-          <Field label="Reorder qty" value={fmtQty(sku.reorder_quantity, sku.unit_code)} />
-          <Field label="Rack" value={sku.rack_location} />
-          <Field label="Supplier" value={sku.supplier_name} />
+          <Field label="Location" value={sku.rack_location} />
           <Field label="Opening stock" value={fmtQty(sku.opening_stock, sku.unit_code)} />
           {(sku as Sku & { roll_length_mm?: number }).roll_length_mm && (
             <Field label="Roll length" value={`${(sku as Sku & { roll_length_mm?: number }).roll_length_mm} mm / roll`} />
@@ -601,6 +597,45 @@ function DetailPanel({
           </ul>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Manual remark on a product — saved straight to the product master. */
+function RemarkEditor({ sku, canEdit, onSaved }: { sku: Sku; canEdit: boolean; onSaved: () => void }) {
+  const [text, setText] = useState(sku.remarks ?? '');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const dirty = text.trim() !== (sku.remarks ?? '');
+
+  const save = async () => {
+    setSaving(true); setMsg('');
+    const r = await fetch('/api/products', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: sku.id, remarks: text.trim() }),
+    });
+    setSaving(false);
+    if (!r.ok) { const j = await r.json().catch(() => ({})); setMsg(j.error ?? 'Could not save'); return; }
+    sku.remarks = text.trim() || null;
+    setMsg('Saved'); onSaved();
+  };
+
+  if (!canEdit && !sku.remarks) return null;
+  return (
+    <div className="px-5 py-4 border-b border-line">
+      <p className="eyebrow mb-2">Remark</p>
+      {canEdit ? (
+        <>
+          <textarea className="field w-full text-[12px] min-h-[56px]" value={text} placeholder="Add a manual remark…"
+            onChange={(e) => { setText(e.target.value); setMsg(''); }} />
+          <div className="flex items-center gap-2 mt-2">
+            <button className="btn btn-secondary btn-sm" disabled={!dirty || saving} onClick={save}>
+              {saving ? 'Saving…' : 'Save remark'}
+            </button>
+            {msg && <span className="text-[11px] text-ink-3">{msg}</span>}
+          </div>
+        </>
+      ) : <p className="text-[12px] text-ink-2">{sku.remarks}</p>}
     </div>
   );
 }

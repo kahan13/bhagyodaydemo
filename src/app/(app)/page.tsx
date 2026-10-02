@@ -10,7 +10,7 @@ import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
-const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing', V_BELT: 'V-Belt' };
+const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor' };
 
 const PO_STATUS_LABEL: Record<string, string> = {
   CREATED:     'Created',

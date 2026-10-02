@@ -177,7 +177,7 @@ export default function ReportsView({
     const value = row[key];
     if (value === null || value === undefined || value === '') return '—';
     if (key === 'occurred_at') return fmtDateTime(String(value));
-    if (key === 'product_type') return value === 'TIMING_BELT' ? 'Timing Belt' : value === 'V_BELT' ? 'V-Belt' : String(value ?? '—');
+    if (key === 'product_type') return ({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt' } as Record<string, string>)[String(value)] ?? String(value ?? '—');
     if (key === 'stock_status') return String(value).replace(/_/g, ' ').toLowerCase();
     if (typeof value === 'number') return fmtQty(value);
     return String(value);

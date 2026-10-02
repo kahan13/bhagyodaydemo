@@ -1,38 +1,48 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
-import { Search, Plus, Pencil, ToggleLeft, ToggleRight, X, Ruler } from 'lucide-react';
-import type { Permission, ProductType } from '@/lib/types';
+import { useEffect, useMemo, useState } from 'react';
+import { Search, Plus, Pencil, ToggleLeft, ToggleRight, X } from 'lucide-react';
+import { PRODUCT_TYPE_LABEL, type Permission, type ProductType } from '@/lib/types';
+import { PRODUCT_TYPES, TYPE_META, buildIdentity, isIdentityError } from '@/lib/sheet-config';
 
 interface Product {
   id: string; sku_code: string; product_type: ProductType;
   display_name: string; exact_size: string;
   hier_l1: string; hier_l2: string; hier_l3: string;
-  brand_code: string; brand_name: string;
-  family_code: string; family_name: string;
-  unit_code: string; opening_stock: number; current_stock: number;
-  min_stock_level: number; supplier_moq: number; reorder_quantity: number;
+  brand_name: string; family_name: string;
+  section?: string | null; colour?: string | null;
+  length_mm?: number | null; width_mm?: number | null; thickness_mm?: number | null;
+  remarks?: string | null; created_via?: string;
+  unit_code: string; current_stock: number; min_stock_level: number;
   rack_location: string | null; is_active: boolean; stock_status: string;
-  belt_form?: string; pitch_mm?: number; pitch_length_mm?: number;
-  width_mm?: number; teeth?: number; standard?: string;
-  construction?: string; nominal_length?: number; length_designation?: string;
-  // NEW: roll definition
   roll_length_mm?: number | null;
 }
 
-interface Brand { id: string; code: string; name: string; has_timing_belts: boolean; has_v_belts: boolean; }
+interface Brand { id: string; code: string; name: string; }
 interface Family { id: string; code: string; name: string; product_type: string; }
-interface Unit { code: string; name: string; }
 
-const EMPTY: Partial<Product> = { product_type: 'TIMING_BELT', is_active: true, unit_code: 'PCS' };
+interface Form {
+  product_type: ProductType;
+  family: string; section: string; size: string; colour: string; brand: string;
+  length: string; width: string; thickness: string;
+  display_name: string; min_stock_level: string; roll_length_mm: string;
+  rack_location: string; remarks: string;
+}
+
+const EMPTY: Form = {
+  product_type: 'TIMING_BELT', family: '', section: '', size: '', colour: '', brand: '',
+  length: '', width: '', thickness: '', display_name: '', min_stock_level: '0',
+  roll_length_mm: '', rack_location: '', remarks: '',
+};
+
+const numStr = (n: number | null | undefined) => (n === null || n === undefined ? '' : String(n));
 
 export default function ProductMasterView({
-  permissions, brands, families, units,
+  permissions, brands, families,
 }: {
   permissions: Permission[];
   brands: Brand[];
   families: Family[];
-  units: Unit[];
 }) {
   const can = (p: Permission) => permissions.includes(p);
   const [products, setProducts] = useState<Product[]>([]);
@@ -41,7 +51,8 @@ export default function ProductMasterView({
   const [typeFilter, setTypeFilter] = useState<ProductType | 'ALL'>('ALL');
   const [showInactive, setShowInactive] = useState(false);
   const [dialog, setDialog] = useState<'add' | 'edit' | null>(null);
-  const [form, setForm] = useState<Partial<Product>>(EMPTY);
+  const [editing, setEditing] = useState<Product | null>(null);
+  const [form, setForm] = useState<Form>(EMPTY);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
@@ -51,8 +62,7 @@ export default function ProductMasterView({
     if (r.ok) setProducts(await r.json());
     setLoading(false);
   };
-
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -60,88 +70,86 @@ export default function ProductMasterView({
       if (!showInactive && !p.is_active) return false;
       if (typeFilter !== 'ALL' && p.product_type !== typeFilter) return false;
       if (!q) return true;
-      return (
-        p.sku_code.toLowerCase().includes(q) ||
-        p.exact_size.toLowerCase().includes(q) ||
-        p.brand_name.toLowerCase().includes(q) ||
-        p.hier_l1.toLowerCase().includes(q)
-      );
+      return [p.sku_code, p.exact_size, p.brand_name, p.hier_l1, p.hier_l2, p.remarks ?? '']
+        .some((v) => v.toLowerCase().includes(q));
     });
   }, [products, query, typeFilter, showInactive]);
 
-  const timingFamilies = families.filter((f) => f.product_type === 'TIMING_BELT');
-  const vbeltFamilies = families.filter((f) => f.product_type === 'V_BELT');
-  const activeFamilies = form.product_type === 'TIMING_BELT' ? timingFamilies : vbeltFamilies;
-  const activeBrands = brands.filter((b) =>
-    form.product_type === 'TIMING_BELT' ? b.has_timing_belts : b.has_v_belts
-  );
+  const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
 
-  const set = (k: keyof Product, v: unknown) => setForm((f) => ({ ...f, [k]: v }));
+  const openAdd = () => { setForm({ ...EMPTY, product_type: typeFilter === 'ALL' ? 'TIMING_BELT' : typeFilter }); setEditing(null); setErr(''); setDialog('add'); };
+  const openEdit = (p: Product) => {
+    setEditing(p);
+    setForm({
+      product_type: p.product_type, family: p.family_name, section: p.section ?? '', size: p.hier_l3,
+      colour: p.colour ?? '', brand: p.brand_name,
+      length: numStr(p.length_mm), width: numStr(p.width_mm), thickness: numStr(p.thickness_mm),
+      display_name: p.display_name, min_stock_level: numStr(p.min_stock_level),
+      roll_length_mm: numStr(p.roll_length_mm), rack_location: p.rack_location ?? '', remarks: p.remarks ?? '',
+    });
+    setErr(''); setDialog('edit');
+  };
+  const close = () => { setDialog(null); setEditing(null); setErr(''); };
 
-  const openAdd = () => { setForm(EMPTY); setErr(''); setDialog('add'); };
-  const openEdit = (p: Product) => { setForm({ ...p }); setErr(''); setDialog('edit'); };
-  const close = () => { setDialog(null); setErr(''); };
+  const isConveyor = form.product_type === 'CONVEYOR_BELT';
+  const meta = TYPE_META[form.product_type];
+  const familyOptions = families.filter((f) => f.product_type === form.product_type);
+
+  // Live preview of the SKU code the server will generate (readable base only).
+  const idPreview = buildIdentity(form.product_type, {
+    family: form.family, section: form.section, size: form.size, colour: form.colour,
+    brand: form.brand, length: form.length, width: form.width, thickness: form.thickness,
+  });
+  const codePreview = isIdentityError(idPreview) ? '' : idPreview.codeBase;
 
   const save = async () => {
-    if (!form.sku_code?.trim()) { setErr('SKU code is required.'); return; }
-    if (!form.exact_size?.trim()) { setErr('Size is required.'); return; }
-    if (!form.brand_code?.trim()) { setErr('Brand is required.'); return; }
-    if (!form.family_code?.trim()) { setErr('Profile / Family is required.'); return; }
     setSaving(true); setErr('');
-    const method = dialog === 'add' ? 'POST' : 'PATCH';
-    const body = { ...form,
-      brand_name: brands.find((b) => b.code === form.brand_code)?.name ?? form.brand_code,
-      family_name: families.find((f) => f.code === form.family_code)?.name ?? form.family_code,
-    };
-    const r = await fetch('/api/products', { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const adding = dialog === 'add';
+    const payload = adding
+      ? { ...form }
+      : {
+        id: editing!.id, display_name: form.display_name, min_stock_level: form.min_stock_level,
+        roll_length_mm: form.roll_length_mm, rack_location: form.rack_location, remarks: form.remarks,
+      };
+    const r = await fetch('/api/products', {
+      method: adding ? 'POST' : 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
     const j = await r.json();
     setSaving(false);
     if (!r.ok) { setErr(j.error ?? 'Save failed'); return; }
-    close(); load();
+    close(); void load();
   };
 
   const toggleActive = async (p: Product) => {
-    const method = p.is_active ? 'DELETE' : 'PATCH';
     await fetch('/api/products', {
-      method, headers: { 'Content-Type': 'application/json' },
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: p.id, is_active: !p.is_active }),
     });
-    load();
+    void load();
   };
 
-  const counts = {
-    ALL: products.filter((p) => showInactive || p.is_active).length,
-    TIMING_BELT: products.filter((p) => (showInactive || p.is_active) && p.product_type === 'TIMING_BELT').length,
-    V_BELT: products.filter((p) => (showInactive || p.is_active) && p.product_type === 'V_BELT').length,
-  };
+  const active = (p: Product) => showInactive || p.is_active;
+  const counts: Record<string, number> = { ALL: products.filter(active).length };
+  for (const t of PRODUCT_TYPES) counts[t] = products.filter((p) => active(p) && p.product_type === t).length;
 
-  // Products missing roll_length_mm (show warning count in header)
-  const missingRoll = products.filter((p) => p.is_active && !p.roll_length_mm).length;
+  const unitLabel = (p: Product) => (p.unit_code === 'MM' ? 'mm' : p.unit_code);
+  const lockId = dialog === 'edit';
 
   return (
     <div className="flex flex-col h-[calc(100vh-56px)]">
-      {/* Header */}
       <div className="px-4 lg:px-6 py-3.5 border-b border-line bg-surface flex flex-wrap items-center gap-3">
         <h1 className="text-[17px] font-semibold">Product Master</h1>
         <div className="relative ml-2">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-3" />
           <input value={query} onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search size, brand or SKU…"
-            className="input pl-8 w-56 text-[13px]" />
+            placeholder="Search family, section, size, make or SKU…"
+            className="field pl-8 w-72 text-[13px]" />
         </div>
         <label className="flex items-center gap-1.5 text-[12px] text-ink-2 cursor-pointer ml-1">
           <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} className="rounded" />
           Show inactive
         </label>
-
-        {/* Warning: SKUs missing roll length */}
-        {missingRoll > 0 && (
-          <span className="flex items-center gap-1 text-[12px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-            <Ruler size={12} />
-            {missingRoll} SKU{missingRoll > 1 ? 's' : ''} missing roll length
-          </span>
-        )}
-
         {can('products.create') && (
           <button onClick={openAdd} className="btn btn-primary ml-auto flex items-center gap-1.5 text-[13px]">
             <Plus size={14} /> Add Product
@@ -149,36 +157,36 @@ export default function ProductMasterView({
         )}
       </div>
 
-      {/* Type tabs */}
       <div className="px-4 lg:px-6 border-b border-line flex gap-4 bg-surface">
-        {(['ALL', 'TIMING_BELT', 'V_BELT'] as const).map((t) => (
+        {(['ALL', ...PRODUCT_TYPES] as const).map((t) => (
           <button key={t} onClick={() => setTypeFilter(t)}
             className={`py-2.5 text-[13px] border-b-2 transition-colors ${typeFilter === t ? 'border-primary text-primary font-medium' : 'border-transparent text-ink-2 hover:text-ink'}`}>
-            {t === 'ALL' ? 'All' : t === 'TIMING_BELT' ? 'Timing Belts' : 'V-Belts'}{' '}
+            {t === 'ALL' ? 'All' : TYPE_META[t].label}{' '}
             <span className="text-ink-3">{counts[t]}</span>
           </button>
         ))}
       </div>
 
-      {/* Table */}
       <div className="flex-1 min-h-0 overflow-auto">
         {loading ? (
           <p className="py-16 text-center text-[13px] text-ink-3">Loading…</p>
         ) : filtered.length === 0 ? (
-          <p className="py-16 text-center text-[13px] text-ink-3">No products found.</p>
+          <p className="py-16 text-center text-[13px] text-ink-3">
+            No products yet. Use <strong>Import Data → 1 · Products</strong> or <strong>Add Product</strong>.
+          </p>
         ) : (
           <table className="table w-full text-[13px]">
             <thead>
               <tr>
-                <th>SKU Code</th>
+                <th>SKU</th>
                 <th>Type</th>
-                <th>Profile / Family</th>
+                <th>Product Family</th>
+                <th>Section / Colour</th>
                 <th>Size</th>
-                <th>Brand</th>
+                <th>Make</th>
                 <th className="num">Stock</th>
                 <th className="num">Min</th>
-                <th className="num">Roll (mm)</th>
-                <th>Rack</th>
+                <th>Remarks</th>
                 <th>Status</th>
                 {can('products.edit') && <th />}
               </tr>
@@ -186,23 +194,15 @@ export default function ProductMasterView({
             <tbody>
               {filtered.map((p) => (
                 <tr key={p.id} className={!p.is_active ? 'opacity-45' : ''}>
-                  <td className="font-mono text-[12px]">{p.sku_code}</td>
-                  <td>{p.product_type === 'TIMING_BELT' ? 'Timing' : 'V-Belt'}</td>
+                  <td className="font-mono text-[12px] whitespace-nowrap">{p.sku_code}</td>
+                  <td>{TYPE_META[p.product_type].short}</td>
                   <td>{p.hier_l1}</td>
-                  <td>{p.exact_size}</td>
+                  <td>{p.hier_l2}</td>
+                  <td className="whitespace-nowrap">{p.hier_l3}</td>
                   <td>{p.brand_name}</td>
-                  <td className="num">{p.current_stock} {p.unit_code}</td>
+                  <td className="num whitespace-nowrap">{p.current_stock} {unitLabel(p)}</td>
                   <td className="num">{p.min_stock_level}</td>
-                  <td className="num">
-                    {p.roll_length_mm ? (
-                      <span>{p.roll_length_mm}</span>
-                    ) : (
-                      <span className="text-amber-500 flex items-center justify-end gap-1">
-                        <Ruler size={11} /> —
-                      </span>
-                    )}
-                  </td>
-                  <td>{p.rack_location ?? '—'}</td>
+                  <td className="text-ink-3 max-w-[200px] truncate" title={p.remarks ?? ''}>{p.remarks ?? '—'}</td>
                   <td>
                     <span className={`badge ${p.stock_status === 'OK' ? 'badge-ok' : p.stock_status === 'OUT_OF_STOCK' ? 'badge-danger' : 'badge-warn'}`}>
                       {p.stock_status === 'OK' ? 'OK' : p.stock_status === 'OUT_OF_STOCK' ? 'Out' : 'Low'}
@@ -223,143 +223,118 @@ export default function ProductMasterView({
         )}
       </div>
 
-      {/* Add / Edit dialog */}
       {dialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-surface rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto m-4">
             <div className="flex items-center justify-between px-5 py-4 border-b border-line">
-              <h2 className="font-semibold">{dialog === 'add' ? 'Add Product' : 'Edit Product'}</h2>
+              <h2 className="font-semibold">{dialog === 'add' ? 'Add Product' : `Edit ${editing?.sku_code}`}</h2>
               <button onClick={close} className="icon-btn"><X size={16} /></button>
             </div>
+
             <div className="p-5 grid grid-cols-2 gap-4">
-              {/* Product type */}
               <div className="col-span-2">
                 <label className="label">Product Type</label>
-                <div className="flex gap-3">
-                  {(['TIMING_BELT', 'V_BELT'] as ProductType[]).map((t) => (
-                    <label key={t} className="flex items-center gap-1.5 text-[13px] cursor-pointer">
-                      <input type="radio" checked={form.product_type === t} onChange={() => set('product_type', t)} />
-                      {t === 'TIMING_BELT' ? 'Timing Belt' : 'V-Belt'}
+                <div className="flex gap-4">
+                  {PRODUCT_TYPES.map((t) => (
+                    <label key={t} className={`flex items-center gap-1.5 text-[13px] ${lockId ? 'opacity-60' : 'cursor-pointer'}`}>
+                      <input type="radio" disabled={lockId} checked={form.product_type === t} onChange={() => set('product_type', t)} />
+                      {PRODUCT_TYPE_LABEL[t]}
                     </label>
                   ))}
                 </div>
               </div>
 
-              <div>
-                <label className="label">SKU Code <span className="text-red-500">*</span></label>
-                <input className="input w-full" value={form.sku_code ?? ''} onChange={(e) => set('sku_code', e.target.value)} disabled={dialog === 'edit'} />
-              </div>
-              <div>
-                <label className="label">Size / Designation <span className="text-red-500">*</span></label>
-                <input className="input w-full" value={form.exact_size ?? ''} onChange={(e) => set('exact_size', e.target.value)} />
-              </div>
-
-              <div>
-                <label className="label">{form.product_type === 'TIMING_BELT' ? 'Family' : 'Profile'} <span className="text-red-500">*</span></label>
-                <select className="input w-full" value={form.family_code ?? ''} onChange={(e) => set('family_code', e.target.value)}>
-                  <option value="">Select…</option>
-                  {activeFamilies.map((f) => <option key={f.code} value={f.code}>{f.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="label">Brand <span className="text-red-500">*</span></label>
-                <select className="input w-full" value={form.brand_code ?? ''} onChange={(e) => set('brand_code', e.target.value)}>
-                  <option value="">Select…</option>
-                  {activeBrands.map((b) => <option key={b.code} value={b.code}>{b.name}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label className="label">Display Name</label>
-                <input className="input w-full" value={form.display_name ?? ''} onChange={(e) => set('display_name', e.target.value)} placeholder="Auto-generated if empty" />
-              </div>
-              <div>
-                <label className="label">Unit</label>
-                <select className="input w-full" value={form.unit_code ?? 'PCS'} onChange={(e) => set('unit_code', e.target.value)}>
-                  {units.map((u) => <option key={u.code} value={u.code}>{u.code}</option>)}
-                </select>
-              </div>
-
-              {/* ── ROLL LENGTH ── */}
               <div className="col-span-2">
-                <label className="label flex items-center gap-1.5">
-                  <Ruler size={13} className="text-ink-3" />
-                  Roll Length (mm)
-                  <span className="text-[11px] text-ink-3 font-normal ml-1">— length of 1 full sleeve for this SKU</span>
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    className="input w-48"
-                    value={form.roll_length_mm ?? ''}
-                    onChange={(e) => set('roll_length_mm', e.target.value ? Number(e.target.value) : null)}
-                    placeholder="e.g. 400"
-                  />
-                  <span className="text-[12px] text-ink-3">mm per roll</span>
+                <label className="label">SKU</label>
+                <p className="text-[13px] font-mono">
+                  {dialog === 'edit' ? editing?.sku_code : (codePreview || <span className="text-ink-3 font-sans">Generated automatically once the fields below are filled</span>)}
+                </p>
+              </div>
+
+              <div>
+                <label className="label">Product Family <span className="text-danger">*</span></label>
+                <input className="field w-full" list="pm-families" disabled={lockId} value={form.family}
+                  onChange={(e) => set('family', e.target.value)} placeholder={isConveyor ? 'e.g. PU, PVC' : 'e.g. CLASSICAL'} />
+                <datalist id="pm-families">{familyOptions.map((f) => <option key={f.id} value={f.name} />)}</datalist>
+              </div>
+
+              {isConveyor ? (
+                <div>
+                  <label className="label">Colour <span className="text-danger">*</span></label>
+                  <input className="field w-full" disabled={lockId} value={form.colour} onChange={(e) => set('colour', e.target.value)} />
                 </div>
-                {!form.roll_length_mm && (
-                  <p className="mt-1 text-[11px] text-amber-600">
-                    ⚠ Without this, inward receipts cannot auto-determine lot size. Set it before receiving stock.
-                  </p>
-                )}
+              ) : (
+                <div>
+                  <label className="label">{form.product_type === 'V_BELT' ? 'Section of V Belt' : 'Section of Timing Belt'} <span className="text-danger">*</span></label>
+                  <input className="field w-full" disabled={lockId} value={form.section} onChange={(e) => set('section', e.target.value)} placeholder="e.g. L, MXL, A, B" />
+                </div>
+              )}
+
+              {isConveyor ? (
+                <>
+                  <div>
+                    <label className="label">Make <span className="text-danger">*</span></label>
+                    <input className="field w-full" list="pm-brands" disabled={lockId} value={form.brand} onChange={(e) => set('brand', e.target.value)} />
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div><label className="label">L <span className="text-danger">*</span></label>
+                      <input type="number" className="field w-full" disabled={lockId} value={form.length} onChange={(e) => set('length', e.target.value)} /></div>
+                    <div><label className="label">W <span className="text-danger">*</span></label>
+                      <input type="number" className="field w-full" disabled={lockId} value={form.width} onChange={(e) => set('width', e.target.value)} /></div>
+                    <div><label className="label">T</label>
+                      <input type="number" step="any" className="field w-full" disabled={lockId} value={form.thickness} onChange={(e) => set('thickness', e.target.value)} /></div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label className="label">Size <span className="text-danger">*</span></label>
+                    <input className="field w-full" disabled={lockId} value={form.size} onChange={(e) => set('size', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="label">Make <span className="text-danger">*</span></label>
+                    <input className="field w-full" list="pm-brands" disabled={lockId} value={form.brand} onChange={(e) => set('brand', e.target.value)} />
+                  </div>
+                </>
+              )}
+              <datalist id="pm-brands">{brands.map((b) => <option key={b.id} value={b.name} />)}</datalist>
+
+              {dialog === 'edit' && (
+                <div className="col-span-2">
+                  <label className="label">Display Name</label>
+                  <input className="field w-full" value={form.display_name} onChange={(e) => set('display_name', e.target.value)} />
+                </div>
+              )}
+
+              <div>
+                <label className="label">Minimum Stock Level ({meta.unit === 'MM' ? 'mm' : 'pcs'})</label>
+                <input type="number" className="field w-full" value={form.min_stock_level} onChange={(e) => set('min_stock_level', e.target.value)} />
+              </div>
+              <div>
+                <label className="label">Location</label>
+                <input className="field w-full" value={form.rack_location} onChange={(e) => set('rack_location', e.target.value)} />
+              </div>
+
+              {form.product_type === 'TIMING_BELT' && (
+                <div className="col-span-2">
+                  <label className="label">Roll Length (mm) <span className="text-ink-3 font-normal">— length of 1 full sleeve (filled automatically by the inventory import)</span></label>
+                  <input type="number" className="field w-48" value={form.roll_length_mm} onChange={(e) => set('roll_length_mm', e.target.value)} />
+                </div>
+              )}
+
+              <div className="col-span-2">
+                <label className="label">Remarks</label>
+                <input className="field w-full" value={form.remarks} onChange={(e) => set('remarks', e.target.value)} />
               </div>
 
               {dialog === 'add' && (
-                <div>
-                  <label className="label">Opening Stock</label>
-                  <input type="number" className="input w-full" value={form.opening_stock ?? 0} onChange={(e) => set('opening_stock', Number(e.target.value))} />
-                </div>
+                <p className="col-span-2 text-[11px] text-ink-3">
+                  Stock is not entered here. After adding, receive it through Inward, or load it with Import Data → 2 · Inventory.
+                </p>
               )}
-              <div>
-                <label className="label">Min Stock Level</label>
-                <input type="number" className="input w-full" value={form.min_stock_level ?? 0} onChange={(e) => set('min_stock_level', Number(e.target.value))} />
-              </div>
-              <div>
-                <label className="label">Supplier MOQ</label>
-                <input type="number" className="input w-full" value={form.supplier_moq ?? 0} onChange={(e) => set('supplier_moq', Number(e.target.value))} />
-              </div>
-              <div>
-                <label className="label">Reorder Qty</label>
-                <input type="number" className="input w-full" value={form.reorder_quantity ?? 0} onChange={(e) => set('reorder_quantity', Number(e.target.value))} />
-              </div>
-              <div>
-                <label className="label">Rack Location</label>
-                <input className="input w-full" value={form.rack_location ?? ''} onChange={(e) => set('rack_location', e.target.value)} />
-              </div>
-
-              {/* Timing belt specific */}
-              {form.product_type === 'TIMING_BELT' && (<>
-                <div><label className="label">Belt Form</label>
-                  <select className="input w-full" value={form.belt_form ?? ''} onChange={(e) => set('belt_form', e.target.value)}>
-                    <option value="">—</option>
-                    <option>Endless</option><option>Open-Ended</option>
-                  </select></div>
-                <div><label className="label">Pitch (mm)</label>
-                  <input type="number" className="input w-full" value={form.pitch_mm ?? ''} onChange={(e) => set('pitch_mm', e.target.value ? Number(e.target.value) : null)} /></div>
-                <div><label className="label">Pitch Length (mm)</label>
-                  <input type="number" className="input w-full" value={form.pitch_length_mm ?? ''} onChange={(e) => set('pitch_length_mm', e.target.value ? Number(e.target.value) : null)} /></div>
-                <div><label className="label">Width (mm)</label>
-                  <input type="number" className="input w-full" value={form.width_mm ?? ''} onChange={(e) => set('width_mm', e.target.value ? Number(e.target.value) : null)} /></div>
-                <div><label className="label">Teeth</label>
-                  <input type="number" className="input w-full" value={form.teeth ?? ''} onChange={(e) => set('teeth', e.target.value ? Number(e.target.value) : null)} /></div>
-                <div><label className="label">Standard</label>
-                  <input className="input w-full" value={form.standard ?? ''} onChange={(e) => set('standard', e.target.value)} /></div>
-              </>)}
-
-              {/* V-Belt specific */}
-              {form.product_type === 'V_BELT' && (<>
-                <div><label className="label">Construction</label>
-                  <input className="input w-full" value={form.construction ?? ''} onChange={(e) => set('construction', e.target.value)} /></div>
-                <div><label className="label">Nominal Length</label>
-                  <input type="number" className="input w-full" value={form.nominal_length ?? ''} onChange={(e) => set('nominal_length', e.target.value ? Number(e.target.value) : null)} /></div>
-                <div><label className="label">Length Designation</label>
-                  <input className="input w-full" value={form.length_designation ?? ''} onChange={(e) => set('length_designation', e.target.value)} /></div>
-              </>)}
             </div>
 
-            {err && <p className="px-5 pb-2 text-[12px] text-red-500">{err}</p>}
+            {err && <p className="px-5 pb-2 text-[12px] text-danger">{err}</p>}
             <div className="px-5 py-4 border-t border-line flex justify-end gap-3">
               <button onClick={close} className="btn">Cancel</button>
               <button onClick={save} disabled={saving} className="btn btn-primary">

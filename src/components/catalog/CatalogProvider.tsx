@@ -21,7 +21,8 @@ const COLUMNS =
   'brand_code,brand_name,family_code,family_name,profile_group,belt_form,construction,standard,' +
   'pitch_mm,pitch_length_mm,width_mm,teeth,nominal_length,length_designation,rack_location,' +
   'unit_code,opening_stock,current_stock,min_stock_level,supplier_moq,reorder_quantity,' +
-  'supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty,roll_length_mm';
+  'supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty,roll_length_mm,' +
+  'section,colour,length_mm,thickness_mm,remarks';
 
 let cache: Sku[] | null = null;
 let inflight: Promise<Sku[]> | null = null;
@@ -111,7 +112,7 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
     const scored: { sku: Sku; rank: number }[] = [];
 
     for (const sku of skus) {
-      const hay = `${sku.exact_size} ${sku.brand_name} ${sku.family_code} ${sku.sku_code}`.toLowerCase();
+      const hay = `${sku.exact_size} ${sku.brand_name} ${sku.family_code} ${sku.sku_code} ${sku.hier_l2} ${sku.hier_l3}`.toLowerCase();
       let rank = 0;
       let all = true;
       for (const t of terms) {

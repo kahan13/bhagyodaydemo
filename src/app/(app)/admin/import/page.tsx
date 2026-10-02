@@ -1,7 +1,7 @@
 import { requirePermission } from '@/lib/auth';
-import ImportMappedView from '@/components/admin/ImportMappedView';
+import ImportView from '@/components/admin/ImportView';
 
 export default async function ImportPage() {
   await requirePermission('settings.import');
-  return <ImportMappedView />;
+  return <ImportView />;
 }
