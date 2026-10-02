@@ -8,9 +8,10 @@ export default async function ProductsPage() {
   const session = await requirePermission('products.view');
   const db = await supabaseServer();
 
-  const [brands, families] = await Promise.all([
+  const [brands, families, units] = await Promise.all([
     db.from('brands').select('id,code,name,has_timing_belts,has_v_belts').eq('is_active', true).order('name'),
     db.from('product_families').select('id,code,name,product_type').order('product_type').order('name'),
+    db.from('units').select('code,name').order('code'),
   ]);
 
   return (
@@ -18,6 +19,7 @@ export default async function ProductsPage() {
       permissions={session.permissions}
       brands={brands.data ?? []}
       families={families.data ?? []}
+      units={units.data ?? []}
     />
   );
 }

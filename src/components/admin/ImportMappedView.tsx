@@ -26,10 +26,19 @@
  */
 
 import { useRef, useState } from 'react';
-import { Upload, CheckCircle, AlertCircle, Plus, Trash2 } from 'lucide-react';
+import { Upload, CheckCircle, AlertCircle, Plus, Trash2, Eye, ArrowLeft } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 type ProductType = 'TIMING_BELT' | 'V_BELT' | 'CONVEYOR_BELT';
+type ImportMode = 'OVERWRITE' | 'APPEND';
+
+const PREVIEW_ROW_COUNT = 8;
+
+const normaliseLotStatusPreview = (raw: unknown): string => {
+  const s = String(raw ?? '').toUpperCase().replace(/[\s_]+/g, '');
+  if (!s) return '—';
+  return s.startsWith('CUT') ? 'Cut Pcs' : 'Full Sleeve';
+};
 
 interface SystemField {
   key: string;
@@ -82,11 +91,13 @@ const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').repla
 
 export default function ImportMappedView() {
   const fileRef = useRef<HTMLInputElement>(null);
-  const [step, setStep] = useState<'upload' | 'map' | 'done'>('upload');
+  const [step, setStep] = useState<'upload' | 'map' | 'preview' | 'done'>('upload');
   const [productType, setProductType] = useState<ProductType>('TIMING_BELT');
+  const [importMode, setImportMode] = useState<ImportMode>('OVERWRITE');
   const [sheets, setSheets] = useState<string[]>([]);
   const [selectedSheet, setSelectedSheet] = useState('');
   const [fileHeaders, setFileHeaders] = useState<string[]>([]);
+  const [previewRows, setPreviewRows] = useState<Record<string, unknown>[]>([]);
   const [rawFile, setRawFile] = useState<File | null>(null);
 
   // mapping: systemField.key → fileColumn name
@@ -138,6 +149,11 @@ export default function ImportMappedView() {
     setMapping({});
     setLabels({});
     setActiveOptional([]);
+
+    // Keep a small slice of real row objects (column-name keyed) for the
+    // preview step, so the preview shows your actual data, not placeholders.
+    const dataRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
+    setPreviewRows(dataRows.slice(0, PREVIEW_ROW_COUNT));
 
     // Auto-map by name similarity
     const autoMap: Record<string, string> = {};
@@ -205,6 +221,7 @@ export default function ImportMappedView() {
     fd.append('file', rawFile);
     fd.append('sheet', selectedSheet);
     fd.append('productType', productType);
+    fd.append('importMode', importMode);
     fd.append('mapping', JSON.stringify(mapping));
     fd.append('labels', JSON.stringify(labels));
     try {
@@ -223,7 +240,20 @@ export default function ImportMappedView() {
     setStep('upload'); setResult(null); setErr('');
     setMapping({}); setLabels({}); setFileHeaders([]); setSheets([]);
     setRawFile(null); setActiveOptional([]); setAddPanelOpen(false);
+    setPreviewRows([]); setImportMode('OVERWRITE');
     if (fileRef.current) fileRef.current.value = '';
+  };
+
+  // Resolve one preview row's value for one visible system field, matching
+  // (a simplified version of) what the backend will actually store — so
+  // what you see here is what ends up in the system, not a guess.
+  const resolvePreviewValue = (row: Record<string, unknown>, sf: SystemField): string => {
+    const col = mapping[sf.key];
+    if (!col) return '—';
+    const raw = row[col];
+    if (sf.key === 'lot_status') return normaliseLotStatusPreview(raw);
+    if (raw === '' || raw === undefined || raw === null) return '—';
+    return String(raw);
   };
 
   return (
@@ -281,6 +311,37 @@ export default function ImportMappedView() {
                   <option value="V_BELT">V-Belts</option>
                   <option value="CONVEYOR_BELT">Conveyor Belt</option>
                 </select>
+              </div>
+            </div>
+
+            {/* Overwrite vs Add-additional */}
+            <div className="mb-5">
+              <label className="label">If a SKU already exists in the system</label>
+              <div className="flex gap-4 mt-1">
+                <label className="flex items-start gap-1.5 text-[12px] cursor-pointer">
+                  <input type="radio" className="mt-0.5" checked={importMode === 'OVERWRITE'}
+                    onChange={() => setImportMode('OVERWRITE')} />
+                  <span>
+                    <strong>Overwrite</strong>
+                    <span className="block text-ink-3">
+                      {productType === 'TIMING_BELT'
+                        ? 'Updates product details. Stock is untouched — lots are only changed by inward/outward.'
+                        : 'Replaces stock and details with this sheet’s values.'}
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-1.5 text-[12px] cursor-pointer">
+                  <input type="radio" className="mt-0.5" checked={importMode === 'APPEND'}
+                    onChange={() => setImportMode('APPEND')} />
+                  <span>
+                    <strong>Add as additional</strong>
+                    <span className="block text-ink-3">
+                      {productType === 'TIMING_BELT'
+                        ? 'Creates a new roll/lot for this SKU, on top of what’s already there.'
+                        : 'Adds this sheet’s quantity on top of current stock.'}
+                    </span>
+                  </span>
+                </label>
               </div>
             </div>
 
@@ -404,12 +465,74 @@ export default function ImportMappedView() {
             )}
 
             <div className="mt-6 flex items-center gap-3">
-              <button onClick={doImport} disabled={!requiredMet || importing} className="btn btn-primary">
-                {importing ? 'Importing…' : 'Import Now'}
+              <button onClick={() => setStep('preview')} disabled={!requiredMet} className="btn btn-primary flex items-center gap-1.5">
+                <Eye size={14} /> Preview
               </button>
               {!requiredMet && (
                 <p className="text-[12px] text-red-500">Map all required (*) fields to continue.</p>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ── Step 2b – Preview ────────────────────────────────── */}
+        {step === 'preview' && (
+          <div>
+            <button onClick={() => setStep('map')} className="btn text-[12px] flex items-center gap-1.5 mb-4">
+              <ArrowLeft size={13} /> Back to Mapping
+            </button>
+
+            <p className="text-[12px] text-ink-3 mb-3">
+              Showing the first {Math.min(PREVIEW_ROW_COUNT, previewRows.length)} of {previewRows.length < PREVIEW_ROW_COUNT ? previewRows.length : 'many'} rows,
+              exactly as each column will be understood by the system. Column headers below are your <em>App Label</em> for each field —
+              this is what you&apos;ll see everywhere else in the app (Product Master, Inventory, etc.).
+            </p>
+
+            <div className="overflow-auto border border-line rounded-lg">
+              <table className="w-full text-[12px]">
+                <thead>
+                  <tr className="bg-surface-2">
+                    {visibleFields.map((sf) => (
+                      <th key={sf.key} className="text-left px-3 py-2 font-medium text-ink-2 whitespace-nowrap">
+                        {labels[sf.key] || sf.label}
+                        {sf.isLotField && (
+                          <span className="ml-1 text-[9px] font-medium uppercase tracking-wide text-blue-500 bg-blue-100 rounded px-1 py-0.5">lot</span>
+                        )}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewRows.map((row, i) => (
+                    <tr key={i} className="border-t border-line">
+                      {visibleFields.map((sf) => (
+                        <td key={sf.key} className="px-3 py-2 whitespace-nowrap">
+                          {resolvePreviewValue(row, sf)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                  {previewRows.length === 0 && (
+                    <tr><td className="px-3 py-6 text-center text-ink-3" colSpan={visibleFields.length}>No data rows found in this sheet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {err && (
+              <div className="mt-4 flex items-start gap-2 text-[13px] text-red-600 bg-red-50 rounded-lg p-3">
+                <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                {err}
+              </div>
+            )}
+
+            <div className="mt-6 flex items-center gap-3">
+              <button onClick={doImport} disabled={importing} className="btn btn-primary">
+                {importing ? 'Importing…' : 'Looks good — Import Now'}
+              </button>
+              <button onClick={() => setStep('map')} className="btn" disabled={importing}>
+                Back to Mapping
+              </button>
             </div>
           </div>
         )}

@@ -23,6 +23,12 @@ const toCode = (name: string) =>
 const toStr = (v: unknown): string =>
   v === null || v === undefined ? '' : String(v).trim();
 
+// Unit codes are short and typically already clean (PCS, MTR, MM…) — same
+// sanitiser as toCode but capped shorter, since `units.code` is a short code
+// column, not a free-text name.
+const toUnitCode = (v: unknown): string =>
+  toStr(v).toUpperCase().replace(/[^A-Z0-9]+/g, '').slice(0, 10);
+
 /**
  * Normalise a CUT PCS / FULL SLEEVE cell value to DB status strings.
  * Accepts: "CUT PCS", "Cut Pcs", "cut pcs", "CUT_PCS", "CUT"
@@ -36,6 +42,7 @@ const normaliseLotStatus = (raw: unknown): 'CUT_PCS' | 'FULL_SLEEVE' => {
 };
 
 type ProductType = 'TIMING_BELT' | 'V_BELT' | 'CONVEYOR_BELT';
+type ImportMode = 'OVERWRITE' | 'APPEND';
 
 // V-Belt is the only type that groups by "profile" instead of "family" —
 // Timing Belt and Conveyor Belt sheets both use a family-style grouping
@@ -51,6 +58,7 @@ export async function POST(req: Request) {
   const file = fd.get('file') as File | null;
   const sheetName = fd.get('sheet') as string;
   const productType = fd.get('productType') as ProductType;
+  const importMode = ((fd.get('importMode') as string) || 'OVERWRITE') as ImportMode;
   const mapping: Record<string, string> = JSON.parse(fd.get('mapping') as string);
   const labels: Record<string, string> = JSON.parse(fd.get('labels') as string);
 
@@ -75,15 +83,18 @@ export async function POST(req: Request) {
   // screen already hides these fields for non-Timing-Belt types).
   const hasLotColumns = productType === 'TIMING_BELT' && !!(mapping['lot_status'] && mapping['lot_qty']);
 
-  // ── 1. Collect unique brands and families ──────────────────────────────────
+  // ── 1. Collect unique brands, families and units ────────────────────────────
   const brandNames = new Set<string>();
   const familyNames = new Set<string>();
+  const unitCodes = new Set<string>();
 
   for (const row of rows) {
     const brand = toStr(cell(row, 'brand'));
     const family = toStr(cell(row, familyKey));
+    const unit = toUnitCode(cell(row, 'unit'));
     if (brand) brandNames.add(brand);
     if (family) familyNames.add(family);
+    if (unit) unitCodes.add(unit);
   }
 
   // Upsert brands
@@ -119,11 +130,16 @@ export async function POST(req: Request) {
     if (data) familyMap.set(name, data.id);
   }
 
-  // Ensure default unit
+  // Ensure the default unit always exists, PLUS every unit code actually seen
+  // in this sheet's Unit column (not just a fixed 4-code whitelist as
+  // before) — this is what was missing and caused the FK error on save.
   const defaultUnit = 'PCS';
-  await svc
-    .from('units')
-    .upsert({ code: defaultUnit, name: 'Pieces', decimals: 0 }, { onConflict: 'code', ignoreDuplicates: true });
+  const allUnitCodes = new Set<string>([defaultUnit, ...unitCodes]);
+  for (const code of allUnitCodes) {
+    await svc
+      .from('units')
+      .upsert({ code, name: code, decimals: 0 }, { onConflict: 'code', ignoreDuplicates: true });
+  }
 
   // ── 2. Process rows ────────────────────────────────────────────────────────
   let inserted = 0;
@@ -148,10 +164,9 @@ export async function POST(req: Request) {
     const brandId  = brandMap.get(brandName)!;
     const familyId = familyMap.get(familyName)!;
 
-    const unitRaw  = toStr(cell(row, 'unit')).toUpperCase();
-    const unitCode = ['PCS', 'MTR', 'ROLL', 'SET'].includes(unitRaw) ? unitRaw : defaultUnit;
+    const unitRaw  = toUnitCode(cell(row, 'unit'));
+    const unitCode = unitRaw || defaultUnit;
 
-    // Opening stock: prefer explicit opening_stock column; fall back to lot_qty if lot columns mapped
     const lotQtyRaw     = hasLotColumns ? toNum(cell(row, 'lot_qty')) : null;
     const openingStock  = toNum(cell(row, 'opening_stock')) ?? lotQtyRaw ?? 0;
     const rollLengthMm  = productType === 'TIMING_BELT' ? toNum(cell(row, 'roll_length_mm')) : null;
@@ -169,7 +184,9 @@ export async function POST(req: Request) {
     const hier_l3   = brandName;
     const searchText = `${skuCode} ${exactSize} ${brandName} ${familyName} ${displayName}`.toLowerCase();
 
-    const skuRow = {
+    // Fields that always sync to the sheet, regardless of overwrite/append —
+    // purely descriptive, never a quantity.
+    const descriptiveRow = {
       sku_code:           skuCode,
       product_type:       productType,
       family_id:          familyId,
@@ -181,8 +198,6 @@ export async function POST(req: Request) {
       hier_l3,
       search_text:        searchText,
       unit_code:          unitCode,
-      opening_stock:      openingStock,
-      current_stock:      openingStock,
       roll_length_mm:     rollLengthMm,
       colour:             colourRaw || null,
       min_stock_level:    toNum(cell(row, 'min_stock_level'))    ?? 0,
@@ -203,35 +218,70 @@ export async function POST(req: Request) {
       length_designation: toStr(cell(row, 'length_designation')) || null,
     };
 
-    // Upsert SKU
-    let skuId: string;
+    // Look up any existing SKU by code, including its current stock so
+    // append mode can add on top of it rather than guessing.
     const { data: existing } = await svc
       .from('skus')
-      .select('id')
+      .select('id,current_stock')
       .eq('sku_code', skuCode)
       .maybeSingle();
 
+    let skuId: string;
+    let shouldCreateLot = false;
+
     if (existing) {
+      // ── Existing SKU ──────────────────────────────────────────────────
+      // Quantity handling depends on whether this SKU is lot-tracked, and
+      // on overwrite vs. append — see the file-level note above the route
+      // for the reasoning. The one rule that never bends: when lots exist
+      // for a SKU, skus.current_stock is only ever changed by a lot
+      // operation (create_opening_lot here, or inward/outward elsewhere),
+      // never written directly from a sheet value — that's what keeps
+      // SUM(sku_lots.current_qty) === skus.current_stock true.
+      let stockFields: Record<string, number> = {};
+
+      if (hasLotColumns) {
+        // Lot-tracked existing SKU: never touch stock directly.
+        // Overwrite  → sync descriptive fields only, no new lot.
+        // Append     → sync descriptive fields AND add a new lot (a fresh
+        //              inward/roll), which adjusts current_stock itself.
+        shouldCreateLot = importMode === 'APPEND';
+      } else if (importMode === 'OVERWRITE') {
+        // Non-lot SKU, overwrite: reset stock to the sheet's value, same
+        // as this screen has always done.
+        stockFields = { opening_stock: openingStock, current_stock: openingStock };
+      } else {
+        // Non-lot SKU, append: add the sheet's quantity on top of whatever
+        // is already there; opening_stock (the original baseline) is left
+        // untouched.
+        stockFields = { current_stock: (existing.current_stock ?? 0) + openingStock };
+      }
+
       const { error } = await svc
         .from('skus')
-        .update({ ...skuRow, updated_at: new Date().toISOString() })
+        .update({ ...descriptiveRow, ...stockFields, updated_at: new Date().toISOString() })
         .eq('id', existing.id);
       if (error) { errors.push(`Row ${rowNum}: ${error.message} (${skuCode})`); continue; }
       skuId = existing.id;
       updated++;
     } else {
+      // ── Brand-new SKU ─────────────────────────────────────────────────
+      // Nothing to overwrite or append to — always a plain insert at the
+      // sheet's opening quantity, and the first lot (if any) always gets
+      // created, in either mode.
       const { data: ins, error } = await svc
         .from('skus')
-        .insert(skuRow)
+        .insert({ ...descriptiveRow, opening_stock: openingStock, current_stock: openingStock })
         .select('id')
         .single();
       if (error || !ins) { errors.push(`Row ${rowNum}: ${error?.message ?? 'insert failed'} (${skuCode})`); continue; }
       skuId = ins.id;
       inserted++;
+      shouldCreateLot = hasLotColumns;
     }
 
-    // ── Create opening lot if lot columns are mapped and qty > 0 (Timing Belt only) ──
-    if (hasLotColumns && lotQtyRaw && lotQtyRaw > 0) {
+    // ── Create a lot (new roll) when this row calls for one ───────────────
+    if (shouldCreateLot && lotQtyRaw && lotQtyRaw > 0) {
       const lotStatus = normaliseLotStatus(cell(row, 'lot_status'));
 
       const { error: lotErr } = await svc.rpc('create_opening_lot', {
@@ -276,8 +326,12 @@ export async function POST(req: Request) {
   try {
     await svc.from('import_batches').insert({
       file_name: file.name,
+      // Keep the original literal here in case `mode` has a CHECK
+      // constraint limited to the value this column has always used —
+      // the real overwrite/append choice is recorded in `counts` instead,
+      // which is free-form jsonb.
       mode: 'REPLACE',
-      counts: { inserted, updated, lots: lotsCreated, errors: errors.length, rows: rows.length },
+      counts: { inserted, updated, lots: lotsCreated, errors: errors.length, rows: rows.length, importMode },
     });
   } catch { /* non-critical */ }
 

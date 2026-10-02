@@ -22,15 +22,17 @@ interface Product {
 
 interface Brand { id: string; code: string; name: string; has_timing_belts: boolean; has_v_belts: boolean; }
 interface Family { id: string; code: string; name: string; product_type: string; }
+interface Unit { code: string; name: string; }
 
 const EMPTY: Partial<Product> = { product_type: 'TIMING_BELT', is_active: true, unit_code: 'PCS' };
 
 export default function ProductMasterView({
-  permissions, brands, families,
+  permissions, brands, families, units,
 }: {
   permissions: Permission[];
   brands: Brand[];
   families: Family[];
+  units: Unit[];
 }) {
   const can = (p: Permission) => permissions.includes(p);
   const [products, setProducts] = useState<Product[]>([]);
@@ -274,7 +276,7 @@ export default function ProductMasterView({
               <div>
                 <label className="label">Unit</label>
                 <select className="input w-full" value={form.unit_code ?? 'PCS'} onChange={(e) => set('unit_code', e.target.value)}>
-                  {['PCS', 'MTR', 'MM', 'ROLL', 'SET'].map((u) => <option key={u}>{u}</option>)}
+                  {units.map((u) => <option key={u.code} value={u.code}>{u.code}</option>)}
                 </select>
               </div>
 
