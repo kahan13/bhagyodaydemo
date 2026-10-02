@@ -8,8 +8,14 @@ import { fmtQty, fmtRelative, CHANNEL_LABEL } from '@/lib/format';
 import { HIERARCHY, type Movement, type Permission, type ProductType, type Sku } from '@/lib/types';
 import MovementDialog from '@/components/inventory/MovementDialog';
 import SkuLotsPanel from '@/components/inventory/SkuLotsPanel';
+import LotBreakdown from '@/components/inventory/LotBreakdown';
+import { TYPE_META } from '@/lib/sheet-config';
 
 const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+
+/** The two descriptive columns of the last pane: V-belt = Section, Size; others = Size, Make. */
+const leafCells = (s: Sku): [string, string] =>
+  s.product_type === 'V_BELT' ? [s.section ?? '', s.hier_l3] : [s.hier_l3, s.brand_name];
 
 export default function InventoryBrowser({
   permissions, initialSku, initialAction, initialType,
@@ -86,9 +92,11 @@ export default function InventoryBrowser({
   );
   const leaves = useMemo(() => {
     if (!l1 || !l2) return [];
-    return [...(tree.get(l1)?.get(l2) ?? [])].sort(
-      (a, b) => collator.compare(a.hier_l3, b.hier_l3) || collator.compare(a.brand_name, b.brand_name),
-    );
+    return [...(tree.get(l1)?.get(l2) ?? [])].sort((a, b) => {
+      const [a1, a2] = leafCells(a);
+      const [b1, b2] = leafCells(b);
+      return collator.compare(a1, b1) || collator.compare(a2, b2);
+    });
   }, [tree, l1, l2]);
 
   useEffect(() => {
@@ -324,7 +332,11 @@ export default function InventoryBrowser({
 
           {/* L3 column */}
           <div className="flex flex-col min-h-0" style={{ width: `${widths[2]}%` }}>
-            <ColHeader label={levels[2]} right="Stock" />
+            <div className="grid grid-cols-[1fr_1fr_1.1fr] gap-2 px-4 h-10 items-center border-b border-line shrink-0">
+              <span className="eyebrow">{TYPE_META[type].leafColumns[0]}</span>
+              <span className="eyebrow">{TYPE_META[type].leafColumns[1]}</span>
+              <span className="eyebrow text-right">Stock</span>
+            </div>
             <div className="flex-1 scroll p-1.5">
               {loading && <Skelly />}
               {!loading && !l2 && <Empty text={`Pick a ${levels[1].toLowerCase()}.`} />}
@@ -338,23 +350,27 @@ export default function InventoryBrowser({
                       className="drill-item cursor-pointer"
                       onClick={() => setSelected(s)}
                     >
-                      <span className="truncate">
-                        <span className="font-medium">{s.hier_l3}</span>
-                        <span className="ml-2 text-ink-2">{s.brand_name}</span>
-                        {s.rack_location && <span className="ml-2 text-[11px] text-ink-3">{s.rack_location}</span>}
-                      </span>
-                      <span className="flex items-center gap-2 shrink-0">
-                        {s.stock_status === 'OUT_OF_STOCK' && <span className="badge badge-danger">Out</span>}
-                        {s.stock_status === 'LOW_STOCK' && <span className="badge badge-warn">Low</span>}
-                        <span className="num font-medium">{fmtQty(s.current_stock, s.unit_code)}</span>
-                        <button
-                          className="text-ink-3 hover:text-ink p-0.5"
-                          onClick={(e) => { e.stopPropagation(); setExpandedL3(isExpanded ? null : s.sku_code); }}
-                          aria-label={isExpanded ? 'Collapse' : 'Expand'}
-                        >
-                          {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                        </button>
-                      </span>
+                      <div className="w-full min-w-0">
+                        <div className="grid grid-cols-[1fr_1fr_1.1fr] gap-2 items-center">
+                          <span className="font-medium truncate">{leafCells(s)[0]}</span>
+                          <span className="text-ink-2 truncate">{leafCells(s)[1]}</span>
+                          <span className="flex items-center gap-1.5 justify-end">
+                            {s.stock_status === 'OUT_OF_STOCK' && <span className="badge badge-danger">Out</span>}
+                            {s.stock_status === 'LOW_STOCK' && <span className="badge badge-warn">Low</span>}
+                            <span className="num font-medium">{fmtQty(s.current_stock, s.unit_code)}</span>
+                            <button
+                              className="text-ink-3 hover:text-ink p-0.5"
+                              onClick={(e) => { e.stopPropagation(); setExpandedL3(isExpanded ? null : s.sku_code); }}
+                              aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                            >
+                              {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                            </button>
+                          </span>
+                        </div>
+                        {s.lot_groups && s.lot_groups.length > 0 && (
+                          <LotBreakdown groups={s.lot_groups} className="mt-1.5 pb-0.5" />
+                        )}
+                      </div>
                     </div>
                     {isExpanded && (
                       <div className="mx-1.5 mb-1 px-3 py-2 rounded-md bg-subtle border border-line text-[12px] space-y-1">
@@ -520,6 +536,8 @@ function DetailPanel({
             {sku.stock_status === 'LOW_STOCK' && <span className="badge badge-warn mb-1">Below minimum</span>}
             {sku.stock_status === 'OK' && <span className="badge badge-ok mb-1">In range</span>}
           </div>
+
+          <LotBreakdown groups={sku.lot_groups} className="mt-3" />
 
           {sku.stock_status !== 'OK' && (
             <p className="text-[12px] text-warn mt-2.5 leading-relaxed">

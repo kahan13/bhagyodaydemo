@@ -7,7 +7,7 @@ import {
   type Identity, type LotType,
 } from '@/lib/sheet-config';
 import {
-  PREVIEW_LIMIT, cellOf, ensureBrandsAndFamilies, historyCount, insertSkus, isIdentityError,
+  importErrorResponse, PREVIEW_LIMIT, cellOf, ensureBrandsAndFamilies, historyCount, insertSkus, isIdentityError,
   loadAllSkus, newSkuRow, rawIdentityOf, readSheet, buildIdentity, uniqueSkuCode, unmappedRequired,
   type ExistingSku,
 } from '@/lib/sheet-import-server';
@@ -36,7 +36,7 @@ const MAX_PIECES_PER_ROW = 500;
  *
  * dryRun=true returns the preview/summary without touching the database.
  */
-export async function POST(req: Request) {
+async function handle(req: Request) {
   await requirePermission('settings.import');
   const svc = await supabaseService();
 
@@ -212,7 +212,7 @@ export async function POST(req: Request) {
   }
 
   // Resolve each planned row to a SKU id (skipping rows whose new SKU failed)
-  interface Target { skuId: string; isNew: boolean; baseStock: number; roll: number | null; fullLen: number | null; added: number; location: string; remarks: string }
+  interface Target { skuId: string; isNew: boolean; baseStock: number; basePhysical: number; roll: number | null; fullLen: number | null; added: number; location: string; remarks: string }
   const targets = new Map<string, Target>(); // keyed by identity key
   for (const p of planned) {
     const key = p.id.key;
@@ -224,6 +224,8 @@ export async function POST(req: Request) {
         isNew: !p.sku,
         // After an overwrite wipe every stock figure is 0; in ADD mode build on what is there.
         baseStock: mode === 'OVERWRITE' || !p.sku ? 0 : Number(p.sku.current_stock ?? 0),
+        // Physical (production-available) stock moves together with book stock.
+        basePhysical: mode === 'OVERWRITE' || !p.sku ? 0 : Number(p.sku.physical_prod_stock ?? 0),
         roll: p.sku?.roll_length_mm ?? null,
         fullLen: null,
         added: 0,
@@ -268,7 +270,11 @@ export async function POST(req: Request) {
   let updatedSkus = 0;
   for (const t of targets.values()) {
     const current = t.baseStock + t.added;
-    const patch: Record<string, unknown> = { current_stock: current, updated_at: new Date().toISOString() };
+    const patch: Record<string, unknown> = {
+      current_stock: current,
+      physical_prod_stock: t.basePhysical + t.added,
+      updated_at: new Date().toISOString(),
+    };
     if (t.isNew || mode === 'OVERWRITE') patch.opening_stock = current;
     if (meta.usesLots && t.roll === null && t.fullLen !== null) patch.roll_length_mm = t.fullLen;
     if (t.location) patch.rack_location = t.location;
@@ -295,4 +301,12 @@ export async function POST(req: Request) {
     unit: summary.unit,
     errors,
   });
+}
+
+export async function POST(req: Request) {
+  try {
+    return await handle(req);
+  } catch (e) {
+    return importErrorResponse(e);
+  }
 }

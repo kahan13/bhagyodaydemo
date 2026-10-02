@@ -99,7 +99,12 @@ export default function ImportView() {
     fd.append('dryRun', String(dryRun));
     fd.append('mapping', JSON.stringify(mapping));
     const r = await fetch(ENDPOINT[kind], { method: 'POST', body: fd });
-    const j = await r.json();
+    const text = await r.text();
+    let j: Record<string, unknown>;
+    try { j = JSON.parse(text); } catch {
+      j = { error: `The server returned an empty or unreadable response (HTTP ${r.status}). ` +
+        'Check that migration 018 has been run in Supabase, and look at the dev-server terminal for the exact error.' };
+    }
     return { ok: r.ok, j };
   };
 
@@ -108,8 +113,8 @@ export default function ImportView() {
     try {
       const res = await post(true);
       if (!res) return;
-      if (!res.ok) { setErr(res.j.error ?? 'Preview failed'); return; }
-      setDry(res.j as DryRun);
+      if (!res.ok) { setErr(String(res.j.error ?? 'Preview failed')); return; }
+      setDry(res.j as unknown as DryRun);
       setStep('preview');
     } catch (e) { setErr(String(e)); } finally { setBusy(false); }
   };
@@ -119,7 +124,7 @@ export default function ImportView() {
     try {
       const res = await post(false);
       if (!res) return;
-      if (!res.ok) { setErr(res.j.error ?? 'Import failed'); return; }
+      if (!res.ok) { setErr(String(res.j.error ?? 'Import failed')); return; }
       setResult(res.j); setStep('done');
     } catch (e) { setErr(String(e)); } finally { setBusy(false); }
   };

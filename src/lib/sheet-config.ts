@@ -43,8 +43,10 @@ export interface TypeMeta {
   usesLots: boolean;
   /** Words that identify this type from a sheet/tab name. */
   sheetHints: string[];
-  /** Headings of the 3 inventory panes. Brand is shown inside the 3rd pane. */
+  /** Headings of the 3 inventory panes. */
   levels: [string, string, string];
+  /** Column headings of the last pane's list (stock is always shown after them). */
+  leafColumns: [string, string];
 }
 
 export const PRODUCT_TYPES: ProductType[] = ['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT'];
@@ -53,17 +55,20 @@ export const TYPE_META: Record<ProductType, TypeMeta> = {
   TIMING_BELT: {
     label: 'Timing Belts', short: 'Timing', prefix: 'TB', unit: 'MM', usesLots: true,
     sheetHints: ['timing'],
-    levels: ['Product Family', 'Section', 'Size · Brand'],
+    levels: ['Product Family', 'Section', 'Size · Make'],
+    leafColumns: ['Size', 'Make'],
   },
   V_BELT: {
     label: 'V-Belts', short: 'V-Belt', prefix: 'VB', unit: 'PCS', usesLots: false,
     sheetHints: ['v belt', 'vbelt', 'v-belt'],
-    levels: ['Product Family', 'Section', 'Size · Brand'],
+    levels: ['Product Family', 'Make', 'Section · Size'],
+    leafColumns: ['Section', 'Size'],
   },
   CONVEYOR_BELT: {
     label: 'Conveyor Belts', short: 'Conveyor', prefix: 'CB', unit: 'PCS', usesLots: false,
     sheetHints: ['conveyor'],
-    levels: ['Product Family', 'Colour', 'Size · Brand'],
+    levels: ['Product Family', 'Colour', 'Size · Make'],
+    leafColumns: ['Size', 'Make'],
   },
 };
 
@@ -206,7 +211,7 @@ export interface Identity {
   thicknessMm: number | null;
   /** Unique per physical product, e.g. timing_belt|classical|l|165|opti */
   key: string;
-  /** hier_l1 / l2 / l3 for the Inventory drill-down. */
+  /** hier_l1 / l2 / l3 for the Inventory drill-down (V-belt: Family, Make, Size). */
   hier: [string, string, string];
   /** "L-165" for belts, the size label for conveyor. */
   exactSize: string;
@@ -262,7 +267,8 @@ export function buildIdentity(type: ProductType, raw: RawIdentity): Identity | {
     type, family, section, colour: null, brand, sizeLabel: size,
     lengthMm: null, widthMm: null, thicknessMm: null,
     key: [type, family, section, size, brand].map(keyPart).join('|'),
-    hier: [family, section, size],
+    // V-belts are browsed Family > Make > Section/Size; the others Family > Section > Size/Make.
+    hier: type === 'V_BELT' ? [family, brand, size] : [family, section, size],
     exactSize,
     displayName: `${exactSize} ${brand}`,
     codeBase: [meta.prefix, slug(section), slug(size), slug(brand)].join('-'),

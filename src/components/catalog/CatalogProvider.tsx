@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
-import type { Sku } from '@/lib/types';
+import type { LotGroup, Sku } from '@/lib/types';
 
 /* =============================================================================
    The whole SKU catalogue, fetched once and held in memory.
@@ -35,17 +35,33 @@ async function load(force = false): Promise<Sku[]> {
   // leaves its callback parameters untyped, which strict mode rejects.
   inflight = (async () => {
     try {
-      const { data, error } = await supabaseBrowser()
-        .from('v_sku_status')
-        .select(COLUMNS)
-        .eq('is_active', true)
-        .order('product_type')
-        .order('hier_l1')
-        .order('hier_l2')
-        .order('hier_l3');
+      const sb = supabaseBrowser();
+      const [skuRes, groupRes] = await Promise.all([
+        sb.from('v_sku_status')
+          .select(COLUMNS)
+          .eq('is_active', true)
+          .order('product_type')
+          .order('hier_l1')
+          .order('hier_l2')
+          .order('hier_l3'),
+        sb.from('v_sku_lot_groups').select('sku_id,status,piece_qty,pieces,total_qty'),
+      ]);
 
-      if (error) throw new Error(error.message);
-      cache = (data ?? []) as unknown as Sku[];
+      if (skuRes.error) throw new Error(skuRes.error.message);
+      const rows = (skuRes.data ?? []) as unknown as Sku[];
+
+      // Attach the Full Sleeve / Cut Pcs breakdown to each SKU (Full Sleeve first).
+      const bySku = new Map<string, LotGroup[]>();
+      for (const g of (groupRes.data ?? []) as unknown as (LotGroup & { sku_id: string })[]) {
+        const list = bySku.get(g.sku_id) ?? [];
+        list.push({ status: g.status, piece_qty: Number(g.piece_qty), pieces: Number(g.pieces), total_qty: Number(g.total_qty) });
+        bySku.set(g.sku_id, list);
+      }
+      for (const r of rows) {
+        r.lot_groups = (bySku.get(r.id) ?? []).sort(
+          (a, b) => (a.status === b.status ? b.piece_qty - a.piece_qty : a.status === 'FULL_SLEEVE' ? -1 : 1));
+      }
+      cache = rows;
       return cache;
     } finally {
       inflight = null;

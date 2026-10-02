@@ -4,7 +4,7 @@ import { supabaseService } from '@/lib/supabase-server';
 import type { ProductType } from '@/lib/types';
 import { PRODUCT_TYPES, SKU_FIELDS, toCode, type Identity } from '@/lib/sheet-config';
 import {
-  PREVIEW_LIMIT, ensureBrandsAndFamilies, historyCount, insertSkus, isIdentityError,
+  importErrorResponse, PREVIEW_LIMIT, ensureBrandsAndFamilies, historyCount, insertSkus, isIdentityError,
   loadAllSkus, loadBrandFamilyNames, newSkuRow, rawIdentityOf, readSheet,
   buildIdentity, uniqueSkuCode, unmappedRequired,
 } from '@/lib/sheet-import-server';
@@ -23,7 +23,7 @@ export const dynamic = 'force-dynamic';
  *
  * dryRun=true returns the preview/summary without touching the database.
  */
-export async function POST(req: Request) {
+async function handle(req: Request) {
   await requirePermission('settings.import');
   const svc = await supabaseService();
 
@@ -170,4 +170,12 @@ export async function POST(req: Request) {
     duplicates,
     errors: [...errors, ...failed],
   });
+}
+
+export async function POST(req: Request) {
+  try {
+    return await handle(req);
+  } catch (e) {
+    return importErrorResponse(e);
+  }
 }

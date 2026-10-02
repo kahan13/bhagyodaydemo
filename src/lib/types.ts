@@ -37,6 +37,14 @@ export interface Session {
   permissions: Permission[];
 }
 
+/** One classification of a SKU's stock: e.g. 4 Full Sleeve pieces of 50 mm. */
+export interface LotGroup {
+  status: 'FULL_SLEEVE' | 'CUT_PCS';
+  piece_qty: number;
+  pieces: number;
+  total_qty: number;
+}
+
 export interface Sku {
   id: string;
   sku_code: string;
@@ -52,6 +60,8 @@ export interface Sku {
   length_mm?: number | null;
   thickness_mm?: number | null;
   remarks?: string | null;
+  /** Full Sleeve / Cut Pcs breakdown (timing belts); filled by the catalog. */
+  lot_groups?: LotGroup[];
   brand_code: string;
   brand_name: string;
   family_code: string;
@@ -236,9 +246,9 @@ export interface ProductionOrder {
  * hier_l1/l2/l3 are filled at import time from the sheet (see sheet-config.ts).
  */
 export const HIERARCHY: Record<ProductType, { label: string; short: string; levels: [string, string, string] }> = {
-  TIMING_BELT:   { label: 'Timing Belts',   short: 'Timing',   levels: ['Product Family', 'Section', 'Size · Brand'] },
-  V_BELT:        { label: 'V-Belts',        short: 'V-Belt',   levels: ['Product Family', 'Section', 'Size · Brand'] },
-  CONVEYOR_BELT: { label: 'Conveyor Belts', short: 'Conveyor', levels: ['Product Family', 'Colour',  'Size · Brand'] },
+  TIMING_BELT:   { label: 'Timing Belts',   short: 'Timing',   levels: ['Product Family', 'Section', 'Size · Make'] },
+  V_BELT:        { label: 'V-Belts',        short: 'V-Belt',   levels: ['Product Family', 'Make',    'Section · Size'] },
+  CONVEYOR_BELT: { label: 'Conveyor Belts', short: 'Conveyor', levels: ['Product Family', 'Colour',  'Size · Make'] },
 };
 
 /** Display names for a product type, used by filters, badges and reports. */

@@ -61,6 +61,7 @@ export default function LotAllocationPicker({
   qtyNeeded,
   value,
   onChange,
+  lotFilter,
   disabled = false,
 }: {
   skuId: string;
@@ -68,6 +69,8 @@ export default function LotAllocationPicker({
   qtyNeeded: number;
   value: LotAllocation[];
   onChange: (next: LotAllocation[], isComplete: boolean) => void;
+  /** Restrict to one classification (e.g. Full Sleeve, 50 mm pieces). */
+  lotFilter?: { status: 'FULL_SLEEVE' | 'CUT_PCS'; pieceQty: number };
   disabled?: boolean;
 }) {
   const [lots, setLots] = useState<AvailableLot[]>([]);
@@ -89,11 +92,13 @@ export default function LotAllocationPicker({
       .order('created_at', { ascending: true });
 
     if (error) { setErr(error.message); setLoading(false); return; }
-    setLots((data ?? []) as AvailableLot[]);
+    let rows = (data ?? []) as AvailableLot[];
+    if (lotFilter) rows = rows.filter((l) => l.status === lotFilter.status && Number(l.current_qty) === lotFilter.pieceQty);
+    setLots(rows);
     setLoading(false);
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [skuId]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [skuId, lotFilter?.status, lotFilter?.pieceQty]);
 
   const totalAllocated = useMemo(
     () => value.reduce((s, a) => s + a.qty, 0),

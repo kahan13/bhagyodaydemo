@@ -68,13 +68,14 @@ export interface ExistingSku {
   roll_length_mm: number | null;
   current_stock: number;
   opening_stock: number;
+  physical_prod_stock: number;
 }
 
 /** Every SKU (all types — sku_code is unique across types). */
 export async function loadAllSkus(svc: Svc): Promise<ExistingSku[]> {
   return fetchAll<ExistingSku>(() =>
     svc.from('skus')
-      .select('id,sku_code,identity_key,product_type,roll_length_mm,current_stock,opening_stock')
+      .select('id,sku_code,identity_key,product_type,roll_length_mm,current_stock,opening_stock,physical_prod_stock')
       .order('id'));
 }
 
@@ -184,3 +185,19 @@ export async function insertSkus(
 }
 
 export { buildIdentity, isIdentityError, uniqueSkuCode };
+
+
+/**
+ * Turn any thrown error into a readable JSON response instead of an empty 500.
+ * Redirects thrown by requirePermission() are re-thrown untouched.
+ */
+export function importErrorResponse(e: unknown): Response {
+  const digest = (e as { digest?: string } | null)?.digest;
+  if (typeof digest === 'string' && digest.startsWith('NEXT_')) throw e;
+  const raw = e instanceof Error ? e.message : String(e);
+  const needsMigration = /identity_key|created_via|type_history_count|wipe_catalog_type|wipe_inventory_type|section|schema cache|does not exist|could not find/i.test(raw);
+  const message = needsMigration
+    ? `${raw} — the database is missing the latest changes. Run supabase/migrations/018_sheet_fields.sql in the Supabase SQL Editor, then try again.`
+    : raw;
+  return Response.json({ error: message }, { status: 500 });
+}

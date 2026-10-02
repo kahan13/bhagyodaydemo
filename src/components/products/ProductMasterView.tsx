@@ -197,7 +197,7 @@ export default function ProductMasterView({
                   <td className="font-mono text-[12px] whitespace-nowrap">{p.sku_code}</td>
                   <td>{TYPE_META[p.product_type].short}</td>
                   <td>{p.hier_l1}</td>
-                  <td>{p.hier_l2}</td>
+                  <td>{p.section ?? p.colour ?? p.hier_l2}</td>
                   <td className="whitespace-nowrap">{p.hier_l3}</td>
                   <td>{p.brand_name}</td>
                   <td className="num whitespace-nowrap">{p.current_stock} {unitLabel(p)}</td>

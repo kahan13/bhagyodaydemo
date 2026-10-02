@@ -19,6 +19,8 @@ import type {
   DeliveryMode,
 } from '@/lib/types';
 import LotAllocationPicker, { type LotAllocation } from './LotAllocationPicker';
+import type { LotGroup } from '@/lib/types';
+import { groupText, groupLabel } from '@/components/inventory/LotBreakdown';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -94,6 +96,8 @@ interface SkuAtp {
   atp_stock: number;
 }
 
+type SkuPick = { sku: SkuWithAtp | null; query: string; group?: LotGroup | null };
+
 type SkuWithAtp = Sku & {
   atp_stock: number;        // = physical_prod_stock (already decremented by open orders)
   reserved_qty: number;
@@ -125,7 +129,19 @@ function fetchSkus(): Promise<SkuWithAtp[]> {
     supabaseBrowser()
       .from('v_sku_atp')
       .select('sku_id,current_stock,physical_prod_stock,reserved_qty,atp_stock'),
-  ]).then(([skuRes, atpRes]) => {
+    supabaseBrowser()
+      .from('v_sku_lot_groups')
+      .select('sku_id,status,piece_qty,pieces,total_qty'),
+  ]).then(([skuRes, atpRes, grpRes]) => {
+    const groups: Record<string, LotGroup[]> = {};
+    for (const r of ((grpRes.data ?? []) as unknown as (LotGroup & { sku_id: string })[])) {
+      (groups[r.sku_id] ??= []).push({
+        status: r.status, piece_qty: Number(r.piece_qty), pieces: Number(r.pieces), total_qty: Number(r.total_qty),
+      });
+    }
+    for (const k of Object.keys(groups)) {
+      groups[k].sort((a, b) => (a.status === b.status ? b.piece_qty - a.piece_qty : a.status === 'FULL_SLEEVE' ? -1 : 1));
+    }
     if (atpRes.error) {
       console.error('[ATP] v_sku_atp fetch failed:', atpRes.error.message);
     }
@@ -140,6 +156,7 @@ function fetchSkus(): Promise<SkuWithAtp[]> {
       physical_prod_stock: atpMap[s.id]?.physical_prod_stock ?? s.current_stock,
       atp_stock:           atpMap[s.id]?.atp_stock ?? s.current_stock,
       reserved_qty:        atpMap[s.id]?.reserved_qty ?? 0,
+      lot_groups:          groups[s.id],
     }));
     _skuInflight = null;
     return _skuCache;
@@ -200,8 +217,8 @@ function SkuCombobox({
   cacheVersion,
   placeholder = 'Search SKU code, name, size…',
 }: {
-  value: { sku: SkuWithAtp | null; query: string };
-  onChange: (val: { sku: SkuWithAtp | null; query: string }) => void;
+  value: SkuPick;
+  onChange: (val: SkuPick) => void;
   cacheVersion: number;
   placeholder?: string;
 }) {
@@ -238,8 +255,20 @@ function SkuCombobox({
         (s.search_text ?? '').toLowerCase().includes(q)
       ).slice(0, 40);
 
-  function selectSku(sku: SkuWithAtp) {
-    onChange({ sku, query: `${sku.sku_code} – ${sku.display_name}` });
+  // One option per classification: a timing belt with 4×50 Full Sleeve and 1×50 Cut Pcs
+  // appears as two separate, tagged entries. Other SKUs stay a single entry.
+  const options: { sku: SkuWithAtp; group: LotGroup | null }[] = filtered.flatMap((sku): { sku: SkuWithAtp; group: LotGroup | null }[] =>
+    sku.lot_groups && sku.lot_groups.length > 0
+      ? sku.lot_groups.map((g) => ({ sku, group: g }))
+      : [{ sku, group: null }],
+  );
+
+  function selectOption(sku: SkuWithAtp, group: LotGroup | null) {
+    onChange({
+      sku,
+      group,
+      query: `${sku.sku_code} – ${sku.display_name}${group ? ` · ${groupLabel(group)} ${groupText(group)}` : ''}`,
+    });
     setOpen(false);
   }
 
@@ -268,35 +297,41 @@ function SkuCombobox({
         )}
       </div>
 
-      {open && filtered.length > 0 && (
+      {open && options.length > 0 && (
         <div
           ref={dropdownRef}
           className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg max-h-56 overflow-y-auto"
         >
-          {filtered.map((sku) => {
+          {options.map(({ sku, group }) => {
+            const avail = group ? group.total_qty : sku.atp_stock;
             const atpColour =
-              sku.atp_stock <= 0
+              avail <= 0
                 ? 'text-danger'
-                : sku.atp_stock < (sku.min_stock_level ?? 0)
+                : !group && avail < (sku.min_stock_level ?? 0)
                 ? 'text-warn'
                 : 'text-ok';
             return (
               <button
-                key={sku.id}
+                key={`${sku.id}-${group?.status ?? 'x'}-${group?.piece_qty ?? 0}`}
                 className="w-full text-left px-3 py-2 hover:bg-subtle transition-colors flex items-center justify-between gap-2"
-                onClick={() => selectSku(sku)}
+                onClick={() => selectOption(sku, group)}
                 type="button"
               >
                 <div className="min-w-0">
                   <div className="text-[13px] font-medium truncate">
                     <span className="font-mono text-brand">{sku.sku_code}</span>{' – '}{sku.display_name}
+                    {group && (
+                      <span className={`badge ml-2 ${group.status === 'FULL_SLEEVE' ? 'badge-ok' : 'badge-warn'}`}>
+                        {groupLabel(group)}
+                      </span>
+                    )}
                   </div>
                   <div className="text-[11px] text-ink-3 truncate">{sku.brand_name} · {sku.exact_size}</div>
                 </div>
                 <div className="text-right shrink-0">
-                  <div className="text-[11px] text-ink-3">{sku.unit_code}</div>
+                  <div className="text-[11px] text-ink-3">{group ? groupText(group) : sku.unit_code}</div>
                   <div className={`text-[11px] font-medium ${atpColour}`}>
-                    {sku.atp_stock} avail
+                    {avail} {group ? 'mm ' : ''}avail
                   </div>
                 </div>
               </button>
@@ -532,7 +567,7 @@ function MismatchPane({
 
 interface LineItem {
   id: string;
-  skuSearch: { sku: SkuWithAtp | null; query: string };
+  skuSearch: SkuPick;
   quantity: string;
   /** Which physical lots (rolls) this line should draw from. Only meaningful
    *  for SKUs with roll_length_mm set; empty for everything else — those post
@@ -1030,7 +1065,17 @@ export default function ProductionOrdersView({
                       .filter((other) => other.id !== li.id && other.skuSearch.sku?.id === li.skuSearch.sku!.id)
                       .reduce((sum, other) => sum + (parseFloat(other.quantity) || 0), 0)
                   : 0;
-                const effectiveAtp = li.skuSearch.sku ? li.skuSearch.sku.atp_stock - otherQty : Infinity;
+                const grp = li.skuSearch.group ?? null;
+                // Same classification picked on other lines also draws from this group's pool
+                const otherGroupQty = grp
+                  ? form.items
+                      .filter((o) => o.id !== li.id && o.skuSearch.sku?.id === li.skuSearch.sku?.id &&
+                        o.skuSearch.group?.status === grp.status && o.skuSearch.group?.piece_qty === grp.piece_qty)
+                      .reduce((sum, o) => sum + (parseFloat(o.quantity) || 0), 0)
+                  : otherQty;
+                const effectiveAtp = li.skuSearch.sku
+                  ? (grp ? grp.total_qty - otherGroupQty : li.skuSearch.sku.atp_stock - otherQty)
+                  : Infinity;
 
                 // Lot tracking only applies once the SKU has a roll length defined
                 // in Product Master (migration 011). Everything else behaves exactly
@@ -1045,13 +1090,18 @@ export default function ProductionOrdersView({
                       <div className="flex-1 min-w-0">
                         <SkuCombobox
                           value={li.skuSearch}
-                          onChange={(val) => updateItem(li.id, { skuSearch: val, allocations: [] })}
+                          onChange={(val) => updateItem(li.id, {
+                            skuSearch: val,
+                            allocations: [],
+                            ...(val.group && !li.quantity ? { quantity: String(val.group.piece_qty) } : {}),
+                          })}
                           cacheVersion={skuVersion}
                           placeholder="Search SKU…"
                         />
                         {li.skuSearch.sku && (
                           <p className="text-[11px] text-ink-3 mt-0.5 pl-0.5">
                             {li.skuSearch.sku.brand_name} · {li.skuSearch.sku.exact_size}
+                            {grp && <span className="ml-1">· {groupLabel(grp)} {groupText(grp)}</span>}
                             {li.skuSearch.sku.reserved_qty > 0 && (
                               <span className="text-warn ml-1">
                                 · {li.skuSearch.sku.reserved_qty} reserved
@@ -1074,7 +1124,11 @@ export default function ProductionOrdersView({
                           onChange={(e) => updateItem(li.id, { quantity: e.target.value })}
                         />
                         {li.skuSearch.sku && (
-                          <AtpBadge sku={li.skuSearch.sku} qty={li.quantity} otherQty={otherQty} />
+                          <AtpBadge
+                            sku={grp ? { ...li.skuSearch.sku, atp_stock: grp.total_qty } : li.skuSearch.sku}
+                            qty={li.quantity}
+                            otherQty={grp ? otherGroupQty : otherQty}
+                          />
                         )}
                       </div>
                       <button
@@ -1093,6 +1147,7 @@ export default function ProductionOrdersView({
                         skuId={li.skuSearch.sku!.id}
                         unitCode={li.skuSearch.sku!.unit_code}
                         qtyNeeded={qtyNum}
+                        lotFilter={grp ? { status: grp.status, pieceQty: grp.piece_qty } : undefined}
                         value={li.allocations}
                         onChange={(next) => updateItem(li.id, { allocations: next })}
                       />
