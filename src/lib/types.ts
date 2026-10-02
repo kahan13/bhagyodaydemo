@@ -177,7 +177,7 @@ export interface PurchaseOrderReceipt {
 export interface ProductionOrderItem {
   id: string;
   order_id: string;
-  sku_id: string;
+  sku_id: string | null;
   sku_code: string;
   display_name: string;
   unit_code: string;
@@ -248,6 +248,12 @@ export interface ProductionOrder {
   whatsapp_number: string | null;
   whatsapp_message: string | null;
   status: ProductionOrderStatus;
+  /** Direct (drop-ship) order: no SKU, no stock effect; staff are reminded to post inward/outward */
+  is_direct?: boolean;
+  direct_inward_at?: string | null;
+  direct_inward_by?: string | null;
+  direct_outward_at?: string | null;
+  direct_outward_by?: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;

@@ -4,7 +4,7 @@ import { useState, useTransition, useEffect, useRef } from 'react';
 import {
   Plus, Send, CheckCircle, Clock, Loader, Pencil, X,
   Search, Trash2, AlertTriangle, AlertCircle, Ban,
-  ArrowDownCircle, CheckSquare, ChevronDown, ChevronRight, Trash,
+  ArrowDownCircle, CheckSquare, ChevronDown, ChevronRight, Trash, Printer, FileDown,
 } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import type {
@@ -20,6 +20,7 @@ import type {
 } from '@/lib/types';
 import LotAllocationPicker, { type LotAllocation } from './LotAllocationPicker';
 import type { LotGroup, PendingAdjustment } from '@/lib/types';
+import { loadReceiptModel, printReceipt, downloadReceiptPdf, receiptHtml, type ReceiptModel } from '@/lib/order-receipt';
 import { groupText, groupLabel } from '@/components/inventory/LotBreakdown';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -58,8 +59,10 @@ const DELIVERY_MODES: DeliveryMode[] = ['Hand', 'Porter', 'Courier', 'Transporta
 // ─── WhatsApp message builder ─────────────────────────────────────────────────
 
 function buildMessage(fields: {
+  order_no?: string;
+  direct?: boolean;
   customer_name: string;
-  items: Array<{ display_name: string; quantity: string; unit_code: string }>;
+  items: Array<{ display_name: string; quantity: string; unit_code: string; detail?: string }>;
   time_tag: string;
   delivery_mode: string;
   delivery_note: string;
@@ -69,11 +72,12 @@ function buildMessage(fields: {
   const itemLines = fields.items
     .filter((i) => i.display_name)
     .map((i, idx) =>
-      `  ${idx + 1}. ${i.display_name}${i.quantity ? ` × ${i.quantity} ${i.unit_code}`.trimEnd() : ''}`
+      `  ${idx + 1}. ${i.display_name}${i.quantity ? ` × ${i.quantity} ${i.unit_code}`.trimEnd() : ''}${i.detail ? ` (${i.detail})` : ''}`
     );
 
   const lines = [
-    `*Production Order*`,
+    `*Production Order${fields.direct ? ' (DIRECT)' : ''}*`,
+    `PO No: ${fields.order_no ?? '(assigned when created)'}`,
     fields.customer_name ? `Customer: ${fields.customer_name}` : null,
     itemLines.length > 0 ? `Items:\n${itemLines.join('\n')}` : null,
     fields.time_tag ? `Time: ${fields.time_tag}` : null,
@@ -215,11 +219,14 @@ function SkuCombobox({
   value,
   onChange,
   cacheVersion,
+  usedElsewhere,
   placeholder = 'Search SKU code, name, size…',
 }: {
   value: SkuPick;
   onChange: (val: SkuPick) => void;
   cacheVersion: number;
+  /** Quantity other order lines already use of this SKU / classification (screen-only deduction) */
+  usedElsewhere?: (sku: SkuWithAtp, group: LotGroup | null) => number;
   placeholder?: string;
 }) {
   const [skus, setSkus] = useState<SkuWithAtp[]>(_skuCache ?? []);
@@ -275,7 +282,7 @@ function SkuCombobox({
     onChange({
       sku,
       group,
-      query: `${sku.sku_code} – ${sku.display_name}${group ? ` · ${groupLabel(group)} ${groupText(group)}` : ''}`,
+      query: sku.display_name,
     });
     setOpen(false);
   }
@@ -329,7 +336,8 @@ function SkuCombobox({
             </p>
           )}
           {options.map(({ sku, group }) => {
-            const avail = group ? group.total_qty : sku.atp_stock;
+            const used = usedElsewhere ? usedElsewhere(sku, group) : 0;
+            const avail = Math.max(0, (group ? group.total_qty : sku.atp_stock) - used);
             const atpColour =
               avail <= 0
                 ? 'text-danger'
@@ -339,7 +347,10 @@ function SkuCombobox({
             return (
               <button
                 key={`${sku.id}-${group?.status ?? 'x'}-${group?.piece_qty ?? 0}`}
-                className="w-full text-left px-3 py-2 hover:bg-subtle transition-colors flex items-center justify-between gap-2"
+                className={`w-full text-left px-3 py-2 transition-colors flex items-center justify-between gap-2 ${
+                  group && avail <= 0 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-subtle'
+                }`}
+                disabled={!!group && avail <= 0}
                 onClick={() => selectOption(sku, group)}
                 type="button"
               >
@@ -695,6 +706,9 @@ interface LineItem {
   id: string;
   skuSearch: SkuPick;
   quantity: string;
+  /** Direct orders: typed product name / unit (no SKU) */
+  manualName: string;
+  manualUnit: 'MM' | 'PCS';
   /** Which physical lots (rolls) this line should draw from. Only meaningful
    *  for SKUs with roll_length_mm set; empty for everything else — those post
    *  straight to the book ledger exactly as they always have. */
@@ -706,12 +720,15 @@ function makeLineItem(): LineItem {
     id: Math.random().toString(36).slice(2),
     skuSearch: { sku: null, query: '' },
     quantity: '',
+    manualName: '',
+    manualUnit: 'MM',
     allocations: [],
   };
 }
 
 function makeEmptyForm() {
   return {
+    isDirect: false,
     customer_name: '',
     items: [makeLineItem()],
     time_tag: '' as TimeTag | '',
@@ -727,6 +744,28 @@ function formatDateTime(iso: string): string {
   const date = d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   const time = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
   return `${date}, ${time}`;
+}
+
+/** "Cut Pcs 50, Full Sleeve 20" from a line's chosen lots */
+function allocDetail(allocs: LotAllocation[]): string {
+  const sum: Record<string, number> = {};
+  for (const a of allocs) sum[a.status] = (sum[a.status] ?? 0) + a.qty;
+  return (['CUT_PCS', 'FULL_SLEEVE'] as const)
+    .filter((k) => sum[k])
+    .map((k) => `${k === 'CUT_PCS' ? 'Cut Pcs' : 'Full Sleeve'} ${sum[k]}`)
+    .join(', ');
+}
+
+/** Quantity other lines already use of this SKU (and classification, when given). Screen-only. */
+function usedElsewhereIn(items: LineItem[], excludeId: string, sku: { id: string }, group: LotGroup | null): number {
+  return items
+    .filter((o) =>
+      o.id !== excludeId &&
+      o.skuSearch.sku?.id === sku.id &&
+      (group
+        ? o.skuSearch.group?.status === group.status && o.skuSearch.group?.piece_qty === group.piece_qty
+        : !o.skuSearch.group))
+    .reduce((sum, o) => sum + (parseFloat(o.quantity) || 0), 0);
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -745,6 +784,8 @@ export default function ProductionOrdersView({
   const [ordersOpen, setOrdersOpen] = useState(false);
   const [movementsOpen, setMovementsOpen] = useState(false);
   const [mismatchOpen, setMismatchOpen] = useState(false);
+  const [directOpen, setDirectOpen] = useState(false);
+  const [receipt, setReceipt] = useState<ReceiptModel | null>(null);
   const [pending, setPending] = useState<PendingAdjustment[]>([]);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [movements, setMovements] = useState<MovementRow[]>([]);
@@ -826,12 +867,16 @@ export default function ProductionOrdersView({
   const needsDeliveryNote = form.delivery_mode === 'Courier' || form.delivery_mode === 'Transportation';
 
   const previewMessage = buildMessage({
+    direct: form.isDirect,
     customer_name: form.customer_name,
-    items: form.items.map((li) => ({
-      display_name: li.skuSearch.sku?.display_name ?? '',
-      quantity: li.quantity,
-      unit_code: li.skuSearch.sku?.unit_code ?? '',
-    })),
+    items: form.items.map((li) => form.isDirect
+      ? { display_name: li.manualName, quantity: li.quantity, unit_code: li.manualUnit }
+      : {
+          display_name: li.skuSearch.sku?.display_name ?? '',
+          quantity: li.quantity,
+          unit_code: li.skuSearch.sku?.unit_code ?? '',
+          detail: allocDetail(li.allocations),
+        }),
     time_tag: form.time_tag,
     delivery_mode: form.delivery_mode,
     delivery_note: form.delivery_note,
@@ -844,8 +889,41 @@ export default function ProductionOrdersView({
   function updateItem(id: string, patch: Partial<LineItem>) {
     setForm((f) => ({ ...f, items: f.items.map((li) => li.id === id ? { ...li, ...patch } : li) }));
   }
-  function addItem() {
+  function addItem(focusName = false) {
     setForm((f) => ({ ...f, items: [...f.items, makeLineItem()] }));
+    if (focusName) {
+      setTimeout(() => {
+        const els = document.querySelectorAll<HTMLInputElement>('[data-name-for]');
+        els[els.length - 1]?.focus();
+      }, 30);
+    }
+  }
+
+  /** Cut Pcs line can't cover the quantity: cap it and add a Full Sleeve line for the rest. */
+  function addFromNewSleeve(id: string) {
+    setForm((f) => {
+      const idx = f.items.findIndex((x) => x.id === id);
+      const li = f.items[idx];
+      const sku = li?.skuSearch.sku;
+      const grp = li?.skuSearch.group;
+      if (!sku || !grp) return f;
+      const avail = Math.max(0, grp.total_qty - usedElsewhereIn(f.items, id, sku, grp));
+      const shortfall = (parseFloat(li.quantity) || 0) - avail;
+      if (shortfall <= 0) return f;
+      const fulls = (sku.lot_groups ?? []).filter((g) => g.status === 'FULL_SLEEVE');
+      const freeOf = (g: LotGroup) => g.total_qty - usedElsewhereIn(f.items, id, sku, g);
+      const pick = fulls.find((g) => freeOf(g) > 0);
+      if (!pick) return f;
+      const fresh: LineItem = {
+        ...makeLineItem(),
+        skuSearch: { sku, query: sku.display_name, group: pick },
+        quantity: String(Math.min(shortfall, freeOf(pick))),
+      };
+      const items = [...f.items];
+      items[idx] = { ...li, quantity: avail > 0 ? String(avail) : '', allocations: [] };
+      items.splice(idx + 1, 0, fresh);
+      return { ...f, items };
+    });
   }
   function removeItem(id: string) {
     setForm((f) => ({
@@ -869,12 +947,22 @@ export default function ProductionOrdersView({
   // ── Create order ───────────────────────────────────────────────────────────
 
   async function handleCreate() {
-    const validItems = form.items.filter((li) => li.skuSearch.sku);
-    if (validItems.length === 0) { setError('Please add at least one SKU item.'); return; }
+    const isDirect = form.isDirect;
+    const validItems = isDirect
+      ? form.items.filter((li) => li.manualName.trim())
+      : form.items.filter((li) => li.skuSearch.sku);
+    if (validItems.length === 0) {
+      setError(isDirect ? 'Please type at least one product.' : 'Please add at least one SKU item.');
+      return;
+    }
+    if (isDirect && validItems.some((li) => !(parseFloat(li.quantity) > 0))) {
+      setError('Enter a quantity for every product.');
+      return;
+    }
 
     // Check against physical_prod_stock (atp_stock IS physical in this new system)
     const qtyBySku: Record<string, { sku: SkuWithAtp; total: number }> = {};
-    for (const li of validItems) {
+    for (const li of isDirect ? [] : validItems) {
       const sku = li.skuSearch.sku!;
       const qty = parseFloat(li.quantity) || 0;
       if (!qtyBySku[sku.id]) qtyBySku[sku.id] = { sku, total: 0 };
@@ -899,8 +987,28 @@ export default function ProductionOrdersView({
     const order_no = noData as string;
 
     const product_description = validItems
-      .map((li) => li.skuSearch.sku!.display_name)
+      .map((li) => (isDirect ? li.manualName.trim() : li.skuSearch.sku!.display_name))
       .join(', ');
+
+    // Final message carries the real order number and the lot classification
+    const finalMessage = buildMessage({
+      order_no,
+      direct: isDirect,
+      customer_name: form.customer_name,
+      items: validItems.map((li) => isDirect
+        ? { display_name: li.manualName.trim(), quantity: li.quantity, unit_code: li.manualUnit }
+        : {
+            display_name: li.skuSearch.sku!.display_name,
+            quantity: li.quantity,
+            unit_code: li.skuSearch.sku!.unit_code,
+            detail: allocDetail(li.allocations),
+          }),
+      time_tag: form.time_tag,
+      delivery_mode: form.delivery_mode,
+      delivery_note: needsDeliveryNote ? form.delivery_note : '',
+      assigned_to: form.assigned_to,
+      notes: form.notes,
+    });
 
     const { data: created, error: err } = await db
       .from('production_orders')
@@ -914,7 +1022,8 @@ export default function ProductionOrdersView({
         assigned_to:    form.assigned_to || null,
         notes:          form.notes || null,
         whatsapp_number: whatsapp || null,
-        whatsapp_message: previewMessage || null,
+        whatsapp_message: finalMessage || null,
+        is_direct: isDirect,
         status: 'CREATED',
       })
       .select('*')
@@ -925,14 +1034,23 @@ export default function ProductionOrdersView({
 
     const orderId = (created as ProductionOrder).id;
 
-    const itemRows = validItems.map((li) => ({
-      order_id:     orderId,
-      sku_id:       li.skuSearch.sku!.id,
-      sku_code:     li.skuSearch.sku!.sku_code,
-      display_name: li.skuSearch.sku!.display_name,
-      unit_code:    li.skuSearch.sku!.unit_code,
-      quantity:     li.quantity ? Number(li.quantity) : 1,
-    }));
+    const itemRows = validItems.map((li) => isDirect
+      ? {
+          order_id:     orderId,
+          sku_id:       null,
+          sku_code:     'DIRECT',
+          display_name: li.manualName.trim(),
+          unit_code:    li.manualUnit,
+          quantity:     Number(li.quantity),
+        }
+      : {
+          order_id:     orderId,
+          sku_id:       li.skuSearch.sku!.id,
+          sku_code:     li.skuSearch.sku!.sku_code,
+          display_name: li.skuSearch.sku!.display_name,
+          unit_code:    li.skuSearch.sku!.unit_code,
+          quantity:     li.quantity ? Number(li.quantity) : 1,
+        });
 
     const { data: insertedItems, error: itemErr } = await db
       .from('production_order_items')
@@ -1102,12 +1220,181 @@ export default function ProductionOrdersView({
 
   // ── Active (non-cancelled, non-completed) orders ───────────────────────────
 
-  const activeOrders = orders.filter(
+  const regularOrders = orders.filter((o) => !o.is_direct);
+  const directOrders = orders.filter((o) => o.is_direct);
+  const pendingDirect = directOrders.filter(
+    (o) => o.status !== 'CANCELLED' && !(o.direct_inward_at && o.direct_outward_at)
+  ).length;
+  const activeOrders = regularOrders.filter(
     (o) => o.status !== 'CANCELLED' && o.status !== 'COMPLETED'
   );
-  const closedOrders = orders.filter(
+  const closedOrders = regularOrders.filter(
     (o) => o.status === 'CANCELLED' || o.status === 'COMPLETED'
   );
+
+  function renderOrderCard(order: ProductionOrder) {
+    return (
+            <div key={order.id} className="card p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-mono text-ink-3">{order.order_no}</span>
+                    <span className={`badge ${STATUS_BADGE[order.status]}`}>{STATUS_LABEL[order.status]}</span>
+                    {order.is_direct && <span className="badge badge-brand">Direct</span>}
+                    {order.time_tag && (
+                      <span className="text-[11px] bg-subtle border border-line rounded-full px-2 py-0.5 text-ink-2">
+                        ⏱ {order.time_tag}
+                      </span>
+                    )}
+                    {order.created_at && (
+                      <span className="text-[11px] text-ink-3">🕐 {formatDateTime(order.created_at)}</span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1.5 text-[12px] text-ink-3">
+                    {order.customer_name && (
+                      <span>Customer: <span className="text-ink">{order.customer_name}</span></span>
+                    )}
+                    {order.delivery_mode && (
+                      <span>
+                        Delivery: <span className="text-ink">{order.delivery_mode}</span>
+                        {order.delivery_note ? <span className="text-ink-3"> ({order.delivery_note})</span> : null}
+                      </span>
+                    )}
+                    {order.assigned_to && (
+                      <span>Assigned: <span className="text-ink font-medium">{order.assigned_to}</span></span>
+                    )}
+                  </div>
+
+                  {order.items && order.items.length > 0 ? (
+                    <ul className="mt-2 space-y-1">
+                      {order.items.map((item, idx) => (
+                        <li key={item.id} className="flex items-center gap-2 text-[13px]">
+                          <span className="text-ink-3 font-mono text-[11px] w-4 shrink-0">{idx + 1}.</span>
+                          <span className="font-medium text-ink truncate">{item.display_name}</span>
+                          {item.quantity != null && (
+                            <span className="text-ink-3 shrink-0">× {item.quantity} {item.unit_code}</span>
+                          )}
+                          {item.is_fulfilled && (
+                            <span className="text-[10px] bg-ok/10 text-ok px-1.5 rounded-full shrink-0">Outward posted</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    order.product_description && (
+                      <p className="text-[13px] font-medium mt-1">{order.product_description}
+                        {order.quantity != null && (
+                          <span className="text-ink-3 font-normal ml-2">× {order.quantity} {order.unit_code ?? ''}</span>
+                        )}
+                      </p>
+                    )
+                  )}
+
+                  {order.notes && (
+                    <p className="text-[12px] text-ink-3 mt-1 truncate max-w-[500px]">{order.notes}</p>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => openWhatsApp(order)}
+                    title="Send via WhatsApp"
+                  >
+                    <Send size={13} /> WhatsApp
+                  </button>
+
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => showReceipt(order)}
+                    title="Preview and print on thermal paper"
+                  >
+                    <Printer size={13} /> Print
+                  </button>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => pdfReceipt(order)}
+                    title="Download as PDF"
+                  >
+                    <FileDown size={13} /> PDF
+                  </button>
+
+                  {STATUS_NEXT[order.status] && (
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={() => startTransition(() => { advanceStatus(order); })}
+                    >
+                      {order.status === 'IN_PROGRESS' ? <CheckCircle size={13} /> : <Clock size={13} />}
+                      {STATUS_NEXT_LABEL[order.status]}
+                    </button>
+                  )}
+
+                  {canCreate && order.status !== 'COMPLETED' && (
+                    <button
+                      className="btn btn-ghost btn-sm text-ink-3 hover:text-warn hover:bg-warn/10"
+                      onClick={() => handleCancel(order)}
+                      title="Cancel order (restores physical stock)"
+                    >
+                      <Ban size={13} />
+                    </button>
+                  )}
+
+                  {canCreate && (
+                    <button
+                      className="btn btn-ghost btn-sm text-ink-3 hover:text-danger hover:bg-danger-soft"
+                      onClick={() => setDeleteTarget(order)}
+                      title="Delete order"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {order.is_direct && (
+                <div className="mt-3 pt-3 border-t border-line flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] text-ink-3 mr-1">Post in Inventory:</span>
+                  {(['INWARD', 'OUTWARD'] as const).map((step) => {
+                    const at = step === 'INWARD' ? order.direct_inward_at : order.direct_outward_at;
+                    const by = step === 'INWARD' ? order.direct_inward_by : order.direct_outward_by;
+                    return (
+                      <button
+                        key={step}
+                        className={`btn btn-sm ${at ? 'btn-secondary' : 'btn-primary'}`}
+                        onClick={() => markDirect(order, step, !at)}
+                      >
+                        {at ? <CheckCircle size={12} /> : <ArrowDownCircle size={12} />}
+                        {step === 'INWARD' ? 'Inward' : 'Outward'}
+                        {at ? ` done · ${by ?? ''} · ${formatDateTime(at)}` : ' — mark done'}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+    );
+  }
+
+  async function markDirect(order: ProductionOrder, step: 'INWARD' | 'OUTWARD', done: boolean) {
+    if (!done && !window.confirm(`Un-mark ${step.toLowerCase()} as done for ${order.order_no}?`)) return;
+    const { error: derr } = await db.rpc('set_direct_step', { p_order_id: order.id, p_step: step, p_done: done });
+    if (derr) { window.alert(derr.message); return; }
+    const at = done ? new Date().toISOString() : null;
+    const by = done ? session.user.full_name : null;
+    setOrders((prev) => prev.map((o) => o.id !== order.id ? o : (
+      step === 'INWARD'
+        ? { ...o, direct_inward_at: at, direct_inward_by: by }
+        : { ...o, direct_outward_at: at, direct_outward_by: by }
+    )));
+  }
+
+  async function showReceipt(order: ProductionOrder) {
+    setReceipt(await loadReceiptModel(db, order));
+  }
+  async function pdfReceipt(order: ProductionOrder) {
+    await downloadReceiptPdf(await loadReceiptModel(db, order));
+  }
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
@@ -1130,6 +1417,24 @@ export default function ProductionOrdersView({
           onCancel={() => setOutwardTarget(null)}
           recording={recordingOutward}
         />
+      )}
+
+      {receipt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={() => setReceipt(null)}>
+          <div className="bg-surface rounded-xl border border-line shadow-xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+              <p className="text-[14px] font-semibold">Thermal print preview · 80 mm</p>
+              <button className="btn btn-ghost h-7 w-7 p-0" onClick={() => setReceipt(null)}><X size={15} /></button>
+            </div>
+            <div className="overflow-auto bg-subtle p-4">
+              <div className="bg-white shadow mx-auto px-3 py-3 w-fit" dangerouslySetInnerHTML={{ __html: receiptHtml(receipt) }} />
+            </div>
+            <div className="flex justify-end gap-2 px-4 py-3 border-t border-line">
+              <button className="btn btn-secondary" onClick={() => downloadReceiptPdf(receipt)}><FileDown size={14} /> PDF</button>
+              <button className="btn btn-primary" onClick={() => printReceipt(receipt)}><Printer size={14} /> Print</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Header */}
@@ -1178,6 +1483,26 @@ export default function ProductionOrdersView({
 
           {error && <p className="text-[13px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>}
 
+          <div>
+            <div className="inline-flex rounded-lg border border-line bg-subtle p-0.5">
+              {([[false, 'Regular order'], [true, 'Direct order']] as const).map(([v, label]) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setForm((f) => (f.isDirect === v ? f : { ...f, isDirect: v, items: [makeLineItem()] }))}
+                  className={`px-3.5 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
+                    form.isDirect === v ? 'bg-surface shadow-sm text-ink' : 'text-ink-3 hover:text-ink'
+                  }`}
+                >{label}</button>
+              ))}
+            </div>
+            {form.isDirect && (
+              <p className="text-[11px] text-ink-3 mt-1.5">
+                Supplier ships straight to the customer — no SKU and no stock effect. It will be listed under Direct Orders so staff remember to post the inward and outward.
+              </p>
+            )}
+          </div>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="eyebrow mb-1 block">Customer Name</label>
@@ -1203,13 +1528,66 @@ export default function ProductionOrdersView({
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="eyebrow">Items <span className="text-danger">*</span></label>
-              <button type="button" className="btn btn-secondary btn-sm" onClick={addItem}>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => addItem()}>
                 <Plus size={12} /> Add Item
               </button>
             </div>
 
             <div className="space-y-2">
               {form.items.map((li, idx) => {
+                if (form.isDirect) {
+                  return (
+                    <div key={li.id} className="rounded-lg border border-line bg-subtle p-3">
+                      <div className="flex gap-2 items-start">
+                        <span className="text-[11px] text-ink-3 font-mono mt-2.5 w-4 shrink-0 text-center">{idx + 1}</span>
+                        <input
+                          className="field flex-1 min-w-0"
+                          data-name-for={li.id}
+                          placeholder="Type product name, press Enter for next line…"
+                          value={li.manualName}
+                          onChange={(e) => updateItem(li.id, { manualName: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              if (li.manualName.trim() && idx === form.items.length - 1) addItem(true);
+                            }
+                          }}
+                        />
+                        <input
+                          className="field w-24 text-center"
+                          type="number"
+                          min="0"
+                          placeholder="Qty"
+                          value={li.quantity}
+                          onChange={(e) => updateItem(li.id, { quantity: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              if (li.manualName.trim() && idx === form.items.length - 1) addItem(true);
+                            }
+                          }}
+                        />
+                        <select
+                          className="field w-20"
+                          value={li.manualUnit}
+                          onChange={(e) => updateItem(li.id, { manualUnit: e.target.value as 'MM' | 'PCS' })}
+                        >
+                          <option value="MM">MM</option>
+                          <option value="PCS">PCS</option>
+                        </select>
+                        <button
+                          type="button"
+                          className="btn btn-ghost h-8 w-8 p-0 mt-0.5 text-ink-3 hover:text-danger shrink-0"
+                          onClick={() => removeItem(li.id)}
+                          disabled={form.items.length === 1}
+                          title="Remove item"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
                 const otherQty = li.skuSearch.sku
                   ? form.items
                       .filter((other) => other.id !== li.id && other.skuSearch.sku?.id === li.skuSearch.sku!.id)
@@ -1224,9 +1602,16 @@ export default function ProductionOrdersView({
                       .reduce((sum, o) => sum + (parseFloat(o.quantity) || 0), 0)
                   : otherQty;
                 // A Cut Pcs pick may be topped up from new sleeves, so its limit includes free Full Sleeve stock.
-                const freshExtra = grp?.status === 'CUT_PCS'
-                  ? (li.skuSearch.sku?.lot_groups ?? []).filter((g) => g.status === 'FULL_SLEEVE').reduce((a, g) => a + g.total_qty, 0)
-                  : 0;
+                const freshTotal = (li.skuSearch.sku?.lot_groups ?? [])
+                  .filter((g) => g.status === 'FULL_SLEEVE')
+                  .reduce((a, g) => a + g.total_qty, 0);
+                const otherFullQty = form.items
+                  .filter((o) => o.id !== li.id && o.skuSearch.sku?.id === li.skuSearch.sku?.id && o.skuSearch.group?.status === 'FULL_SLEEVE')
+                  .reduce((a, o) => a + (parseFloat(o.quantity) || 0), 0);
+                const freshFree = Math.max(0, freshTotal - otherFullQty);
+                const freshExtra = grp?.status === 'CUT_PCS' ? freshFree : 0;
+                const grpAvail = grp ? Math.max(0, grp.total_qty - otherGroupQty) : 0;
+                const shortfall = grp?.status === 'CUT_PCS' ? (parseFloat(li.quantity) || 0) - grpAvail : 0;
                 const effectiveAtp = li.skuSearch.sku
                   ? (grp ? grp.total_qty + freshExtra - otherGroupQty : li.skuSearch.sku.atp_stock - otherQty)
                   : Infinity;
@@ -1249,12 +1634,19 @@ export default function ProductionOrdersView({
                             allocations: [],
                           })}
                           cacheVersion={skuVersion}
+                          usedElsewhere={(sku, group) => usedElsewhereIn(form.items, li.id, sku, group)}
                           placeholder="Search SKU…"
                         />
                         {li.skuSearch.sku && (
                           <p className="text-[11px] text-ink-3 mt-0.5 pl-0.5">
-                            {li.skuSearch.sku.brand_name} · {li.skuSearch.sku.exact_size}
-                            {grp && <span className="ml-1">· {groupLabel(grp)} {groupText(grp)}</span>}
+                            {grp ? (
+                              <>
+                                <span className={`badge mr-1.5 ${grp.status === 'FULL_SLEEVE' ? 'badge-ok' : 'badge-warn'}`}>{groupLabel(grp)}</span>
+                                {groupText(grp)}
+                              </>
+                            ) : (
+                              <>{li.skuSearch.sku.brand_name} · {li.skuSearch.sku.exact_size}</>
+                            )}
                             {li.skuSearch.sku.reserved_qty > 0 && (
                               <span className="text-warn ml-1">
                                 · {li.skuSearch.sku.reserved_qty} reserved
@@ -1282,11 +1674,6 @@ export default function ProductionOrdersView({
                             <p className="text-[10px] text-center mt-0.5 leading-tight">
                               <span className="text-ink-3">{li.skuSearch.sku.unit_code} · </span>
                               <span className="text-ok">{Math.max(0, grp.total_qty - otherGroupQty)} avail</span>
-                              {grp.status === 'CUT_PCS' && (parseFloat(li.quantity) || 0) > grp.total_qty - otherGroupQty && (
-                                <span className="text-warn block">
-                                  +{(parseFloat(li.quantity) || 0) - (grp.total_qty - otherGroupQty)} from new sleeve
-                                </span>
-                              )}
                             </p>
                           ) : (
                             <AtpBadge sku={li.skuSearch.sku} qty={li.quantity} otherQty={otherQty} />
@@ -1303,6 +1690,18 @@ export default function ProductionOrdersView({
                         <X size={14} />
                       </button>
                     </div>
+
+                    {grp?.status === 'CUT_PCS' && shortfall > 0 && freshFree > 0 && (
+                      <div className="pl-6 mt-2">
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => addFromNewSleeve(li.id)}
+                        >
+                          <Plus size={12} /> Add from new sleeve ({shortfall} {li.skuSearch.sku?.unit_code} more)
+                        </button>
+                      </div>
+                    )}
 
                     {isLotTracked && qtyNum > 0 && (
                       <LotAllocationPicker
@@ -1322,7 +1721,7 @@ export default function ProductionOrdersView({
             <button
               type="button"
               className="mt-2 w-full rounded-lg border border-dashed border-line py-2 text-[12px] text-ink-3 hover:border-brand hover:text-brand transition-colors"
-              onClick={addItem}
+              onClick={() => addItem()}
             >
               <Plus size={12} className="inline mr-1" />Add another item
             </button>
@@ -1410,7 +1809,7 @@ export default function ProductionOrdersView({
       >
       <div className="p-4 space-y-3">
       {/* Empty state */}
-      {orders.length === 0 && (
+      {regularOrders.length === 0 && (
         <div className="card p-10 text-center">
           <p className="text-[13px] text-ink-3">No production orders yet. Create one to get started.</p>
         </div>
@@ -1419,110 +1818,7 @@ export default function ProductionOrdersView({
       {/* ── Active Orders ── */}
       {activeOrders.length > 0 && (
         <div className="space-y-3">
-          {activeOrders.map((order) => (
-            <div key={order.id} className="card p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[11px] font-mono text-ink-3">{order.order_no}</span>
-                    <span className={`badge ${STATUS_BADGE[order.status]}`}>{STATUS_LABEL[order.status]}</span>
-                    {order.time_tag && (
-                      <span className="text-[11px] bg-subtle border border-line rounded-full px-2 py-0.5 text-ink-2">
-                        ⏱ {order.time_tag}
-                      </span>
-                    )}
-                    {order.created_at && (
-                      <span className="text-[11px] text-ink-3">🕐 {formatDateTime(order.created_at)}</span>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1.5 text-[12px] text-ink-3">
-                    {order.customer_name && (
-                      <span>Customer: <span className="text-ink">{order.customer_name}</span></span>
-                    )}
-                    {order.delivery_mode && (
-                      <span>
-                        Delivery: <span className="text-ink">{order.delivery_mode}</span>
-                        {order.delivery_note ? <span className="text-ink-3"> ({order.delivery_note})</span> : null}
-                      </span>
-                    )}
-                    {order.assigned_to && (
-                      <span>Assigned: <span className="text-ink font-medium">{order.assigned_to}</span></span>
-                    )}
-                  </div>
-
-                  {order.items && order.items.length > 0 ? (
-                    <ul className="mt-2 space-y-1">
-                      {order.items.map((item, idx) => (
-                        <li key={item.id} className="flex items-center gap-2 text-[13px]">
-                          <span className="text-ink-3 font-mono text-[11px] w-4 shrink-0">{idx + 1}.</span>
-                          <span className="font-medium text-ink truncate">{item.display_name}</span>
-                          {item.quantity != null && (
-                            <span className="text-ink-3 shrink-0">× {item.quantity} {item.unit_code}</span>
-                          )}
-                          {item.is_fulfilled && (
-                            <span className="text-[10px] bg-ok/10 text-ok px-1.5 rounded-full shrink-0">Outward posted</span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    order.product_description && (
-                      <p className="text-[13px] font-medium mt-1">{order.product_description}
-                        {order.quantity != null && (
-                          <span className="text-ink-3 font-normal ml-2">× {order.quantity} {order.unit_code ?? ''}</span>
-                        )}
-                      </p>
-                    )
-                  )}
-
-                  {order.notes && (
-                    <p className="text-[12px] text-ink-3 mt-1 truncate max-w-[500px]">{order.notes}</p>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => openWhatsApp(order)}
-                    title="Send via WhatsApp"
-                  >
-                    <Send size={13} /> WhatsApp
-                  </button>
-
-                  {STATUS_NEXT[order.status] && (
-                    <button
-                      className="btn btn-primary btn-sm"
-                      onClick={() => startTransition(() => { advanceStatus(order); })}
-                    >
-                      {order.status === 'IN_PROGRESS' ? <CheckCircle size={13} /> : <Clock size={13} />}
-                      {STATUS_NEXT_LABEL[order.status]}
-                    </button>
-                  )}
-
-                  {canCreate && order.status !== 'COMPLETED' && (
-                    <button
-                      className="btn btn-ghost btn-sm text-ink-3 hover:text-warn hover:bg-warn/10"
-                      onClick={() => handleCancel(order)}
-                      title="Cancel order (restores physical stock)"
-                    >
-                      <Ban size={13} />
-                    </button>
-                  )}
-
-                  {canCreate && (
-                    <button
-                      className="btn btn-ghost btn-sm text-ink-3 hover:text-danger hover:bg-danger-soft"
-                      onClick={() => setDeleteTarget(order)}
-                      title="Delete order"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
+          {activeOrders.map((order) => renderOrderCard(order))}
         </div>
       )}
 
@@ -1566,6 +1862,23 @@ export default function ProductionOrdersView({
         </details>
       )}
       </div>
+      </Pane>
+
+      {/* ── 2b. Direct orders ── */}
+      <Pane
+        title="Direct Orders"
+        subtitle="supplier ships straight to customer — remember to post inward and outward"
+        count={pendingDirect}
+        tone="warn"
+        open={directOpen}
+        onToggle={() => setDirectOpen((v) => !v)}
+      >
+        <div className="p-4 space-y-3">
+          {directOrders.length === 0 && (
+            <p className="text-[13px] text-ink-3">No direct orders yet. Choose “Direct order” when creating one.</p>
+          )}
+          {directOrders.map((order) => renderOrderCard(order))}
+        </div>
       </Pane>
 
       {/* ── 3. Movements ── */}

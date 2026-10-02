@@ -33,7 +33,7 @@
  *   />
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, RefreshCw, Wand2 } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { fmtQty } from '@/lib/format';
@@ -75,7 +75,7 @@ export default function LotAllocationPicker({
   disabled?: boolean;
 }) {
   const [allLots, setAllLots] = useState<AvailableLot[]>([]);
-  const [showFresh, setShowFresh] = useState(false);
+  const autoKey = useRef('');
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
 
@@ -102,24 +102,12 @@ export default function LotAllocationPicker({
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [skuId]);
-  useEffect(() => { setShowFresh(false); }, [lotFilter?.status, lotFilter?.pieceQty]);
 
-  // Lots in the picked classification; fresh sleeves are revealed on demand.
+
+  // Lots in the picked classification only (new sleeves are separate order lines).
   const lots = useMemo(() => {
     if (!lotFilter) return allLots;
-    const main = allLots.filter((l) => l.status === lotFilter.status && l.current_qty === lotFilter.pieceQty);
-    if (!showFresh || lotFilter.status === 'FULL_SLEEVE') return main;
-    const fresh = allLots.filter((l) => l.status === 'FULL_SLEEVE' && !main.some((m) => m.id === l.id));
-    return [...main, ...fresh];
-  }, [allLots, lotFilter, showFresh]);
-  const freshAvailable = useMemo(
-    () => !!lotFilter && lotFilter.status === 'CUT_PCS' && allLots.some((l) => l.status === 'FULL_SLEEVE'),
-    [allLots, lotFilter],
-  );
-  const mainTotal = useMemo(() => {
-    if (!lotFilter) return 0;
-    return allLots.filter((l) => l.status === lotFilter.status && l.current_qty === lotFilter.pieceQty)
-      .reduce((s, l) => s + l.free_qty, 0);
+    return allLots.filter((l) => l.status === lotFilter.status && l.current_qty === lotFilter.pieceQty);
   }, [allLots, lotFilter]);
 
   const totalAllocated = useMemo(
@@ -139,7 +127,6 @@ export default function LotAllocationPicker({
     const next: LotAllocation[] = [];
     for (const lot of lots) {
       if (need <= 0) break;
-      if (lotFilter && lot.status !== lotFilter.status) continue; // new sleeves are added manually
       const take = Math.min(need, lot.free_qty);
       if (take > 0) {
         next.push({
@@ -168,6 +155,17 @@ export default function LotAllocationPicker({
     onChange(next, total === qtyNeeded);
   };
 
+  // When a classification was chosen in the search, fill the lots automatically
+  // (re-fills when the quantity changes; manual per-lot edits stay until then).
+  useEffect(() => {
+    if (!lotFilter || loading || disabled || qtyNeeded <= 0 || lots.length === 0) return;
+    const key = `${qtyNeeded}|${lotFilter.status}|${lotFilter.pieceQty}|${lots.length}`;
+    if (autoKey.current === key) return;
+    autoKey.current = key;
+    autoFill();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, lots, qtyNeeded, lotFilter?.status, lotFilter?.pieceQty]);
+
   const valueFor = (lotId: string) => value.find((a) => a.lot_id === lotId)?.qty ?? 0;
 
   if (!skuId || qtyNeeded <= 0) return null;
@@ -180,7 +178,7 @@ export default function LotAllocationPicker({
     return <p className="text-[11px] text-danger mt-2">Could not load lots: {err}</p>;
   }
 
-  if (lots.length === 0 && !freshAvailable) {
+  if (lots.length === 0) {
     return (
       <div className="mt-2 flex items-start gap-1.5 text-[11px] text-ink-3 bg-subtle border border-line rounded-md px-2.5 py-2">
         <AlertTriangle size={12} className="mt-0.5 shrink-0 text-warn" />
@@ -232,9 +230,6 @@ export default function LotAllocationPicker({
                 {fmtQty(lot.free_qty, unitCode)} free
                 {lot.free_qty < lot.current_qty && ' *'}
               </span>
-              {lotFilter && lot.status === 'FULL_SLEEVE' && lotFilter.status === 'CUT_PCS' && (
-                <span className="badge shrink-0">New sleeve</span>
-              )}
               <input
                 type="number"
                 min={0}
@@ -249,34 +244,6 @@ export default function LotAllocationPicker({
           );
         })}
       </div>
-
-      {freshAvailable && !showFresh && !disabled && (
-        <button
-          type="button"
-          onClick={() => setShowFresh(true)}
-          className="btn btn-secondary btn-sm !h-7 text-[11px] flex items-center gap-1"
-        >
-          + Add from new sleeve
-        </button>
-      )}
-      {showFresh && lotFilter?.status === 'CUT_PCS' && qtyNeeded > mainTotal && (
-        <p className="text-[11px] text-ink-3">
-          {fmtQty(qtyNeeded - Math.min(mainTotal, qtyNeeded), unitCode)} more needed beyond the cut pieces — enter it against a new sleeve.
-        </p>
-      )}
-      {(() => {
-        const opened = value.filter((a) => a.status === 'FULL_SLEEVE' && lotFilter?.status === 'CUT_PCS');
-        if (opened.length === 0) return null;
-        return (
-          <div className="space-y-0.5">
-            {opened.map((a) => (
-              <p key={a.lot_id} className="text-[11px] text-ok">
-                New sleeve {a.lot_no}: {fmtQty(a.qty, unitCode)} used, {fmtQty(Math.max(0, a.roll_length_mm - a.qty), unitCode)} left → becomes Cut Pcs
-              </p>
-            ))}
-          </div>
-        );
-      })()}
 
       <div className={`flex items-center gap-1.5 text-[11px] pt-1 border-t border-line ${
         isComplete ? 'text-ok' : remaining > 0 ? 'text-warn' : 'text-danger'
