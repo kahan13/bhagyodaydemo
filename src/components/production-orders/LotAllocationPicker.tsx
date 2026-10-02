@@ -63,6 +63,7 @@ export default function LotAllocationPicker({
   value,
   onChange,
   lotFilter,
+  reservedByEarlier,
   disabled = false,
 }: {
   skuId: string;
@@ -72,15 +73,17 @@ export default function LotAllocationPicker({
   onChange: (next: LotAllocation[], isComplete: boolean) => void;
   /** Restrict to one classification (e.g. Full Sleeve, 50 mm pieces). */
   lotFilter?: { status: 'FULL_SLEEVE' | 'CUT_PCS'; pieceQty: number };
+  /** lot_id → quantity already picked on lines above this one (so two lines never pick the same roll) */
+  reservedByEarlier?: Record<string, number>;
   disabled?: boolean;
 }) {
-  const [allLots, setAllLots] = useState<AvailableLot[]>([]);
+  const [rawLots, setRawLots] = useState<AvailableLot[]>([]);
   const autoKey = useRef('');
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
 
   const load = async () => {
-    if (!skuId) { setAllLots([]); setLoading(false); return; }
+    if (!skuId) { setRawLots([]); setLoading(false); return; }
     setLoading(true); setErr('');
     const { data, error } = await supabaseBrowser()
       .from('v_lot_free')
@@ -97,12 +100,21 @@ export default function LotAllocationPicker({
     const rows = ((data ?? []) as AvailableLot[]).map((l) => ({
       ...l, current_qty: Number(l.current_qty), free_qty: Number(l.free_qty),
     }));
-    setAllLots(rows);
+    setRawLots(rows);
     setLoading(false);
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [skuId]);
 
+
+  const reservedKey = JSON.stringify(reservedByEarlier ?? {});
+  const allLots = useMemo(
+    () => rawLots
+      .map((l) => ({ ...l, free_qty: l.free_qty - ((reservedByEarlier ?? {})[l.id] ?? 0) }))
+      .filter((l) => l.free_qty > 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawLots, reservedKey],
+  );
 
   // Lots in the picked classification only (new sleeves are separate order lines).
   const lots = useMemo(() => {
@@ -159,12 +171,12 @@ export default function LotAllocationPicker({
   // (re-fills when the quantity changes; manual per-lot edits stay until then).
   useEffect(() => {
     if (!lotFilter || loading || disabled || qtyNeeded <= 0 || lots.length === 0) return;
-    const key = `${qtyNeeded}|${lotFilter.status}|${lotFilter.pieceQty}|${lots.length}`;
+    const key = `${qtyNeeded}|${lotFilter.status}|${lotFilter.pieceQty}|${lots.length}|${reservedKey}`;
     if (autoKey.current === key) return;
     autoKey.current = key;
     autoFill();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, lots, qtyNeeded, lotFilter?.status, lotFilter?.pieceQty]);
+  }, [loading, lots, qtyNeeded, lotFilter?.status, lotFilter?.pieceQty, reservedKey]);
 
   const valueFor = (lotId: string) => value.find((a) => a.lot_id === lotId)?.qty ?? 0;
 

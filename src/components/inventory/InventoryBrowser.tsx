@@ -8,7 +8,7 @@ import { fmtQty, fmtRelative, CHANNEL_LABEL } from '@/lib/format';
 import { HIERARCHY, type Movement, type Permission, type ProductType, type Sku } from '@/lib/types';
 import MovementDialog from '@/components/inventory/MovementDialog';
 import SkuLotsPanel from '@/components/inventory/SkuLotsPanel';
-import LotBreakdown from '@/components/inventory/LotBreakdown';
+import LotBreakdown, { groupsInline, groupText } from '@/components/inventory/LotBreakdown';
 import { TYPE_META } from '@/lib/sheet-config';
 
 const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
@@ -30,6 +30,12 @@ export default function InventoryBrowser({
   const [type, setType] = useState<ProductType>(initialType);
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<'CUT_PCS' | 'FULL_SLEEVE' | 'ALL'>('ALL');
+  const [view, setView] = useState<'drill' | 'list'>('drill');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [fFamily, setFFamily] = useState('');
+  const [fSection, setFSection] = useState('');
+  const [fMake, setFMake] = useState('');
+  const [fSize, setFSize] = useState('');
   const [lowOnly, setLowOnly] = useState(false);
   const [l1, setL1] = useState<string | null>(null);
   const [l2, setL2] = useState<string | null>(null);
@@ -125,8 +131,62 @@ export default function InventoryBrowser({
 
   function switchType(next: ProductType) {
     setType(next); setL1(null); setL2(null); setSelected(null);
+    setFFamily(''); setFSection(''); setFMake(''); setFSize('');
     setExpandedL1(null); setExpandedL2(null); setExpandedL3(null);
   }
+
+  function switchView(v: 'drill' | 'list') {
+    setView(v);
+    setTab(v === 'list' ? 'CUT_PCS' : 'ALL');   // list opens on Cut Pcs, drill-down on Show all
+  }
+
+  const origOf = (s: Sku) => skus.find((x) => x.sku_code === s.sku_code) ?? s;
+
+  /** Jump straight to one product: right type, family, section, row selected, details open. */
+  function openSku(s: Sku) {
+    setType(s.product_type);
+    setL1(s.hier_l1);
+    setL2(s.hier_l2);
+    setExpandedL1(null); setExpandedL2(null); setExpandedL3(null);
+    setSelected(origOf(s));
+    setSearchOpen(false);
+  }
+
+  const searchHits = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return viewSkus.filter((s) => {
+      if (lowOnly && s.stock_status === 'OK') return false;
+      return (
+        s.exact_size.toLowerCase().includes(q) ||
+        s.brand_name.toLowerCase().includes(q) ||
+        s.family_code.toLowerCase().includes(q) ||
+        s.sku_code.toLowerCase().includes(q) ||
+        s.display_name.toLowerCase().includes(q)
+      );
+    }).slice(0, 8);
+  }, [viewSkus, query, lowOnly]);
+
+  // List view: rows of the current product type, narrowed by the filters
+  const sectionOf = (s: Sku) => s.section ?? s.colour ?? s.hier_l2;
+  const typeRows = useMemo(() => viewSkus.filter((s) => s.product_type === type), [viewSkus, type]);
+  const uniq = (f: (s: Sku) => string) => [...new Set(typeRows.map(f).filter(Boolean))].sort(collator.compare);
+  const familyOpts = useMemo(() => uniq((s) => s.hier_l1), [typeRows]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const sectionOpts = useMemo(() => uniq(sectionOf), [typeRows]);          // eslint-disable-line react-hooks/exhaustive-deps
+  const makeOpts = useMemo(() => uniq((s) => s.brand_name), [typeRows]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const listRows = useMemo(() => {
+    return pool
+      .filter((s) =>
+        (!fFamily || s.hier_l1 === fFamily) &&
+        (!fSection || sectionOf(s) === fSection) &&
+        (!fMake || s.brand_name === fMake) &&
+        (!fSize || s.exact_size.toLowerCase().includes(fSize.toLowerCase()) || s.hier_l3.toLowerCase().includes(fSize.toLowerCase())))
+      .sort((a, b) =>
+        collator.compare(a.hier_l1, b.hier_l1) ||
+        collator.compare(sectionOf(a), sectionOf(b)) ||
+        collator.compare(a.hier_l3, b.hier_l3) ||
+        collator.compare(a.brand_name, b.brand_name));
+  }, [pool, fFamily, fSection, fMake, fSize]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── drag-to-resize ──────────────────────────────────────────────────────────
   const onDividerMouseDown = useCallback((divider: 0 | 1, e: React.MouseEvent) => {
@@ -215,8 +275,33 @@ export default function InventoryBrowser({
               className="field pl-9"
               placeholder="Search size, brand or SKU"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => { setQuery(e.target.value); setSearchOpen(true); }}
+              onFocus={() => setSearchOpen(true)}
+              onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
             />
+            {searchOpen && searchHits.length > 0 && (
+              <div className="absolute z-30 left-0 right-0 top-full mt-1 rounded-lg border border-line bg-surface shadow-lg max-h-80 overflow-y-auto">
+                {searchHits.map((s) => (
+                  <button
+                    key={s.sku_code}
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); openSku(s); }}
+                    className="w-full text-left px-3 py-2 hover:bg-subtle border-b border-line last:border-0"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[13px] font-medium truncate">{s.exact_size} <span className="text-ink-2 font-normal">· {s.brand_name}</span></span>
+                      <span className="text-[11px] text-ink-3 shrink-0">{HIERARCHY[s.product_type].short}</span>
+                    </div>
+                    <div className="text-[11px] text-ink-3 truncate">
+                      {s.hier_l1} › {sectionOf(s)}
+                      {s.lot_groups && s.lot_groups.length > 0
+                        ? <span className="text-ink-2"> · {groupsInline(s.lot_groups)}</span>
+                        : <span className="text-ink-2"> · {fmtQty(s.current_stock, s.unit_code)}</span>}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
             {query && (
               <button className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink" onClick={() => setQuery('')} aria-label="Clear">
                 <X size={14} />
@@ -231,7 +316,21 @@ export default function InventoryBrowser({
             <TrendingDown size={13} /> Below minimum
           </button>
 
-          <span className="ml-auto text-[12px] text-ink-3 num">{pool.length} SKUs</span>
+          <div className="ml-auto flex items-center gap-3">
+            <div className="inline-flex rounded-lg border border-line bg-subtle p-0.5">
+              {([['drill', 'Drill-down'], ['list', 'List']] as const).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => switchView(v)}
+                  className={`px-3 py-1 rounded-md text-[12px] font-medium transition-colors ${
+                    view === v ? 'bg-surface shadow-sm text-ink' : 'text-ink-3 hover:text-ink'
+                  }`}
+                >{label}</button>
+              ))}
+            </div>
+            <span className="text-[12px] text-ink-3 num">{(view === 'list' ? listRows : pool).length} SKUs</span>
+          </div>
         </div>
 
         <div className="flex items-center gap-6 mt-3.5">
@@ -259,6 +358,89 @@ export default function InventoryBrowser({
 
       {/* drill panes */}
       <div className="flex-1 min-h-0 flex">
+        {view === 'list' ? (
+          <div className="flex-1 min-w-0 flex flex-col">
+            <div className="flex flex-wrap items-center gap-2 px-4 lg:px-6 py-2.5 border-b border-line bg-surface">
+              <select className="field w-auto h-8 text-[12px]" value={fFamily} onChange={(e) => setFFamily(e.target.value)}>
+                <option value="">All families</option>
+                {familyOpts.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+              <select className="field w-auto h-8 text-[12px]" value={fSection} onChange={(e) => setFSection(e.target.value)}>
+                <option value="">All {type === 'CONVEYOR_BELT' ? 'colours' : 'sections'}</option>
+                {sectionOpts.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+              <select className="field w-auto h-8 text-[12px]" value={fMake} onChange={(e) => setFMake(e.target.value)}>
+                <option value="">All makes</option>
+                {makeOpts.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+              <input
+                className="field w-32 h-8 text-[12px]"
+                placeholder="Size…"
+                value={fSize}
+                onChange={(e) => setFSize(e.target.value)}
+              />
+              {(fFamily || fSection || fMake || fSize) && (
+                <button
+                  className="text-[12px] text-brand hover:underline"
+                  onClick={() => { setFFamily(''); setFSection(''); setFMake(''); setFSize(''); }}
+                >Clear filters</button>
+              )}
+            </div>
+            <div className="flex-1 scroll bg-surface">
+              <table className="w-full text-[13px]">
+                <thead className="sticky top-0 bg-surface z-10">
+                  <tr className="text-left border-b border-line">
+                    <th className="eyebrow px-4 lg:px-6 py-2 font-medium">Family</th>
+                    <th className="eyebrow px-2 py-2 font-medium">{type === 'CONVEYOR_BELT' ? 'Colour' : 'Section'}</th>
+                    <th className="eyebrow px-2 py-2 font-medium">Size</th>
+                    <th className="eyebrow px-2 py-2 font-medium">Make</th>
+                    <th className="eyebrow px-2 py-2 font-medium">Cut Pcs</th>
+                    <th className="eyebrow px-2 py-2 font-medium">Full Sleeve</th>
+                    <th className="eyebrow px-4 lg:px-6 py-2 font-medium text-right">Stock</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading && <tr><td colSpan={7} className="p-6"><Skelly /></td></tr>}
+                  {!loading && listRows.length === 0 && (
+                    <tr><td colSpan={7} className="p-6 text-center text-ink-3">Nothing matches.</td></tr>
+                  )}
+                  {listRows.map((s) => {
+                    const cut = (s.lot_groups ?? []).filter((g) => g.status === 'CUT_PCS');
+                    const full = (s.lot_groups ?? []).filter((g) => g.status === 'FULL_SLEEVE');
+                    const active = selected?.sku_code === s.sku_code;
+                    return (
+                      <tr
+                        key={s.sku_code}
+                        onClick={() => setSelected(origOf(s))}
+                        className={`border-b border-line cursor-pointer hover:bg-subtle ${active ? 'bg-brand/5' : ''}`}
+                      >
+                        <td className="px-4 lg:px-6 py-2 text-ink-2">{s.hier_l1}</td>
+                        <td className="px-2 py-2">{sectionOf(s)}</td>
+                        <td className="px-2 py-2 font-medium">{s.hier_l3}</td>
+                        <td className="px-2 py-2 text-ink-2">{s.brand_name}</td>
+                        <td className="px-2 py-2 num">
+                          {s.product_type !== 'TIMING_BELT' ? <span className="text-ink-3">—</span>
+                            : cut.length ? cut.map((g) => <div key={g.piece_qty}>{groupText(g)}</div>) : <span className="text-ink-3">—</span>}
+                        </td>
+                        <td className="px-2 py-2 num">
+                          {s.product_type !== 'TIMING_BELT' ? <span className="text-ink-3">—</span>
+                            : full.length ? full.map((g) => <div key={g.piece_qty}>{groupText(g)}</div>) : <span className="text-ink-3">—</span>}
+                        </td>
+                        <td className="px-4 lg:px-6 py-2 text-right">
+                          <span className="inline-flex items-center gap-1.5 justify-end">
+                            {s.stock_status === 'OUT_OF_STOCK' && <span className="badge badge-danger">Out</span>}
+                            {s.stock_status === 'LOW_STOCK' && <span className="badge badge-warn">Low</span>}
+                            <span className="num font-medium">{fmtQty(s.current_stock, s.unit_code)}</span>
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
         <div ref={containerRef} className="flex-1 min-w-0 flex select-none">
 
           {/* L1 column */}
@@ -417,6 +599,7 @@ export default function InventoryBrowser({
             </div>
           </div>
         </div>
+        )}
 
         <aside className="w-[350px] shrink-0 border-l border-line bg-surface hidden xl:flex flex-col">
           <DetailPanel

@@ -935,7 +935,8 @@ export default function ProductionOrdersView({
     }
   }
 
-  /** Cut Pcs line can't cover the quantity: cap it and add a Full Sleeve line for the rest. */
+  /** Cut Pcs line can't cover the quantity: cap it, then add one Full Sleeve line PER ROLL needed
+   *  (a roll is at most roll-size long: 70 short with 50 mm rolls → a 50 line and a 20 line). */
   function addFromNewSleeve(id: string) {
     setForm((f) => {
       const idx = f.items.findIndex((x) => x.id === id);
@@ -944,23 +945,58 @@ export default function ProductionOrdersView({
       const grp = li?.skuSearch.group;
       if (!sku || !grp) return f;
       const avail = Math.max(0, grp.total_qty - usedElsewhereIn(f.items, id, sku, grp));
-      const shortfall = (parseFloat(li.quantity) || 0) - avail;
-      if (shortfall <= 0) return f;
-      const fulls = (sku.lot_groups ?? []).filter((g) => g.status === 'FULL_SLEEVE');
-      const freeOf = (g: LotGroup) => g.total_qty - usedElsewhereIn(f.items, id, sku, g);
-      const pick = fulls.find((g) => freeOf(g) > 0);
-      if (!pick) return f;
-      const fresh: LineItem = {
-        ...makeLineItem(),
-        skuSearch: { sku, query: sku.display_name, group: pick },
-        quantity: String(Math.min(shortfall, freeOf(pick))),
-      };
+      let remaining = (parseFloat(li.quantity) || 0) - avail;
+      if (remaining <= 0) return f;
+      const full = (sku.lot_groups ?? []).find((g) => g.status === 'FULL_SLEEVE');
+      if (!full) return f;
+      let rollsLeft = Math.max(0, full.pieces - f.items.filter((o) =>
+        o.id !== id && o.skuSearch.sku?.id === sku.id && o.skuSearch.group?.status === 'FULL_SLEEVE').length);
+      const lines: LineItem[] = [];
+      while (remaining > 0 && rollsLeft > 0) {
+        const take = Math.min(remaining, full.piece_qty);
+        lines.push({
+          ...makeLineItem(),
+          skuSearch: { sku, query: sku.display_name, group: full },
+          quantity: String(take),
+        });
+        remaining -= take;
+        rollsLeft -= 1;
+      }
+      if (lines.length === 0) return f;
       const items = [...f.items];
       items[idx] = { ...li, quantity: avail > 0 ? String(avail) : '', allocations: [] };
-      items.splice(idx + 1, 0, fresh);
+      items.splice(idx + 1, 0, ...lines);
       return { ...f, items };
     });
   }
+
+  /** Quantity typed on a line. A Full Sleeve line can't exceed one roll: extra becomes more lines. */
+  function setLineQty(id: string, value: string) {
+    setForm((f) => {
+      const idx = f.items.findIndex((x) => x.id === id);
+      const li = f.items[idx];
+      const grp = li?.skuSearch.group;
+      const sku = li?.skuSearch.sku;
+      const n = parseFloat(value);
+      if (!li || !sku || !grp || grp.status !== 'FULL_SLEEVE' || !(n > grp.piece_qty)) {
+        return { ...f, items: f.items.map((x) => x.id === id ? { ...x, quantity: value } : x) };
+      }
+      let remaining = n - grp.piece_qty;
+      let rollsLeft = Math.max(0, grp.pieces - f.items.filter((o) =>
+        o.skuSearch.sku?.id === sku.id && o.skuSearch.group?.status === 'FULL_SLEEVE').length);
+      const lines: LineItem[] = [];
+      while (remaining > 0 && rollsLeft > 0) {
+        const take = Math.min(remaining, grp.piece_qty);
+        lines.push({ ...makeLineItem(), skuSearch: { sku, query: sku.display_name, group: grp }, quantity: String(take) });
+        remaining -= take;
+        rollsLeft -= 1;
+      }
+      const items = f.items.map((x) => x.id === id ? { ...x, quantity: String(grp.piece_qty), allocations: [] } : x);
+      items.splice(idx + 1, 0, ...lines);
+      return { ...f, items };
+    });
+  }
+
   function removeItem(id: string) {
     setForm((f) => ({
       ...f,
@@ -1729,7 +1765,7 @@ export default function ProductionOrdersView({
                           min="0"
                           placeholder="Qty"
                           value={li.quantity}
-                          onChange={(e) => updateItem(li.id, { quantity: e.target.value })}
+                          onChange={(e) => setLineQty(li.id, e.target.value)}
                         />
                         {li.skuSearch.sku && (
                           grp ? (
@@ -1775,6 +1811,11 @@ export default function ProductionOrdersView({
                         unitCode={li.skuSearch.sku!.unit_code}
                         qtyNeeded={qtyNum}
                         lotFilter={grp ? { status: grp.status, pieceQty: grp.piece_qty } : undefined}
+                        reservedByEarlier={(() => {
+                          const m: Record<string, number> = {};
+                          for (const o of form.items.slice(0, idx)) for (const a of o.allocations) m[a.lot_id] = (m[a.lot_id] ?? 0) + a.qty;
+                          return m;
+                        })()}
                         value={li.allocations}
                         onChange={(next) => updateItem(li.id, { allocations: next })}
                       />
