@@ -66,7 +66,7 @@ export default async function TransactionsPage({
     .select(
       'id,txn_no,occurred_at,txn_type,txn_mode,quantity,unit_code,previous_stock,new_stock,' +
       'notes,channel,user_name,operated_by_name,invoice_no,sku_code,display_name,product_type,exact_size,' +
-      'brand_name,family_code,is_reversed,reversal_of,lot_breakdown,lot_tracked',
+      'brand_name,family_code,is_reversed,reversal_of,lot_breakdown,lot_tracked,lot_state',
       { count: 'exact' },
     )
     .order('occurred_at', { ascending: false });

@@ -5,6 +5,7 @@ import { useState, useTransition } from 'react';
 import { Undo2, X, SlidersHorizontal, Download } from 'lucide-react';
 import { fmtDate, fmtTime, fmtQty } from '@/lib/format';
 import type { Movement } from '@/lib/types';
+import { qtySplit, lotTone, snapTotal, LOT_NAME, type SnapGroup } from '@/lib/lotView';
 
 const RANGES: [string, string][] = [
   ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'This week'],
@@ -130,18 +131,17 @@ export default function TransactionsView({
               <tr>
                 <th>Date</th>
                 <th>Time</th>
-                <th>Txn No</th>
+                <th>Invoice No</th>
                 <th>Type</th>
                 <th>Product Type</th>
                 <th>Size</th>
                 <th>Brand</th>
-                <th className="text-right">Qty</th>
-                <th className="text-right">Before</th>
-                <th className="text-right">After</th>
+                <th>Qty (by lot)</th>
+                <th>Before (lot-wise)</th>
+                <th>After (lot-wise)</th>
                 <th>Entered By</th>
                 <th>Operated By</th>
-                <th>Lots</th>
-                <th>Invoice No</th>
+                <th>Txn No</th>
                 {canReverse && <th />}
               </tr>
             </thead>
@@ -150,13 +150,14 @@ export default function TransactionsView({
                 <tr key={m.id} className={m.is_reversed ? 'opacity-55' : undefined}>
                   <td className="num text-ink-2" suppressHydrationWarning>{fmtDate(m.occurred_at)}</td>
                   <td className="num text-ink-3" suppressHydrationWarning>{fmtTime(m.occurred_at)}</td>
-                  <td className="font-mono text-[13px] text-ink-3">{m.txn_no}</td>
+                  <td className="font-mono text-[14px] font-semibold text-ink-2 whitespace-nowrap">{m.invoice_no ?? '—'}</td>
                   <td>
                     <span className={`badge ${
-                      m.txn_type === 'INWARD' ? 'badge-ok'
+                      isWaste(m) ? 'badge-danger'
+                        : m.txn_type === 'INWARD' ? 'badge-ok'
                         : m.txn_type === 'OUTWARD' ? 'badge-brand' : 'badge-warn'
                     }`}>
-                      {m.txn_type.toLowerCase()}
+                      {typeLabel(m)}
                     </span>
                     {m.txn_mode === 'REVERSAL' && <span className="badge badge-neutral ml-1">reversal</span>}
                     {m.is_reversed && <span className="badge badge-neutral ml-1">reversed</span>}
@@ -166,16 +167,12 @@ export default function TransactionsView({
                   </td>
                   <td className="font-medium max-w-[160px] truncate" title={m.sku_code}>{m.exact_size}</td>
                   <td className="text-ink-2">{m.brand_name}</td>
-                  <td className={`num text-right font-medium ${m.txn_type === 'OUTWARD' ? 'q-out' : m.txn_type === 'INWARD' ? 'q-in' : 'q-left'}`}>
-                    {m.txn_type === 'OUTWARD' ? '−' : m.txn_type === 'INWARD' ? '+' : '±'}
-                    {fmtQty(Math.abs(m.quantity), m.unit_code)}
-                  </td>
-                  <td className="num text-right">{fmtQty(m.previous_stock)}</td>
-                  <td className="num text-right q-total">{fmtQty(m.new_stock)}</td>
+                  <td className="min-w-[190px]"><QtyCell m={m} /></td>
+                  <td className="min-w-[200px]"><StateCell m={m} which="before" /></td>
+                  <td className="min-w-[200px]"><StateCell m={m} which="after" /></td>
                   <td className="text-ink-2">{m.user_name}</td>
                   <td className="text-ink-3">{(m as Movement & { operated_by_name?: string }).operated_by_name ?? '—'}</td>
-                  <td><LotCell m={m} /></td>
-                  <td className="text-ink-3 font-mono text-[14px]">{(m as Movement & { invoice_no?: string }).invoice_no ?? '—'}</td>
+                  <td className="font-mono text-[13px] text-ink-3 whitespace-nowrap">{m.txn_no}</td>
                   {canReverse && (
                     <td className="text-right">
                       {m.txn_mode === 'NORMAL' && !m.is_reversed && (
@@ -232,30 +229,68 @@ function Select({ label, value, onChange, options, width = 'w-[124px]' }: {
   );
 }
 
-const LOT_LABEL: Record<string, string> = {
-  FULL_SLEEVE: 'Full Sleeve', CUT_PCS: 'Cut Pcs', EXHAUSTED: 'used up', WASTED: 'wasted',
-};
-
-/** One line per lot, e.g. "30 mm from Cut Pcs · LOT-…-0003". */
+/** One line per lot for the reverse dialog, e.g. "30 mm from Cut Pcs · LOT-…-0003". */
 function lotLines(m: Movement): string[] {
   const b = m.lot_breakdown;
   if (!b || b.length === 0) return [];
-  const verb = m.txn_mode === 'REVERSAL'
-    ? (m.txn_type === 'INWARD' ? 'put back into' : 'closed')
-    : m.txn_type === 'INWARD' ? 'new' : 'from';
-  return b.map((e) =>
-    m.txn_type === 'INWARD' && m.txn_mode !== 'REVERSAL'
-      ? `${fmtQty(e.qty)} ${verb} ${LOT_LABEL.FULL_SLEEVE} roll · ${e.lot_no}`
-      : `${fmtQty(e.qty)} ${verb} ${LOT_LABEL[e.status] ?? e.status}${e.new_lot ? ' (new lot)' : ''} · ${e.lot_no}`);
+  return b.map((e) => {
+    if (e.status === 'WASTED') return `${fmtQty(e.qty, m.unit_code)} of ${LOT_NAME[e.was ?? ''] ?? 'lot'} goes back into · ${e.lot_no}`;
+    if (m.txn_type === 'INWARD' && m.txn_mode !== 'REVERSAL') return `${fmtQty(e.qty, m.unit_code)} new Full Sleeve roll · ${e.lot_no}`;
+    return `${fmtQty(e.qty, m.unit_code)} ${m.txn_type === 'OUTWARD' ? 'from' : 'in'} ${LOT_NAME[e.status] ?? e.status} · ${e.lot_no}`;
+  });
 }
 
-function LotCell({ m }: { m: Movement }) {
-  if (!m.lot_tracked || m.txn_type === 'ADJUSTMENT') return <span className="text-ink-3">—</span>;
-  const lines = lotLines(m);
-  if (lines.length === 0) return <span className="text-ink-3 text-[13px]">lot not recorded</span>;
+const isWaste = (m: Movement) =>
+  m.txn_type === 'ADJUSTMENT' &&
+  (m.lot_breakdown?.some((e) => e.status === 'WASTED' || e.restored) || /wasted:/i.test(m.notes ?? ''));
+
+function typeLabel(m: Movement): string {
+  if (m.txn_mode === 'REVERSAL' && m.txn_type === 'ADJUSTMENT' && isWaste(m)) return 'waste put back';
+  if (isWaste(m)) return 'marked as waste';
+  return m.txn_type.toLowerCase();
+}
+
+/** Qty split by lot kind, each with its unit, and the total. */
+function QtyCell({ m }: { m: Movement }) {
+  const sign = m.txn_type === 'OUTWARD' ? '−' : m.txn_type === 'INWARD' ? '+'
+    : m.quantity < 0 ? '−' : '+';
+  const tone = isWaste(m) && m.quantity < 0 ? 'q-out' : m.txn_type === 'OUTWARD' ? 'q-out' : m.txn_type === 'INWARD' ? 'q-in' : 'q-left';
+  const total = `${sign}${fmtQty(Math.abs(m.quantity), m.unit_code)}`;
+  const newRolls = m.txn_type === 'INWARD' && m.txn_mode !== 'REVERSAL';
+  const parts = m.lot_tracked ? qtySplit(m.lot_breakdown, m.unit_code, newRolls) : [];
   return (
-    <div className="space-y-0.5 min-w-[200px]">
-      {lines.map((l, i) => <p key={i} className="text-[13px] text-ink-2 num leading-snug">{l}</p>)}
+    <div className="leading-snug">
+      {parts.map((p) => (
+        <p key={p.key} className={`num text-[14px] ${lotTone(p.status)}`}>
+          {m.txn_mode === 'REVERSAL' && m.txn_type === 'INWARD' ? 'put back · ' : m.txn_mode === 'REVERSAL' && m.txn_type === 'OUTWARD' ? 'closed · ' : ''}
+          {p.text}
+        </p>
+      ))}
+      <p className={`num text-[15px] font-bold ${tone} ${parts.length ? 'border-t border-line mt-0.5 pt-0.5' : ''}`}>
+        {parts.length ? 'Total ' : ''}{total}
+      </p>
+    </div>
+  );
+}
+
+/** Lot groups before / after, e.g. "1 × 260 mm Cut Pcs · 4 × 460 mm Full Sleeve" and the total. */
+function StateCell({ m, which }: { m: Movement; which: 'before' | 'after' }) {
+  const g: SnapGroup[] | undefined = m.lot_state?.[which];
+  const stock = which === 'before' ? m.previous_stock : m.new_stock;
+  if (!m.lot_tracked || !g) {
+    return <p className={`num font-bold text-[15px] ${which === 'after' ? 'q-total' : ''}`}>{fmtQty(stock, m.unit_code)}</p>;
+  }
+  return (
+    <div className="leading-snug">
+      {g.length === 0 && <p className="text-[14px] text-ink-2">no stock in lots</p>}
+      {g.map((x) => (
+        <p key={x.status + x.each} className={`num text-[14px] ${lotTone(x.status)}`}>
+          {x.count} × {fmtQty(x.each, m.unit_code)} {LOT_NAME[x.status]}
+        </p>
+      ))}
+      <p className={`num text-[15px] font-bold border-t border-line mt-0.5 pt-0.5 ${which === 'after' ? 'q-total' : ''}`}>
+        Total {fmtQty(snapTotal(g), m.unit_code)}
+      </p>
     </div>
   );
 }
@@ -303,10 +338,10 @@ function ReverseDialog({ movement, onClose, onDone }: {
               {fmtDate(movement.occurred_at)} {fmtTime(movement.occurred_at)} · {movement.user_name}
             </p>
           </div>
-          {movement.lot_tracked && lotLines(movement).length > 0 && (
+          {(movement.lot_tracked || movement.txn_type === 'ADJUSTMENT') && lotLines(movement).length > 0 && (
             <div className="bg-brand-soft/40 rounded-lg px-3.5 py-2.5">
               <p className="text-[13px] font-semibold text-ink-2 mb-1">
-                {movement.txn_type === 'OUTWARD' ? 'Will be put back into these lots' : 'These lots will be closed'}
+                {movement.txn_type === 'INWARD' ? 'These lots will be closed' : 'Will be put back into these lots'}
               </p>
               {lotLines(movement).map((l, i) => <p key={i} className="text-[14px] text-ink-2 num">{l}</p>)}
               {movement.txn_type === 'INWARD' && (

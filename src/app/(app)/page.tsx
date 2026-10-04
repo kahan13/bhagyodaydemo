@@ -62,19 +62,22 @@ async function Stats() {
 type LotEntry = { lot_no?: string; status: string; qty: number };
 const LOT_NAME: Record<string, string> = { FULL_SLEEVE: 'Full Sleeve', CUT_PCS: 'Cut Pcs' };
 
-/** "30 Cut Pcs + 50 Full Sleeve" — grouped by classification. */
-function lotSplit(entries: LotEntry[]): string {
+/** "30 mm Cut Pcs + 50 mm Full Sleeve" — grouped by classification, unit always shown. */
+function lotSplit(entries: LotEntry[], unit: string): string {
   const by = new Map<string, number>();
-  for (const e of entries) by.set(e.status, (by.get(e.status) ?? 0) + Number(e.qty));
+  for (const e of entries) {
+    const st = e.status === 'WASTED' ? 'Waste' : e.status;
+    by.set(st, (by.get(st) ?? 0) + Number(e.qty));
+  }
   return [...by.entries()]
     .sort((a, b) => (a[0] === 'CUT_PCS' ? -1 : 1) - (b[0] === 'CUT_PCS' ? -1 : 1))
-    .map(([st, q]) => `${q} ${LOT_NAME[st] ?? st}`).join(' + ');
+    .map(([st, q]) => `${fmtQty(q, unit)} ${LOT_NAME[st] ?? st}`).join(' + ');
 }
 /** "4 × 50 mm rolls" for an inward's new lots. */
-function rollsText(entries: LotEntry[]): string {
+function rollsText(entries: LotEntry[], unit: string): string {
   const by = new Map<number, number>();
   for (const e of entries) by.set(Number(e.qty), (by.get(Number(e.qty)) ?? 0) + 1);
-  return [...by.entries()].map(([len, n]) => `${n} × ${len} mm roll${n === 1 ? '' : 's'}`).join(' + ');
+  return [...by.entries()].map(([len, n]) => `${n} × ${fmtQty(len, unit)} roll${n === 1 ? '' : 's'}`).join(' + ');
 }
 const rollsOf = (mm: number, len: number) => {
   const r = mm / len;
@@ -130,7 +133,7 @@ async function Transactions() {
             <span className="shrink-0 text-right">
               {m.lot_tracked && m.lot_breakdown && m.lot_breakdown.length > 0 && (
                 <span className="block text-[13px] text-ink-2 num leading-tight">
-                  {sign === '+' ? rollsText(m.lot_breakdown) : lotSplit(m.lot_breakdown)}
+                  {sign === '+' ? rollsText(m.lot_breakdown, m.unit_code) : lotSplit(m.lot_breakdown, m.unit_code)}
                 </span>
               )}
               <span className={`num text-[14px] font-semibold ${color}`}>
@@ -394,7 +397,7 @@ async function ProductionOrdersPane() {
     for (const a of (allocs ?? []) as { item_id: string; allocated_qty: number; lot_status: string | null }[]) {
       (grouped[a.item_id] ??= []).push({ status: a.lot_status ?? 'FULL_SLEEVE', qty: Number(a.allocated_qty) });
     }
-    for (const [k, v] of Object.entries(grouped)) splitByItem[k] = lotSplit(v);
+    for (const [k, v] of Object.entries(grouped)) splitByItem[k] = lotSplit(v, 'MM');
   }
 
   // Count summary

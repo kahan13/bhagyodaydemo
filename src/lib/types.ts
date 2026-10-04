@@ -122,8 +122,10 @@ export interface Movement {
   brand_name: string;
   family_code: string;
   /** Lots this movement created / used / put back: [{lot_no,status,qty,new_lot?}] */
-  lot_breakdown?: { lot_no: string; status: string; qty: number; new_lot?: boolean }[] | null;
+  lot_breakdown?: { lot_no: string; status: string; qty: number; new_lot?: boolean; was?: string; restored?: boolean }[] | null;
   lot_tracked?: boolean;
+  /** Lot groups before / after this movement: [{status,each,count}] */
+  lot_state?: { before: { status: 'CUT_PCS' | 'FULL_SLEEVE'; each: number; count: number }[]; after: { status: 'CUT_PCS' | 'FULL_SLEEVE'; each: number; count: number }[] } | null;
 }
 
 export interface DashboardSummary {
