@@ -6,6 +6,7 @@ import { useCatalog } from '@/components/catalog/CatalogProvider';
 import { fmtQty } from '@/lib/format';
 import type { ProductType, Sku } from '@/lib/types';
 import LotBreakdown, { groupsInline } from '@/components/inventory/LotBreakdown';
+import OutwardPlan from '@/components/inventory/OutwardPlan';
 import { useListNav } from '@/lib/useListNav';
 import RollEntry, { emptyRolls, rollsPayload, rollsTotal, type RollRows } from '@/components/inventory/RollEntry';
 
@@ -270,6 +271,9 @@ export default function DashboardEntryDialog({
               <p className="text-[14px] text-danger mt-1">Only {fmtQty(sku.current_stock, sku.unit_code)} available.</p>
             )}
           </div>
+          )}
+          {action === 'outward' && sku && !inRolls && (
+            <OutwardPlan groups={sku.lot_groups} amount={amount} unit={sku.unit_code} />
           )}
 
           {/* Reference */}

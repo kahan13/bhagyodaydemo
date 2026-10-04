@@ -5,6 +5,7 @@ import { X, Check } from 'lucide-react';
 import { fmtQty } from '@/lib/format';
 import type { Channel, Sku } from '@/lib/types';
 import LotBreakdown from '@/components/inventory/LotBreakdown';
+import OutwardPlan from '@/components/inventory/OutwardPlan';
 import RollEntry, { emptyRolls, rollsPayload, rollsTotal } from '@/components/inventory/RollEntry';
 
 /**
@@ -147,6 +148,10 @@ export default function MovementDialog({
                 <span>After</span><span>{fmtQty(projected, sku.unit_code)}</span>
               </div>
             </div>
+          )}
+
+          {action === 'outward' && !inRolls && (
+            <OutwardPlan groups={sku.lot_groups} amount={amount} unit={sku.unit_code} />
           )}
 
           {action === 'outward' && amount > sku.current_stock && (
