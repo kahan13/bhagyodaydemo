@@ -50,53 +50,27 @@ export function planOutward(groups: LotGroup[], amount: number) {
     const l = lines.get(t.text);
     if (l) l.n += 1; else lines.set(t.text, { text: t.text, status: t.status, n: 1 });
   }
-  return { before: merge(before), take: [...lines.values()], after: merge(left) };
+  return { before: merge(before), take: [...lines.values()], takes: takes.map((t) => t.qty), after: merge(left) };
 }
 
 const total = (r: Row[]) => r.reduce((s, x) => s + x.each * x.count, 0);
+const rowText = (r: Row[]) =>
+  r.length === 0 ? 'nothing'
+    : r.map((x) => `${x.count} × ${fmtQty(x.each)}${x.status === 'CUT_PCS' ? ' cut' : ''}`).join(' + ');
 
-function RowsView({ rows }: { rows: Row[] }) {
-  if (rows.length === 0) return <p className="text-[14px] text-ink-2">nothing left</p>;
-  return (
-    <>
-      {rows.map((r) => (
-        <p key={r.status + r.each} className={`num text-[15px] font-semibold ${tone(r.status)}`}>
-          {r.count} × {fmtQty(r.each)} mm {NAME[r.status]}
-        </p>
-      ))}
-    </>
-  );
-}
-
+/** One plain line: now → taken → left, e.g. "3 × 460  →  take 460 + 10  →  1 × 450 cut + 1 × 460 = 910 mm". */
 export default function OutwardPlan({ groups, amount, unit = 'mm' }: { groups?: LotGroup[]; amount: number; unit?: string }) {
   if (!groups || groups.length === 0 || !(amount > 0)) return null;
   const stock = groups.reduce((s, g) => s + Number(g.piece_qty) * Number(g.pieces), 0);
   if (amount > stock) return null;
   const p = planOutward(groups, amount);
   return (
-    <div className="rounded-lg border-2 border-[#c9d3ff] bg-white p-3 space-y-3 text-[15px]">
-      <p className="text-[13px] font-bold text-[#1646d6] uppercase tracking-wide">How this outward is taken</p>
-      <div className="grid sm:grid-cols-3 gap-3">
-        <div>
-          <p className="text-[13px] font-semibold text-ink-2 mb-0.5">Now in stock</p>
-          <RowsView rows={p.before} />
-          <p className="num text-[14px] font-bold text-[#6a1fd1] mt-0.5">Total {fmtQty(total(p.before), unit)}</p>
-        </div>
-        <div>
-          <p className="text-[13px] font-semibold text-ink-2 mb-0.5">This outward uses</p>
-          {p.take.map((t) => (
-            <p key={t.text} className="num text-[15px] font-semibold text-[#d6141f]">
-              {t.n > 1 ? `${t.n} × ` : ''}{t.text}
-            </p>
-          ))}
-          <p className="num text-[14px] font-bold text-[#d6141f] mt-0.5">Total −{fmtQty(amount, unit)}</p>
-        </div>
-        <div>
-          <p className="text-[13px] font-semibold text-ink-2 mb-0.5">Remaining after</p>
-          <RowsView rows={p.after} />
-          <p className="num text-[14px] font-bold text-[#6a1fd1] mt-0.5">Total {fmtQty(total(p.after), unit)}</p>
-        </div>
-      </div>
+    <div className="rounded-lg border border-line bg-subtle px-3 py-2 text-[15px] text-ink num leading-relaxed">
+      <span>{rowText(p.before)}</span>
+      <span className="mx-2">→</span>
+      <span>take {p.takes.map((q) => fmtQty(q)).join(' + ')}</span>
+      <span className="mx-2">→</span>
+      <span>{rowText(p.after)} = <strong>{fmtQty(total(p.after), unit)}</strong></span>
     </div>
   );
 }
