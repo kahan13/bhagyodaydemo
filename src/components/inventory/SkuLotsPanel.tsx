@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Trash2, RefreshCw, AlertTriangle, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { PackageX, RefreshCw, AlertTriangle, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { fmtQty } from '@/lib/format';
 import type { Permission } from '@/lib/types';
@@ -28,7 +28,7 @@ interface SkuLot {
 const STATUS_STYLE: Record<string, string> = {
   FULL_SLEEVE: 'bg-green-100 text-green-800 border-green-200',
   CUT_PCS:     'bg-amber-100 text-amber-800 border-amber-200',
-  EXHAUSTED:   'bg-slate-100 text-slate-500 border-slate-200',
+  EXHAUSTED:   'bg-indigo-50 text-indigo-700 border-indigo-200',
   WASTED:      'bg-red-100   text-red-600   border-red-200',
 };
 
@@ -41,7 +41,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 function StatusBadge({ status }: { status: string }) {
   return (
-    <span className={`inline-flex items-center border rounded px-1.5 py-0.5 text-[12px] font-medium ${STATUS_STYLE[status] ?? 'bg-slate-100 text-slate-500'}`}>
+    <span className={`inline-flex items-center border rounded px-1.5 py-0.5 text-[13px] font-bold whitespace-nowrap ${STATUS_STYLE[status] ?? 'bg-slate-100 text-slate-500'}`}>
       {STATUS_LABEL[status] ?? status}
     </span>
   );
@@ -305,56 +305,45 @@ function LotRow({
   const isInactive = lot.status === 'EXHAUSTED' || lot.status === 'WASTED';
 
   return (
-    <div className={`rounded-lg border px-3 py-2 text-[14px] ${
-      isInactive ? 'border-line bg-subtle opacity-60' : 'border-line bg-surface'
+    <div className={`rounded-lg border-2 px-3 py-2.5 text-[15px] ${
+      isInactive ? 'border-line bg-subtle opacity-70' : 'border-[#c9d3ff] bg-surface'
     }`}>
-      <div className="flex items-center justify-between gap-2">
-        {/* Left: lot no + status */}
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="font-mono text-[13px] text-ink-3 shrink-0">{lot.lot_no}</span>
-          <StatusBadge status={lot.status} />
+      {/* line 1: lot number + status */}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="font-mono text-[14px] font-semibold text-ink-2 break-all">{lot.lot_no}</span>
+        <StatusBadge status={lot.status} />
+      </div>
+
+      {/* line 2: quantity + mark-waste plate */}
+      <div className="flex items-center justify-between gap-2 mt-1.5 flex-wrap">
+        <div>
+          <span className="num font-bold text-[17px]">{fmtQty(lot.current_qty, unitCode)}</span>
+          <span className="text-ink-2 ml-1.5">
+            {lot.current_qty !== lot.inward_qty ? 'of' : 'full'} {fmtQty(lot.roll_length_mm, unitCode)} roll
+          </span>
         </div>
 
-        {/* Right: qty + waste button */}
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="text-right">
-            <span className="num font-semibold text-[15px]">
-              {fmtQty(lot.current_qty, unitCode)}
-            </span>
-            {lot.current_qty !== lot.inward_qty && (
-              <span className="text-ink-3 ml-1">
-                / {fmtQty(lot.roll_length_mm, unitCode)} roll
-              </span>
-            )}
-            {lot.current_qty === lot.inward_qty && (
-              <span className="text-ink-3 ml-1">
-                ({fmtQty(lot.roll_length_mm, unitCode)} roll)
-              </span>
-            )}
-          </div>
-
-          {canWaste && onWaste && (
-            <button
-              onClick={onWaste}
-              className="text-ink-3 hover:text-red-500 transition-colors p-1 rounded"
-              title="Mark as waste"
-            >
-              <Trash2 size={13} />
-            </button>
-          )}
-        </div>
+        {canWaste && onWaste && (
+          <button
+            onClick={onWaste}
+            className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md bg-[#d6141f] text-white text-[13px] font-bold hover:bg-[#b00f19]"
+            title="Write this lot off as waste"
+          >
+            <PackageX size={14} /> Mark waste
+          </button>
+        )}
       </div>
 
       {/* Progress bar for cut pieces */}
       {lot.status === 'CUT_PCS' && lot.pct_remaining !== null && (
         <div className="mt-1.5">
-          <div className="h-1 bg-amber-100 rounded-full overflow-hidden">
+          <div className="h-2 bg-amber-100 rounded-full overflow-hidden">
             <div
-              className="h-full bg-amber-400 rounded-full"
+              className="h-full bg-[#ff8a00] rounded-full"
               style={{ width: `${Math.max(2, lot.pct_remaining)}%` }}
             />
           </div>
-          <p className="text-ink-3 mt-0.5">{lot.pct_remaining}% of roll remaining</p>
+          <p className="text-[#d96a00] font-semibold mt-0.5">{lot.pct_remaining}% of roll remaining</p>
         </div>
       )}
 

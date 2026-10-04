@@ -7,7 +7,7 @@ import { fmtDate, fmtQty, fmtDateTime } from '@/lib/format';
 
 type ReportKind =
   | 'current_stock' | 'low_stock' | 'movements' | 'inward' | 'outward'
-  | 'brand_summary' | 'family_summary';
+  | 'waste' | 'brand_summary' | 'family_summary';
 
 const REPORTS: { id: ReportKind; label: string; note: string; dated: boolean }[] = [
   { id: 'current_stock', label: 'Current stock', note: 'Every active SKU with its stock and reorder settings', dated: false },
@@ -15,6 +15,7 @@ const REPORTS: { id: ReportKind; label: string; note: string; dated: boolean }[]
   { id: 'movements', label: 'All movements', note: 'Complete transaction register for the period', dated: true },
   { id: 'inward', label: 'Inward register', note: 'Goods received in the period', dated: true },
   { id: 'outward', label: 'Outward register', note: 'Goods issued in the period', dated: true },
+  { id: 'waste', label: 'Marked as waste', note: 'Lots / pieces written off as waste, with the reason and who marked them', dated: true },
   { id: 'brand_summary', label: 'Brand summary', note: 'SKU count and stock value by brand', dated: false },
   { id: 'family_summary', label: 'Family summary', note: 'SKU count and stock by family or profile', dated: false },
 ];
@@ -134,8 +135,9 @@ export default function ReportsView({
           .sort((a, b) => b.skus - a.skus));
       } else {
         let q = db.from('v_movements')
-          .select('txn_no,occurred_at,txn_type,txn_mode,product_type,exact_size,brand_name,family_code,quantity,unit_code,previous_stock,new_stock,user_name,operated_by_name,invoice_no');
+          .select('txn_no,occurred_at,txn_type,txn_mode,product_type,exact_size,brand_name,family_code,quantity,unit_code,previous_stock,new_stock,user_name,operated_by_name,invoice_no,notes');
         if (kind === 'inward') q = q.eq('txn_type', 'INWARD');
+        if (kind === 'waste') q = q.eq('txn_type', 'ADJUSTMENT').ilike('notes', '%wasted:%');
         if (kind === 'outward') q = q.eq('txn_type', 'OUTWARD');
         if (start) q = q.gte('occurred_at', start);
         if (end) q = q.lte('occurred_at', end);
@@ -145,7 +147,18 @@ export default function ReportsView({
         const { data, error } = await q.order('occurred_at', { ascending: false }).limit(5000);
         if (error) throw new Error(error.message);
 
-        setColumns([
+        setColumns(kind === 'waste' ? [
+          { key: 'txn_no',           label: 'Txn No' },
+          { key: 'occurred_at',      label: 'Date & Time' },
+          { key: 'product_type',     label: 'Product Type' },
+          { key: 'exact_size',       label: 'Size' },
+          { key: 'brand_name',       label: 'Brand' },
+          { key: 'family_code',      label: 'Family' },
+          { key: 'quantity',         label: 'Wasted qty', numeric: true },
+          { key: 'unit_code',        label: 'Unit' },
+          { key: 'notes',            label: 'Lot & reason' },
+          { key: 'user_name',        label: 'Marked By' },
+        ] : [
           { key: 'txn_no',           label: 'Txn No' },
           { key: 'occurred_at',      label: 'Date & Time' },
           { key: 'txn_type',         label: 'Type' },
@@ -160,6 +173,7 @@ export default function ReportsView({
           { key: 'user_name',        label: 'Entered By' },
           { key: 'operated_by_name', label: 'Operated By' },
           { key: 'invoice_no',       label: 'Invoice No' },
+          { key: 'notes',            label: 'Notes' },
         ]);
         setRows((data ?? []) as Record<string, unknown>[]);
       }
@@ -179,6 +193,7 @@ export default function ReportsView({
     if (key === 'occurred_at') return fmtDateTime(String(value));
     if (key === 'product_type') return ({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt' } as Record<string, string>)[String(value)] ?? String(value ?? '—');
     if (key === 'stock_status') return String(value).replace(/_/g, ' ').toLowerCase();
+    if (key === 'quantity' && kind === 'waste' && typeof value === 'number') return fmtQty(Math.abs(value));
     if (typeof value === 'number') return fmtQty(value);
     return String(value);
   }
