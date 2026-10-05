@@ -768,6 +768,9 @@ interface LineItem {
   id: string;
   skuSearch: SkuPick;
   quantity: string;
+  /** Qty × MM entry (timing belts, and direct lines in MM). quantity = pieces × mm. */
+  pieces: string;
+  mm: string;
   /** Direct orders: typed product name / unit (no SKU) */
   manualName: string;
   manualUnit: 'MM' | 'PCS';
@@ -782,11 +785,25 @@ function makeLineItem(): LineItem {
     id: Math.random().toString(36).slice(2),
     skuSearch: { sku: null, query: '' },
     quantity: '',
+    pieces: '',
+    mm: '',
     manualName: '',
     manualUnit: 'MM',
     allocations: [],
   };
 }
+
+/** Pieces × MM shown on a line. If the quantity was changed by other logic (spill into extra lines,
+ *  shortfall cap …) the stored boxes no longer match, so show it as 1 × quantity. */
+function lineQM(li: { quantity: string; pieces: string; mm: string }): { pieces: string; mm: string } {
+  const q = Number(li.quantity) || 0;
+  if ((Math.floor(Number(li.pieces)) || 0) * (Number(li.mm) || 0) === q) return { pieces: li.pieces, mm: li.mm };
+  return q > 0 ? { pieces: '1', mm: String(q) } : { pieces: '', mm: '' };
+}
+const qmTotal = (pieces: string, mm: string): string => {
+  const t = (Math.floor(Number(pieces)) || 0) * (Number(mm) || 0);
+  return t > 0 ? String(Math.round(t * 100) / 100) : '';
+};
 
 function makeEmptyForm() {
   return {
@@ -1060,7 +1077,7 @@ export default function ProductionOrdersView({
   }
 
   /** Quantity typed on a line. A Full Sleeve line can't exceed one roll: extra becomes more lines. */
-  function setLineQty(id: string, value: string) {
+  function setLineQty(id: string, value: string, patch: Partial<LineItem> = {}) {
     setForm((f) => {
       const idx = f.items.findIndex((x) => x.id === id);
       const li = f.items[idx];
@@ -1068,7 +1085,7 @@ export default function ProductionOrdersView({
       const sku = li?.skuSearch.sku;
       const n = parseFloat(value);
       if (!li || !sku || !grp || grp.status !== 'FULL_SLEEVE' || !(n > grp.piece_qty)) {
-        return { ...f, items: f.items.map((x) => x.id === id ? { ...x, quantity: value } : x) };
+        return { ...f, items: f.items.map((x) => x.id === id ? { ...x, quantity: value, ...patch } : x) };
       }
       let remaining = n - grp.piece_qty;
       let rollsLeft = Math.max(0, grp.pieces - f.items.filter((o) =>
@@ -1744,13 +1761,43 @@ export default function ProductionOrdersView({
                             }
                           }}
                         />
+                        {li.manualUnit === 'MM' ? (
+                          (() => {
+                            const qm = lineQM(li);
+                            const enter = (e: React.KeyboardEvent) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                if (li.manualName.trim() && idx === form.items.length - 1) addItem(true);
+                              }
+                            };
+                            return (
+                              <>
+                                <input
+                                  className="field w-16 text-center" inputMode="numeric" placeholder="Qty"
+                                  value={qm.pieces}
+                                  onChange={(e) => { const p = e.target.value.replace(/[^0-9]/g, ''); updateItem(li.id, { pieces: p, mm: qm.mm, quantity: qmTotal(p, qm.mm) }); }}
+                                />
+                                <span className="mt-2 text-ink-3 font-semibold">×</span>
+                                <input
+                                  className="field w-24 text-center" inputMode="decimal" placeholder="MM"
+                                  value={qm.mm}
+                                  onChange={(e) => { const m = e.target.value.replace(/[^0-9.]/g, ''); updateItem(li.id, { pieces: qm.pieces, mm: m, quantity: qmTotal(qm.pieces, m) }); }}
+                                  onKeyDown={enter}
+                                />
+                                <span className="mt-2 text-[14px] num font-semibold q-total whitespace-nowrap min-w-[70px]">
+                                  {li.quantity ? `= ${li.quantity}` : ''}
+                                </span>
+                              </>
+                            );
+                          })()
+                        ) : (
                         <input
                           className="field w-24 text-center"
                           type="number"
                           min="0"
                           placeholder="Qty"
                           value={li.quantity}
-                          onChange={(e) => updateItem(li.id, { quantity: e.target.value })}
+                          onChange={(e) => updateItem(li.id, { quantity: e.target.value, pieces: '', mm: '' })}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
                               e.preventDefault();
@@ -1758,6 +1805,7 @@ export default function ProductionOrdersView({
                             }
                           }}
                         />
+                        )}
                         <select
                           className="field w-20"
                           value={li.manualUnit}
@@ -1845,7 +1893,21 @@ export default function ProductionOrdersView({
                           </p>
                         )}
                       </div>
-                      <div className="w-24 shrink-0">
+                      <div className={`${isLotTracked ? 'w-52' : 'w-24'} shrink-0`}>
+                        {isLotTracked ? (() => {
+                          const qm = lineQM(li);
+                          const over = !!li.skuSearch.sku && parseFloat(li.quantity) > effectiveAtp;
+                          const cls = `field text-center ${over ? 'border-danger focus:ring-danger/30' : ''}`;
+                          return (
+                            <div className="flex items-center gap-1.5">
+                              <input className={`${cls} w-16`} inputMode="numeric" placeholder="Qty" value={qm.pieces}
+                                onChange={(e) => { const p = e.target.value.replace(/[^0-9]/g, ''); setLineQty(li.id, qmTotal(p, qm.mm), { pieces: p, mm: qm.mm }); }} />
+                              <span className="text-ink-3 font-semibold">×</span>
+                              <input className={`${cls} w-24`} inputMode="decimal" placeholder="MM" value={qm.mm}
+                                onChange={(e) => { const m = e.target.value.replace(/[^0-9.]/g, ''); setLineQty(li.id, qmTotal(qm.pieces, m), { pieces: qm.pieces, mm: m }); }} />
+                            </div>
+                          );
+                        })() : (
                         <input
                           className={`field text-center ${
                             li.skuSearch.sku && parseFloat(li.quantity) > effectiveAtp
@@ -1858,6 +1920,10 @@ export default function ProductionOrdersView({
                           value={li.quantity}
                           onChange={(e) => setLineQty(li.id, e.target.value)}
                         />
+                        )}
+                        {isLotTracked && li.quantity && (
+                          <p className="text-[14px] num font-semibold q-total text-center mt-0.5">= {li.quantity} {li.skuSearch.sku?.unit_code}</p>
+                        )}
                         {li.skuSearch.sku && (
                           grp ? (
                             // Only the picked classification; live: what is left after THIS line's quantity
