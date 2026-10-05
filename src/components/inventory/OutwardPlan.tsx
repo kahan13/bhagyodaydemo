@@ -5,7 +5,7 @@ type Piece = { status: 'CUT_PCS' | 'FULL_SLEEVE'; qty: number };
 type Row = { status: 'CUT_PCS' | 'FULL_SLEEVE'; each: number; count: number };
 
 const NAME = { CUT_PCS: 'Cut Pcs', FULL_SLEEVE: 'Full Sleeve' } as const;
-const tone = (s: string) => (s === 'CUT_PCS' ? 'text-[#d96a00]' : 'text-[#008a3e]');
+const tone = (s: string) => (s === 'CUT_PCS' ? 'lot-cut' : 'lot-full');
 
 function merge(rows: Row[]): Row[] {
   const m = new Map<string, Row>();

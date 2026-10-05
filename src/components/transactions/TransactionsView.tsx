@@ -5,7 +5,7 @@ import { useState, useTransition } from 'react';
 import { Undo2, X, SlidersHorizontal, Download } from 'lucide-react';
 import { fmtDate, fmtTime, fmtQty } from '@/lib/format';
 import type { Movement } from '@/lib/types';
-import { qtySplit, lotTone, snapTotal, LOT_NAME, type SnapGroup } from '@/lib/lotView';
+import { qtySplit, lotChip, snapTotal, LOT_NAME, type SnapGroup } from '@/lib/lotView';
 
 const RANGES: [string, string][] = [
   ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'This week'],
@@ -129,61 +129,64 @@ export default function TransactionsView({
           <table className="table">
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Time</th>
-                <th>Invoice No</th>
+                <th>When</th>
+                <th>Product</th>
                 <th>Type</th>
-                <th>Product Type</th>
-                <th>Size</th>
-                <th>Brand</th>
-                <th>Qty (by lot)</th>
-                <th>Before (lot-wise)</th>
-                <th>After (lot-wise)</th>
-                <th>Entered By</th>
-                <th>Operated By</th>
-                <th>Txn No</th>
+                <th>Qty</th>
+                <th>Stock before / after</th>
+                <th>By</th>
+                <th>Ref</th>
                 {canReverse && <th />}
               </tr>
             </thead>
             <tbody>
-              {rows.map((m) => (
-                <tr key={m.id} className={m.is_reversed ? 'opacity-55' : undefined}>
-                  <td className="num text-ink-2" suppressHydrationWarning>{fmtDate(m.occurred_at)}</td>
-                  <td className="num text-ink-3" suppressHydrationWarning>{fmtTime(m.occurred_at)}</td>
-                  <td className="font-mono text-[14px] font-semibold text-ink-2 whitespace-nowrap">{m.invoice_no ?? '—'}</td>
+              {rows.map((m) => {
+                const operator = (m as Movement & { operated_by_name?: string }).operated_by_name;
+                return (
+                <tr key={m.id} className={m.is_reversed ? 'opacity-60' : undefined}>
+                  <td className="whitespace-nowrap" suppressHydrationWarning>
+                    <p className="num text-ink">{fmtDate(m.occurred_at)}</p>
+                    <p className="text-[13px] text-ink-3 mt-0.5">{fmtTime(m.occurred_at)}</p>
+                  </td>
+                  <td className="min-w-[170px]">
+                    <p className="font-semibold text-ink" title={m.sku_code}>{m.exact_size}</p>
+                    <p className="text-[13px] text-ink-3 mt-0.5">
+                      {m.brand_name}
+                      {' · '}
+                      {({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt' } as Record<string, string>)[m.product_type] ?? '—'}
+                    </p>
+                  </td>
                   <td>
-                    <span className={`badge ${
-                      isWaste(m) ? 'badge-danger'
-                        : m.txn_type === 'INWARD' ? 'badge-ok'
-                        : m.txn_type === 'OUTWARD' ? 'badge-brand' : 'badge-warn'
-                    }`}>
-                      {typeLabel(m)}
-                    </span>
-                    {m.txn_mode === 'REVERSAL' && <span className="badge badge-neutral ml-1">reversal</span>}
-                    {m.is_reversed && <span className="badge badge-neutral ml-1">reversed</span>}
+                    <div className="flex flex-wrap gap-1">
+                      <span className={`badge ${isWaste(m) ? 'badge-danger' : 'badge-neutral'}`}>
+                        {typeLabel(m)}
+                      </span>
+                      {m.txn_mode === 'REVERSAL' && <span className="badge badge-neutral">reversal</span>}
+                      {m.is_reversed && <span className="badge badge-neutral">reversed</span>}
+                    </div>
                   </td>
-                  <td className="text-ink-2 text-[14px]">
-                    {({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt' } as Record<string, string>)[m.product_type] ?? '—'}
+                  <td className="min-w-[200px]"><QtyCell m={m} /></td>
+                  <td className="min-w-[270px]"><StateCell m={m} /></td>
+                  <td className="whitespace-nowrap">
+                    <p className="text-ink">{m.user_name}</p>
+                    {operator && <p className="text-[13px] text-ink-3 mt-0.5">op. {operator}</p>}
                   </td>
-                  <td className="font-medium max-w-[160px] truncate" title={m.sku_code}>{m.exact_size}</td>
-                  <td className="text-ink-2">{m.brand_name}</td>
-                  <td className="min-w-[190px]"><QtyCell m={m} /></td>
-                  <td className="min-w-[200px]"><StateCell m={m} which="before" /></td>
-                  <td className="min-w-[200px]"><StateCell m={m} which="after" /></td>
-                  <td className="text-ink-2">{m.user_name}</td>
-                  <td className="text-ink-3">{(m as Movement & { operated_by_name?: string }).operated_by_name ?? '—'}</td>
-                  <td className="font-mono text-[13px] text-ink-3 whitespace-nowrap">{m.txn_no}</td>
+                  <td className="whitespace-nowrap">
+                    <p className="font-mono text-[13px] text-ink-2">{m.txn_no}</p>
+                    {m.invoice_no && <p className="text-[13px] text-ink-3 mt-0.5">inv. {m.invoice_no}</p>}
+                  </td>
                   {canReverse && (
                     <td className="text-right">
                       {m.txn_mode === 'NORMAL' && !m.is_reversed && (
-                        <button className="btn btn-ghost btn-sm" onClick={() => setReversing(m)}>
+                        <button className="btn btn-ghost btn-sm text-danger" onClick={() => setReversing(m)}>
                           <Undo2 size={13} /> Reverse
                         </button>
                       )}
                     </td>
                   )}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -235,7 +238,7 @@ function lotLines(m: Movement): string[] {
   if (!b || b.length === 0) return [];
   return b.map((e) => {
     if (e.status === 'WASTED') return `${fmtQty(e.qty, m.unit_code)} of ${LOT_NAME[e.was ?? ''] ?? 'lot'} goes back into · ${e.lot_no}`;
-    if (m.txn_type === 'INWARD' && m.txn_mode !== 'REVERSAL') return `${fmtQty(e.qty, m.unit_code)} new Full Sleeve roll · ${e.lot_no}`;
+    if (m.txn_type === 'INWARD' && m.txn_mode !== 'REVERSAL') return `${fmtQty(e.qty, m.unit_code)} new ${e.status === 'CUT_PCS' ? 'Cut Pcs' : 'Full Sleeve'} piece · ${e.lot_no}`;
     return `${fmtQty(e.qty, m.unit_code)} ${m.txn_type === 'OUTWARD' ? 'from' : 'in'} ${LOT_NAME[e.status] ?? e.status} · ${e.lot_no}`;
   });
 }
@@ -250,47 +253,67 @@ function typeLabel(m: Movement): string {
   return m.txn_type.toLowerCase();
 }
 
-/** Qty split by lot kind, each with its unit, and the total. */
+const SHORT: Record<string, string> = { FULL_SLEEVE: 'Full', CUT_PCS: 'Cut' };
+
+/** Qty: lot chips (teal = Full Sleeve, amber = Cut Pcs) and the signed total. */
 function QtyCell({ m }: { m: Movement }) {
   const sign = m.txn_type === 'OUTWARD' ? '−' : m.txn_type === 'INWARD' ? '+'
     : m.quantity < 0 ? '−' : '+';
-  const tone = isWaste(m) && m.quantity < 0 ? 'q-out' : m.txn_type === 'OUTWARD' ? 'q-out' : m.txn_type === 'INWARD' ? 'q-in' : 'q-left';
   const total = `${sign}${fmtQty(Math.abs(m.quantity), m.unit_code)}`;
   const newRolls = m.txn_type === 'INWARD' && m.txn_mode !== 'REVERSAL';
   const parts = m.lot_tracked ? qtySplit(m.lot_breakdown, m.unit_code, newRolls) : [];
+  const note = m.txn_mode === 'REVERSAL' && m.txn_type === 'INWARD' ? 'put back'
+    : m.txn_mode === 'REVERSAL' && m.txn_type === 'OUTWARD' ? 'closed' : '';
   return (
-    <div className="leading-snug">
-      {parts.map((p) => (
-        <p key={p.key} className={`num text-[14px] ${lotTone(p.status)}`}>
-          {m.txn_mode === 'REVERSAL' && m.txn_type === 'INWARD' ? 'put back · ' : m.txn_mode === 'REVERSAL' && m.txn_type === 'OUTWARD' ? 'closed · ' : ''}
-          {p.text}
-        </p>
-      ))}
-      <p className={`num text-[15px] font-bold ${tone} ${parts.length ? 'border-t border-line mt-0.5 pt-0.5' : ''}`}>
-        {parts.length ? 'Total ' : ''}{total}
-      </p>
+    <div className="space-y-1.5">
+      <p className="num text-[16px] text-ink">{total}</p>
+      {parts.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {parts.map((p) => (
+            <span key={p.key} className={`chip ${lotChip(p.status)}`}>{note ? `${note} · ` : ''}{p.text}</span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-/** Lot groups before / after, e.g. "1 × 260 mm Cut Pcs · 4 × 460 mm Full Sleeve" and the total. */
-function StateCell({ m, which }: { m: Movement; which: 'before' | 'after' }) {
+/** One side of "before → after": lot chips and the total. */
+function StateBlock({ m, which }: { m: Movement; which: 'before' | 'after' }) {
   const g: SnapGroup[] | undefined = m.lot_state?.[which];
   const stock = which === 'before' ? m.previous_stock : m.new_stock;
+  const label = which === 'before' ? 'Before' : 'After';
   if (!m.lot_tracked || !g) {
-    return <p className={`num font-bold text-[15px] ${which === 'after' ? 'q-total' : ''}`}>{fmtQty(stock, m.unit_code)}</p>;
+    return (
+      <div className="flex items-baseline gap-2">
+        <span className="text-[12px] uppercase tracking-wide text-ink-3 w-[46px] shrink-0">{label}</span>
+        <span className="num text-[15px]">{fmtQty(stock, m.unit_code)}</span>
+      </div>
+    );
   }
   return (
-    <div className="leading-snug">
-      {g.length === 0 && <p className="text-[14px] text-ink-2">no stock in lots</p>}
-      {g.map((x) => (
-        <p key={x.status + x.each} className={`num text-[14px] ${lotTone(x.status)}`}>
-          {x.count} × {fmtQty(x.each, m.unit_code)} {LOT_NAME[x.status]}
-        </p>
-      ))}
-      <p className={`num text-[15px] font-bold border-t border-line mt-0.5 pt-0.5 ${which === 'after' ? 'q-total' : ''}`}>
-        Total {fmtQty(snapTotal(g), m.unit_code)}
-      </p>
+    <div className="flex items-start gap-2">
+      <span className="text-[12px] uppercase tracking-wide text-ink-3 w-[46px] shrink-0 pt-0.5">{label}</span>
+      <div className="min-w-0">
+        <div className="flex flex-wrap gap-1">
+          {g.length === 0 && <span className="text-[14px] text-ink-3">no stock in lots</span>}
+          {g.map((x) => (
+            <span key={x.status + x.each} className={`chip ${lotChip(x.status)}`} title={LOT_NAME[x.status]}>
+              {x.count} × {fmtQty(x.each, m.unit_code)} {SHORT[x.status]}
+            </span>
+          ))}
+        </div>
+        <p className="num text-[14px] text-ink-2 mt-0.5">Total {fmtQty(snapTotal(g), m.unit_code)}</p>
+      </div>
+    </div>
+  );
+}
+
+function StateCell({ m }: { m: Movement }) {
+  return (
+    <div className="space-y-2">
+      <StateBlock m={m} which="before" />
+      <StateBlock m={m} which="after" />
     </div>
   );
 }

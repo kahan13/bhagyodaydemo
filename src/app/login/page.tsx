@@ -45,7 +45,7 @@ function SignIn() {
 
   return (
     <main className="min-h-screen grid lg:grid-cols-2">
-      <section className="relative hidden lg:flex items-center justify-center bg-[#0e0e12] text-white overflow-hidden">
+      <section className="relative hidden lg:flex items-center justify-center bg-ink text-white overflow-hidden">
         <div
           className="absolute inset-0 opacity-[0.32]"
           style={{

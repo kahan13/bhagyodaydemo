@@ -6,9 +6,13 @@ export type LotState = { before: SnapGroup[]; after: SnapGroup[] } | null | unde
 
 export const LOT_NAME: Record<string, string> = { FULL_SLEEVE: 'Full Sleeve', CUT_PCS: 'Cut Pcs', EXHAUSTED: 'Used up', WASTED: 'Waste' };
 
-/** colour class for a lot kind */
+/** text colour class for a lot kind */
 export const lotTone = (status: string) =>
-  status === 'CUT_PCS' ? 'q-left' : status === 'FULL_SLEEVE' ? 'q-in' : status === 'WASTED' ? 'q-out' : 'q-total';
+  status === 'CUT_PCS' ? 'lot-cut' : status === 'FULL_SLEEVE' ? 'lot-full' : status === 'WASTED' ? 'lot-waste' : '';
+
+/** chip class for a lot kind: Full Sleeve teal, Cut Pcs amber */
+export const lotChip = (status: string) =>
+  status === 'CUT_PCS' ? 'chip-cut' : status === 'FULL_SLEEVE' ? 'chip-full' : status === 'WASTED' ? 'chip-waste' : 'chip-plain';
 
 /** "445 mm" — always with its unit */
 export const withUnit = (q: number, unit: string) => fmtQty(q, unit);

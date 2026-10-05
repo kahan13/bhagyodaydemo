@@ -191,7 +191,7 @@ export default function AdminView({
             <label className="flex items-start gap-3 cursor-pointer">
               <input
                 type="checkbox"
-                className="mt-0.5 accent-[#5b5bd6] h-4 w-4"
+                className="mt-0.5 accent-brand h-4 w-4"
                 checked={negative}
                 disabled={!can('settings.edit') || saving}
                 onChange={(e) => void toggleNegative(e.target.checked)}

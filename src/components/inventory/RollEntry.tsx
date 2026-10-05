@@ -33,12 +33,12 @@ export function SleeveToggle({ cut, onChange, idPrefix }: { cut: boolean; onChan
   return (
     <div className="inline-flex rounded-lg overflow-hidden" role="group" aria-label="Full sleeve or cut pieces">
       <button type="button" id={idPrefix ? `${idPrefix}-full` : undefined}
-        className={`${base} rounded-l-lg ${!cut ? 'bg-ok text-white border-ok' : 'bg-surface text-ink-2 border-line-strong hover:bg-subtle'}`}
+        className={`${base} rounded-l-lg ${!cut ? 'bg-ok-soft text-ok border-ok-line' : 'bg-surface text-ink-2 border-line-strong hover:bg-subtle'}`}
         aria-pressed={!cut} onClick={() => onChange(false)}>
         Full sleeve
       </button>
       <button type="button" id={idPrefix ? `${idPrefix}-cut` : undefined}
-        className={`${base} rounded-r-lg -ml-px ${cut ? 'bg-warn text-white border-warn' : 'bg-surface text-ink-2 border-line-strong hover:bg-subtle'}`}
+        className={`${base} rounded-r-lg -ml-px ${cut ? 'bg-warn-soft text-warn border-warn-line' : 'bg-surface text-ink-2 border-line-strong hover:bg-subtle'}`}
         aria-pressed={cut} onClick={() => onChange(true)}>
         Cut pcs
       </button>
@@ -88,7 +88,7 @@ export default function RollEntry({
               <SleeveToggle cut={r.cut} onChange={(cut) => set(i, { cut })} />
             </div>
             {n > 0 && l > 0 && (
-              <span className="pb-2.5 num text-[15px] q-total font-semibold">= {n * l} mm</span>
+              <span className="pb-2.5 num text-[15px] font-semibold">= {n * l} mm</span>
             )}
             {rows.length > 1 && (
               <button type="button" className="btn btn-ghost h-9 w-9 p-0 mb-1" aria-label="Remove row"

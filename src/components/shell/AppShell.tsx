@@ -254,10 +254,10 @@ export default function AppShell({
             </span>
           )}
 
-          <div className="ml-auto flex items-center gap-1 rounded-lg border-2 border-[#0b5fff] bg-white px-1 h-9" title="Text size">
-            <button className="h-7 w-8 rounded-md text-[14px] font-extrabold text-[#0b5fff] hover:bg-[#e6eeff] disabled:opacity-30" aria-label="Smaller text" disabled={zi <= 0} onClick={() => setZi(zi - 1)}>A−</button>
-            <span className="text-[13px] font-bold text-[#0b5fff] w-[42px] text-center">{Math.round(uiZoom * 100)}%</span>
-            <button className="h-7 w-8 rounded-md text-[18px] font-extrabold text-[#0b5fff] hover:bg-[#e6eeff] disabled:opacity-30" aria-label="Larger text" disabled={zi >= ZOOMS.length - 1} onClick={() => setZi(zi + 1)}>A+</button>
+          <div className="ml-auto flex items-center gap-1 rounded-lg border border-line bg-surface px-1 h-9" title="Text size">
+            <button className="h-7 w-8 rounded-md text-[14px] font-semibold text-ink-2 hover:bg-hover disabled:opacity-30" aria-label="Smaller text" disabled={zi <= 0} onClick={() => setZi(zi - 1)}>A−</button>
+            <span className="text-[13px] font-medium text-ink-3 w-[42px] text-center">{Math.round(uiZoom * 100)}%</span>
+            <button className="h-7 w-8 rounded-md text-[18px] font-semibold text-ink-2 hover:bg-hover disabled:opacity-30" aria-label="Larger text" disabled={zi >= ZOOMS.length - 1} onClick={() => setZi(zi + 1)}>A+</button>
           </div>
 
           <div className="relative">

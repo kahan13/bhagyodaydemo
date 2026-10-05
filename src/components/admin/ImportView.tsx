@@ -271,7 +271,7 @@ export default function ImportView() {
             <SummaryCards kind={kind} summary={dry.summary} />
 
             {dry.blocked && (
-              <div className="mb-4 flex items-start gap-2 text-[15px] text-danger bg-red-50 border border-red-200 rounded-lg p-3">
+              <div className="mb-4 flex items-start gap-2 text-[15px] text-danger bg-danger-soft border border-danger-line rounded-lg p-3">
                 <AlertCircle size={15} className="mt-0.5 shrink-0" /> {dry.blocked}
               </div>
             )}
@@ -315,18 +315,18 @@ export default function ImportView() {
             </div>
 
             {dry.errors.length > 0 && (
-              <div className="mt-4 border border-yellow-200 bg-yellow-50 rounded-lg p-3">
-                <p className="text-[14px] font-medium text-yellow-800 mb-1.5">
+              <div className="mt-4 border border-warn-line bg-warn-soft rounded-lg p-3">
+                <p className="text-[14px] font-medium text-warn mb-1.5">
                   {dry.errors.length} row(s) will be skipped:
                 </p>
-                <ul className="text-[14px] text-yellow-700 space-y-0.5 max-h-40 overflow-auto">
+                <ul className="text-[14px] text-warn space-y-0.5 max-h-40 overflow-auto">
                   {dry.errors.map((e, i) => <li key={i}>• {e}</li>)}
                 </ul>
               </div>
             )}
 
             {wipes && !dry.blocked && (
-              <label className="mt-5 flex items-start gap-2 text-[15px] bg-amber-50 border border-amber-200 rounded-lg p-3 cursor-pointer">
+              <label className="mt-5 flex items-start gap-2 text-[15px] bg-warn-soft border border-warn-line rounded-lg p-3 cursor-pointer">
                 <input type="checkbox" className="mt-0.5" checked={confirmWipe} onChange={(e) => setConfirmWipe(e.target.checked)} />
                 <span>
                   <AlertTriangle size={13} className="inline -mt-0.5 mr-1 text-warn" />
@@ -369,9 +369,9 @@ export default function ImportView() {
             )}
 
             {(result.errors as string[]).length > 0 && (
-              <div className="border border-yellow-200 bg-yellow-50 rounded-lg p-4 mb-4">
-                <p className="text-[15px] font-medium text-yellow-800 mb-2">{(result.errors as string[]).length} rows skipped:</p>
-                <ul className="text-[14px] text-yellow-700 space-y-1 max-h-48 overflow-auto">
+              <div className="border border-warn-line bg-warn-soft rounded-lg p-4 mb-4">
+                <p className="text-[15px] font-medium text-warn mb-2">{(result.errors as string[]).length} rows skipped:</p>
+                <ul className="text-[14px] text-warn space-y-1 max-h-48 overflow-auto">
                   {(result.errors as string[]).map((e, i) => <li key={i}>• {e}</li>)}
                 </ul>
               </div>
@@ -466,7 +466,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function ErrorBox({ text }: { text: string }) {
   return (
-    <div className="mt-4 flex items-start gap-2 text-[15px] text-danger bg-red-50 rounded-lg p-3">
+    <div className="mt-4 flex items-start gap-2 text-[15px] text-danger bg-danger-soft rounded-lg p-3">
       <AlertCircle size={14} className="mt-0.5 shrink-0" /> {text}
     </div>
   );

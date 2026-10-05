@@ -7,42 +7,52 @@
    ========================================================================== */
 
 @theme {
+  /* The whole app uses five colours:
+     1 ink (dark slate text)  2 indigo (actions / selected)
+     3 teal  = Full Sleeve / good      4 amber = Cut Pcs / pending
+     5 red   = errors, delete, reverse only                                  */
+
   /* surfaces */
-  --color-canvas: #fbfbfd;
+  --color-canvas: #f7f8fa;
   --color-surface: #ffffff;
-  --color-subtle: #f5f5f8;
-  --color-hover: #f0f0f4;
-  --color-line: #dcdce4;
-  --color-line-strong: #a9aee0;
+  --color-subtle: #f3f4f7;
+  --color-hover: #eceff4;
+  --color-line: #e4e7ed;
+  --color-line-strong: #cbd1db;
 
   /* text */
-  --color-ink: #08080b;
-  --color-ink-2: #23245a;
-  --color-ink-3: #3b44a0;
+  --color-ink: #1b2233;
+  --color-ink-2: #3d485e;
+  --color-ink-3: #5f6b82;
 
-  /* accent */
-  --color-brand: #4545c4;
-  --color-brand-hover: #3a3aae;
-  --color-brand-soft: #eeeefc;
-  --color-brand-line: #d6d6f5;
+  /* 2 · indigo */
+  --color-brand: #4a4fc4;
+  --color-brand-hover: #3e43ad;
+  --color-brand-soft: #eef0fb;
+  --color-brand-line: #d5d9f3;
 
-  /* status */
-  --color-ok: #0a6a38;
-  --color-ok-soft: #e8f6ee;
-  --color-warn: #8a4a00;
-  --color-warn-soft: #fdf2e2;
-  --color-danger: #b01414;
-  --color-danger-soft: #fdecec;
+  /* 3 · teal   (ok / Full Sleeve) */
+  --color-ok: #0f766e;
+  --color-ok-soft: #e6f4f1;
+  --color-ok-line: #bfe3dc;
+  /* 4 · amber  (warn / Cut Pcs) */
+  --color-warn: #96590a;
+  --color-warn-soft: #fbf1df;
+  --color-warn-line: #f0d9a8;
+  /* 5 · red    (danger) */
+  --color-danger: #b42318;
+  --color-danger-soft: #fdecea;
+  --color-danger-line: #f6c9c4;
 
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 
   --radius-lg: 10px;
   --radius-xl: 14px;
 
-  --shadow-xs: 0 1px 2px rgba(14, 14, 18, 0.05);
-  --shadow-sm: 0 1px 3px rgba(14, 14, 18, 0.06), 0 1px 2px rgba(14, 14, 18, 0.04);
-  --shadow-md: 0 4px 12px rgba(14, 14, 18, 0.08);
-  --shadow-lg: 0 16px 40px rgba(14, 14, 18, 0.14);
+  --shadow-xs: none;
+  --shadow-sm: 0 1px 2px rgba(27, 34, 51, 0.05);
+  --shadow-md: 0 4px 12px rgba(27, 34, 51, 0.08);
+  --shadow-lg: 0 16px 40px rgba(27, 34, 51, 0.14);
 }
 
 @layer base {
@@ -72,12 +82,14 @@
 
   ::selection { background: var(--color-brand-soft); }
 
-  /* figures line up column to column */
-  .num { font-variant-numeric: tabular-nums; font-weight: 700; color: #1646d6; }
-  .q-in    { color: #008a3e !important; font-weight: 700; }   /* inward / received / in stock */
-  .q-out   { color: #d6141f !important; font-weight: 700; }   /* outward / issued */
-  .q-left  { color: #d96a00 !important; font-weight: 700; }   /* remaining / pending / low */
-  .q-total { color: #6a1fd1 !important; font-weight: 700; }   /* totals */
+  /* figures line up column to column - plain ink, colour is reserved for Full / Cut / errors */
+  .num { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .q-in, .q-out, .q-left, .q-total { font-weight: 600; }
+
+  /* lot colours: the ONLY place teal / amber appear for stock */
+  .lot-full  { color: var(--color-ok); }
+  .lot-cut   { color: var(--color-warn); }
+  .lot-waste { color: var(--color-danger); }
 
   input, select, textarea, button { font: inherit; }
 }
@@ -96,7 +108,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 14px 18px;
+    padding: 16px 20px;
     border-bottom: 1px solid var(--color-line);
   }
 
@@ -167,7 +179,7 @@
   }
   textarea.field { height: auto; padding: 8px 11px; resize: vertical; }
   select.field { padding-right: 28px; appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b8b96' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235f6b82' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: right 10px center; }
 
   .label {
@@ -185,25 +197,27 @@
     position: sticky;
     top: 0;
     z-index: 5;
-    background: var(--color-subtle);
+    background: var(--color-surface);
     text-align: left;
-    font-size: 13px;
+    font-size: 12.5px;
     font-weight: 600;
-    color: var(--color-ink-2);
-    padding: 11px 14px;
-    border-bottom: 1px solid var(--color-line);
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--color-line-strong);
     white-space: nowrap;
   }
 
   .table tbody td {
-    padding: 12px 14px;
+    padding: 14px 16px;
     border-bottom: 1px solid var(--color-line);
     white-space: nowrap;
-    vertical-align: middle;
+    vertical-align: top;
   }
 
   .table tbody tr:last-child td { border-bottom: 0; }
-  .table tbody tr:hover td { background: var(--color-subtle); }
+  .table tbody tr:hover td { background: var(--color-canvas); }
 
   /* --------------------------------------------------------------- badges */
   .badge {
@@ -218,10 +232,28 @@
     border: 1px solid transparent;
   }
   .badge-neutral { background: var(--color-subtle); color: var(--color-ink-2); border-color: var(--color-line); }
-  .badge-ok      { background: var(--color-ok-soft); color: var(--color-ok); }
-  .badge-warn    { background: var(--color-warn-soft); color: var(--color-warn); }
-  .badge-danger  { background: var(--color-danger-soft); color: var(--color-danger); }
-  .badge-brand   { background: var(--color-brand-soft); color: var(--color-brand); }
+  .badge-ok      { background: var(--color-ok-soft); color: var(--color-ok); border-color: var(--color-ok-line); }
+  .badge-warn    { background: var(--color-warn-soft); color: var(--color-warn); border-color: var(--color-warn-line); }
+  .badge-danger  { background: var(--color-danger-soft); color: var(--color-danger); border-color: var(--color-danger-line); }
+  .badge-brand   { background: var(--color-brand-soft); color: var(--color-brand); border-color: var(--color-brand-line); }
+
+  /* lot chips - Full Sleeve is always teal, Cut Pcs is always amber */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.5;
+    border: 1px solid transparent;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .chip-full  { background: var(--color-ok-soft);     color: var(--color-ok);     border-color: var(--color-ok-line); }
+  .chip-cut   { background: var(--color-warn-soft);   color: var(--color-warn);   border-color: var(--color-warn-line); }
+  .chip-waste { background: var(--color-danger-soft); color: var(--color-danger); border-color: var(--color-danger-line); }
+  .chip-plain { background: var(--color-subtle);      color: var(--color-ink-2);  border-color: var(--color-line); }
 
   /* ------------------------------------------------------------ scrolling */
   .scroll { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }

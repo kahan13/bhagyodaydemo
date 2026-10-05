@@ -25,9 +25,9 @@ const NAV: Record<string, string> = {
 export const NAV_KEYS = NAV;
 
 const COLORS = {
-  nav:    { bg: '#ff8a00', fg: '#111111' },   // orange
-  page:   { bg: '#0b5fff', fg: '#ffffff' },   // blue
-  action: { bg: '#00a651', fg: '#ffffff' },   // green
+  nav:    { bg: '#4a4fc4', fg: '#ffffff' },   // indigo - go to a page
+  page:   { bg: '#3d485e', fg: '#ffffff' },   // slate  - control on this page
+  action: { bg: '#0f766e', fg: '#ffffff' },   // teal   - Inward / Outward / Order
 };
 
 export default function KeyTips({ allowedHrefs, canWrite }: { allowedHrefs: string[]; canWrite: boolean }) {
@@ -170,16 +170,16 @@ export default function KeyTips({ allowedHrefs, canWrite }: { allowedHrefs: stri
 
       {/* actions that work from any page */}
       {actions.length > 0 && (
-        <div className="fixed top-[10px] left-1/2 -translate-x-1/2 flex items-center gap-3 rounded-xl bg-white border-2 border-[#00a651] shadow-lg px-3 py-2 pointer-events-auto text-[16px] font-semibold text-ink">
+        <div className="fixed top-[10px] left-1/2 -translate-x-1/2 flex items-center gap-3 rounded-xl bg-white border border-ok-line shadow-md px-3 py-2 pointer-events-auto text-[16px] font-semibold text-ink">
           {actions.filter(live).map((t) => (
             <span key={t.keys} className="flex items-center gap-2"><Badge t={t} />{t.label}</span>
           ))}
         </div>
       )}
 
-      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 rounded-full bg-[#1b1464] text-white px-4 py-2 text-[15px] font-semibold shadow-lg pointer-events-auto">
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 rounded-full bg-ink text-white px-4 py-2 text-[15px] font-semibold shadow-lg pointer-events-auto">
         <span>Key tips</span>
-        <span className="rounded bg-[#ffd400] text-black font-mono font-extrabold px-2 py-0.5 min-w-[40px] text-center">{buf || '…'}</span>
+        <span className="rounded bg-warn-soft text-warn font-mono font-bold px-2 py-0.5 min-w-[40px] text-center">{buf || '…'}</span>
         <span className="opacity-90">type the letters · Backspace undo · Esc cancel</span>
       </div>
     </div>

@@ -591,7 +591,7 @@ export default async function DashboardPage({
   const lastInvoice = (lastInvRes.data  as { invoice_no: string } | null)?.invoice_no ?? null;
 
   return (
-    <div className="p-4 lg:p-6 max-w-[1400px] mx-auto space-y-4">
+    <div className="p-4 lg:p-8 max-w-[1400px] mx-auto space-y-6">
       {denied && (
         <p className="text-[15px] text-warn bg-warn-soft rounded-lg px-3.5 py-2.5">
           Your role does not include <span className="font-mono text-[14px]">{denied}</span>.
@@ -622,7 +622,7 @@ export default async function DashboardPage({
       </Suspense>
 
       {/* Zone 2: Transactions + Purchase Orders side by side */}
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-6 xl:grid-cols-2">
         <Suspense fallback={<div className="card h-[380px] skeleton" />}>
           <Transactions />
         </Suspense>
