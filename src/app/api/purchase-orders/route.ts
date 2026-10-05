@@ -24,21 +24,21 @@ export async function GET() {
   if (orderIds.length > 0) {
     const { data, error: iErr } = await svc
       .from('purchase_order_items')
-      .select('id,order_id,sku_id,ordered_qty,received_qty,inwarded_qty,status,notes,created_at')
+      .select('id,order_id,sku_id,ordered_qty,ordered_pieces,ordered_length_mm,ordered_is_cut,received_qty,inwarded_qty,status,notes,created_at')
       .in('order_id', orderIds)
       .order('created_at');
 
     if (iErr) return NextResponse.json({ error: iErr.message }, { status: 500 });
 
     const skuIds = [...new Set((data ?? []).map((i: { sku_id: string }) => i.sku_id))];
-    let skuMap: Record<string, { sku_code: string; exact_size: string; brand_name: string; unit_code: string; current_stock: number; product_type: string; roll_length_mm: number | null }> = {};
+    let skuMap: Record<string, { sku_code: string; exact_size: string; brand_name: string; unit_code: string; current_stock: number; product_type: string}> = {};
 
     if (skuIds.length > 0) {
       const { data: skuRows } = await svc
         .from('v_sku_status')
-        .select('id,sku_code,exact_size,brand_name,unit_code,current_stock,product_type,roll_length_mm')
+        .select('id,sku_code,exact_size,brand_name,unit_code,current_stock,product_type')
         .in('id', skuIds);
-      for (const s of (skuRows ?? []) as { id: string; sku_code: string; exact_size: string; brand_name: string; unit_code: string; current_stock: number; product_type: string; roll_length_mm: number | null }[]) {
+      for (const s of (skuRows ?? []) as { id: string; sku_code: string; exact_size: string; brand_name: string; unit_code: string; current_stock: number; product_type: string}[]) {
         skuMap[s.id] = s;
       }
     }
@@ -69,7 +69,7 @@ export async function POST(request: Request) {
     const supplier = body.supplier ? String(body.supplier).slice(0, 200) : null;
     const notes    = body.notes    ? String(body.notes).slice(0, 500)    : null;
     const rawItems = Array.isArray(body.items)
-      ? (body.items as { sku_id: string; qty: number }[])
+      ? (body.items as { sku_id: string; qty: number; pieces?: number; length_mm?: number; cut?: boolean }[])
       : [];
 
     if (rawItems.length === 0)
@@ -98,6 +98,10 @@ export async function POST(request: Request) {
         order_id:     order.id,
         sku_id:       item.sku_id,
         ordered_qty:  Number(item.qty),
+        // timing belts: what was ordered as QTY x MM (ordered_qty stays the total in mm)
+        ordered_pieces:    Number(item.pieces) > 0 && Number(item.length_mm) > 0 ? Math.floor(Number(item.pieces)) : null,
+        ordered_length_mm: Number(item.pieces) > 0 && Number(item.length_mm) > 0 ? Number(item.length_mm) : null,
+        ordered_is_cut:    item.cut === true,
         received_qty: 0,
         status:       'PENDING',
       });
@@ -117,8 +121,8 @@ export async function POST(request: Request) {
     if (!item_id) return NextResponse.json({ error: 'item_id required.' }, { status: 400 });
 
     const rolls = Array.isArray(body.rolls)
-      ? (body.rolls as { rolls: number; roll_length: number }[])
-          .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length) }))
+      ? (body.rolls as { rolls: number; roll_length: number; cut?: boolean }[])
+          .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length), cut: r.cut === true }))
           .filter((r) => r.rolls > 0 && r.roll_length > 0)
       : [];
     const qty = Number(body.qty_received);

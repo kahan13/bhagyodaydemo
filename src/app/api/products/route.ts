@@ -12,7 +12,7 @@ export async function GET() {
   const db = await supabaseServer();
   const { data, error } = await db
     .from('v_sku_status')
-    .select('id,sku_code,product_type,display_name,exact_size,hier_l1,hier_l2,hier_l3,brand_code,brand_name,family_code,family_name,section,colour,length_mm,width_mm,thickness_mm,remarks,created_via,unit_code,current_stock,min_stock_level,rack_location,is_active,stock_status,roll_length_mm')
+    .select('id,sku_code,product_type,display_name,exact_size,hier_l1,hier_l2,hier_l3,brand_code,brand_name,family_code,family_name,section,colour,length_mm,width_mm,thickness_mm,remarks,created_via,unit_code,current_stock,min_stock_level,rack_location,is_active,stock_status')
     .order('product_type').order('hier_l1').order('hier_l2').order('hier_l3');
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data);
@@ -48,7 +48,6 @@ export async function POST(req: Request) {
     const row = {
       ...newSkuRow(built, code, familyId.get(built.family)!, brandId.get(built.brand)!, 'MANUAL'),
       min_stock_level: Number(body.min_stock_level) || 0,
-      roll_length_mm: type === 'TIMING_BELT' ? (Number(body.roll_length_mm) || null) : null,
       rack_location: body.rack_location || null,
       remarks: body.remarks || null,
     };
@@ -70,7 +69,6 @@ export async function PATCH(req: Request) {
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if ('display_name' in body) update.display_name = body.display_name || null;
   if ('min_stock_level' in body) update.min_stock_level = Number(body.min_stock_level) || 0;
-  if ('roll_length_mm' in body) update.roll_length_mm = Number(body.roll_length_mm) || null;
   if ('rack_location' in body) update.rack_location = body.rack_location || null;
   if ('remarks' in body) update.remarks = body.remarks || null;
   if ('is_active' in body) update.is_active = !!body.is_active;

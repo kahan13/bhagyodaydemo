@@ -128,7 +128,7 @@ function fetchSkus(): Promise<SkuWithAtp[]> {
         'hier_l1,hier_l2,hier_l3,search_text,brand_code,family_code,profile_group,belt_form,' +
         'construction,standard,pitch_mm,pitch_length_mm,width_mm,teeth,nominal_length,' +
         'length_designation,rack_location,opening_stock,current_stock,min_stock_level,' +
-        'supplier_moq,reorder_quantity,supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty,roll_length_mm'
+        'supplier_moq,reorder_quantity,supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty'
       )
       .eq('is_active', true)
       .order('product_type')
@@ -159,8 +159,7 @@ function fetchSkus(): Promise<SkuWithAtp[]> {
     const atpMap: Record<string, SkuAtp> = {};
     for (const row of atpData) atpMap[row.sku_id] = row;
 
-    // Timing belts without a roll length can't be lot-tracked yet, so they stay out of the picker.
-    _skuCache = skuData.filter((s) => s.product_type !== 'TIMING_BELT' || Number(s.roll_length_mm) > 0).map((s) => ({
+    _skuCache = skuData.map((s) => ({
       ...s,
       physical_prod_stock: atpMap[s.id]?.physical_prod_stock ?? s.current_stock,
       atp_stock:           atpMap[s.id]?.atp_stock ?? s.current_stock,
@@ -773,7 +772,7 @@ interface LineItem {
   manualName: string;
   manualUnit: 'MM' | 'PCS';
   /** Which physical lots (rolls) this line should draw from. Only meaningful
-   *  for SKUs with roll_length_mm set; empty for everything else — those post
+   *  for timing belts (lot-tracked by product type); empty for everything else — those post
    *  straight to the book ledger exactly as they always have. */
   allocations: LotAllocation[];
 }
@@ -1234,7 +1233,7 @@ export default function ProductionOrdersView({
       const li = validItems[i];
       const row = rows[i];
       const sku = li.skuSearch.sku;
-      if (!row || !sku?.roll_length_mm) continue;       // only roll-tracked SKUs have lots
+      if (!row || sku?.product_type !== 'TIMING_BELT') continue;       // only roll-tracked SKUs have lots
       const qtyNeeded = li.quantity ? Number(li.quantity) : 0;
       const totalAllocated = li.allocations.reduce((sum, a) => sum + a.qty, 0);
 
@@ -1808,10 +1807,9 @@ export default function ProductionOrdersView({
                   ? (grp ? grp.total_qty + freshExtra - otherGroupQty : li.skuSearch.sku.atp_stock - otherQty)
                   : Infinity;
 
-                // Lot tracking only applies once the SKU has a roll length defined
-                // in Product Master (migration 011). Everything else behaves exactly
-                // as before — straight to the book ledger, no lot picker shown.
-                const isLotTracked = !!li.skuSearch.sku?.roll_length_mm;
+                // Timing belts are lot-tracked (each lot has its own length). Everything else
+                // goes straight to the book ledger, no lot picker shown.
+                const isLotTracked = li.skuSearch.sku?.product_type === 'TIMING_BELT';
                 const qtyNum = parseFloat(li.quantity) || 0;
 
                 return (

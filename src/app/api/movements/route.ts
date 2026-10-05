@@ -50,11 +50,11 @@ export async function POST(request: Request) {
 
   const db = await supabaseServer();
 
-  // Optional roll breakdown for timing-belt inward: [{ rolls, roll_length }].
+  // Roll breakdown for timing-belt inward: [{ rolls: QTY, roll_length: MM, cut: false|true }].
   // Each roll becomes its own lot (and must add up to the quantity).
   const rolls = Array.isArray(body.rolls)
-    ? (body.rolls as { rolls?: unknown; roll_length?: unknown }[])
-        .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length) }))
+    ? (body.rolls as { rolls?: unknown; roll_length?: unknown; cut?: unknown }[])
+        .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length), cut: r.cut === true }))
         .filter((r) => r.rolls > 0 && r.roll_length > 0)
     : [];
   if (txn_type === 'INWARD' && rolls.length > 0) {

@@ -15,7 +15,6 @@ interface Product {
   remarks?: string | null; created_via?: string;
   unit_code: string; current_stock: number; min_stock_level: number;
   rack_location: string | null; is_active: boolean; stock_status: string;
-  roll_length_mm?: number | null;
 }
 
 interface Brand { id: string; code: string; name: string; }
@@ -25,14 +24,14 @@ interface Form {
   product_type: ProductType;
   family: string; section: string; size: string; colour: string; brand: string;
   length: string; width: string; thickness: string;
-  display_name: string; min_stock_level: string; roll_length_mm: string;
+  display_name: string; min_stock_level: string;
   rack_location: string; remarks: string;
 }
 
 const EMPTY: Form = {
   product_type: 'TIMING_BELT', family: '', section: '', size: '', colour: '', brand: '',
   length: '', width: '', thickness: '', display_name: '', min_stock_level: '0',
-  roll_length_mm: '', rack_location: '', remarks: '',
+  rack_location: '', remarks: '',
 };
 
 const numStr = (n: number | null | undefined) => (n === null || n === undefined ? '' : String(n));
@@ -50,7 +49,6 @@ export default function ProductMasterView({
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<ProductType | 'ALL'>('ALL');
   const [showInactive, setShowInactive] = useState(false);
-  const [rollFilter, setRollFilter] = useState<'ALL' | 'WITH' | 'MISSING'>('ALL');
   const [dialog, setDialog] = useState<'add' | 'edit' | null>(null);
   const [editing, setEditing] = useState<Product | null>(null);
   const [form, setForm] = useState<Form>(EMPTY);
@@ -70,13 +68,11 @@ export default function ProductMasterView({
     return products.filter((p) => {
       if (!showInactive && !p.is_active) return false;
       if (typeFilter !== 'ALL' && p.product_type !== typeFilter) return false;
-      if (rollFilter === 'WITH' && !(Number(p.roll_length_mm) > 0)) return false;
-      if (rollFilter === 'MISSING' && Number(p.roll_length_mm) > 0) return false;
       if (!q) return true;
       return [p.sku_code, p.exact_size, p.brand_name, p.hier_l1, p.hier_l2, p.remarks ?? '']
         .some((v) => v.toLowerCase().includes(q));
     });
-  }, [products, query, typeFilter, showInactive, rollFilter]);
+  }, [products, query, typeFilter, showInactive]);
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -88,7 +84,7 @@ export default function ProductMasterView({
       colour: p.colour ?? '', brand: p.brand_name,
       length: numStr(p.length_mm), width: numStr(p.width_mm), thickness: numStr(p.thickness_mm),
       display_name: p.display_name, min_stock_level: numStr(p.min_stock_level),
-      roll_length_mm: numStr(p.roll_length_mm), rack_location: p.rack_location ?? '', remarks: p.remarks ?? '',
+      rack_location: p.rack_location ?? '', remarks: p.remarks ?? '',
     });
     setErr(''); setDialog('edit');
   };
@@ -112,7 +108,7 @@ export default function ProductMasterView({
       ? { ...form }
       : {
         id: editing!.id, display_name: form.display_name, min_stock_level: form.min_stock_level,
-        roll_length_mm: form.roll_length_mm, rack_location: form.rack_location, remarks: form.remarks,
+        rack_location: form.rack_location, remarks: form.remarks,
       };
     const r = await fetch('/api/products', {
       method: adding ? 'POST' : 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -136,10 +132,6 @@ export default function ProductMasterView({
   const counts: Record<string, number> = { ALL: products.filter(active).length };
   for (const t of PRODUCT_TYPES) counts[t] = products.filter((p) => active(p) && p.product_type === t).length;
 
-  const rollCounts = {
-    with: products.filter((p) => active(p) && Number(p.roll_length_mm) > 0).length,
-    missing: products.filter((p) => active(p) && !(Number(p.roll_length_mm) > 0)).length,
-  };
   const unitLabel = (p: Product) => (p.unit_code === 'MM' ? 'mm' : p.unit_code);
   const lockId = dialog === 'edit';
 
@@ -152,13 +144,6 @@ export default function ProductMasterView({
           <input value={query} onChange={(e) => setQuery(e.target.value)}
             placeholder="Search family, section, size, make or SKU…"
             className="field pl-8 w-72 text-[15px]" />
-        </div>
-        <div className="flex items-center gap-1 rounded-lg border-2 border-[#0b5fff] bg-white p-0.5" title="Filter by roll length">
-          {([['ALL', 'All rolls', '#0b5fff'], ['WITH', `With roll length (${rollCounts.with})`, '#008a3e'], ['MISSING', `No roll length (${rollCounts.missing})`, '#d6141f']] as const).map(([k, label, c]) => (
-            <button key={k} onClick={() => setRollFilter(k)}
-              style={rollFilter === k ? { background: c, color: '#fff' } : { color: c }}
-              className="h-8 px-2.5 rounded-md text-[14px] font-bold hover:opacity-90">{label}</button>
-          ))}
         </div>
         <label className="flex items-center gap-1.5 text-[14px] text-ink-2 cursor-pointer ml-1">
           <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} className="rounded" />
@@ -198,7 +183,6 @@ export default function ProductMasterView({
                 <th>Section / Colour</th>
                 <th>Size</th>
                 <th>Make</th>
-                <th>Roll length</th>
                 <th className="num">Stock</th>
                 <th className="num">Min</th>
                 <th>Remarks</th>
@@ -215,11 +199,6 @@ export default function ProductMasterView({
                   <td>{p.section ?? p.colour ?? p.hier_l2}</td>
                   <td className="whitespace-nowrap">{p.hier_l3}</td>
                   <td>{p.brand_name}</td>
-                  <td className="whitespace-nowrap">
-                    {Number(p.roll_length_mm) > 0
-                      ? <span className="badge badge-ok">{Number(p.roll_length_mm)} mm</span>
-                      : <span className="badge badge-danger">No roll length</span>}
-                  </td>
                   <td className="num whitespace-nowrap">{p.current_stock} {unitLabel(p)}</td>
                   <td className="num">{p.min_stock_level}</td>
                   <td className="text-ink-3 max-w-[200px] truncate" title={p.remarks ?? ''}>{p.remarks ?? '—'}</td>
@@ -334,13 +313,6 @@ export default function ProductMasterView({
                 <label className="label">Location</label>
                 <input className="field w-full" value={form.rack_location} onChange={(e) => set('rack_location', e.target.value)} />
               </div>
-
-              {form.product_type === 'TIMING_BELT' && (
-                <div className="col-span-2">
-                  <label className="label">Roll Length (mm) <span className="text-ink-3 font-normal">— length of 1 full sleeve (filled automatically by the inventory import)</span></label>
-                  <input type="number" className="field w-48" value={form.roll_length_mm} onChange={(e) => set('roll_length_mm', e.target.value)} />
-                </div>
-              )}
 
               <div className="col-span-2">
                 <label className="label">Remarks</label>

@@ -65,7 +65,6 @@ export interface ExistingSku {
   sku_code: string;
   identity_key: string | null;
   product_type: string;
-  roll_length_mm: number | null;
   current_stock: number;
   opening_stock: number;
   physical_prod_stock: number;
@@ -75,7 +74,7 @@ export interface ExistingSku {
 export async function loadAllSkus(svc: Svc): Promise<ExistingSku[]> {
   return fetchAll<ExistingSku>(() =>
     svc.from('skus')
-      .select('id,sku_code,identity_key,product_type,roll_length_mm,current_stock,opening_stock,physical_prod_stock')
+      .select('id,sku_code,identity_key,product_type,current_stock,opening_stock,physical_prod_stock')
       .order('id'));
 }
 

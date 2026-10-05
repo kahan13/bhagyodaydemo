@@ -11,6 +11,7 @@ import { useListNav } from '@/lib/useListNav';
 import { onDataChanged } from '@/lib/dataSync';
 import { takeAction } from '@/lib/keytips';
 import type { ProductType, Sku } from '@/lib/types';
+import RollEntry, { SleeveToggle, rollsPayload, rollsTotal, type RollRows } from '@/components/inventory/RollEntry';
 
 type ItemStatus  = 'PENDING' | 'PARTIAL' | 'FULFILLED';
 type OrderStatus = 'PLACED'  | 'PARTIAL' | 'FULFILLED';
@@ -20,6 +21,9 @@ interface OrderItem {
   order_id: string;
   sku_id: string;
   ordered_qty: number;
+  ordered_pieces?: number | null;
+  ordered_length_mm?: number | null;
+  ordered_is_cut?: boolean;
   received_qty: number;
   inwarded_qty?: number;
   status: ItemStatus;
@@ -28,7 +32,6 @@ interface OrderItem {
   skus: {
     sku_code: string; exact_size: string; brand_name: string;
     unit_code: string; current_stock: number; product_type: string;
-    roll_length_mm?: number | null;
   } | null;
 }
 
@@ -42,18 +45,15 @@ interface Order {
   items: OrderItem[];
 }
 
-/** Roll length (mm) when this line is a roll-tracked timing belt, else 0. */
-const rollLen = (item: OrderItem): number =>
-  item.skus?.product_type === 'TIMING_BELT' && Number(item.skus?.roll_length_mm) > 0
-    ? Number(item.skus!.roll_length_mm) : 0;
+/** Timing belts are ordered / received as QTY × MM (no fixed roll length on the product). */
+const isRoll = (item: OrderItem): boolean => item.skus?.product_type === 'TIMING_BELT';
+/** "3 × 470 mm" — what the line was ordered as. */
+const orderedLabel = (item: OrderItem): string =>
+  item.ordered_pieces && item.ordered_length_mm
+    ? `${item.ordered_pieces} × ${Number(item.ordered_length_mm)} mm${item.ordered_is_cut ? ' cut pcs' : ''}` : '';
 /** Received but not yet recorded into stock. */
 const pendingInward = (item: OrderItem): number =>
   Math.max(0, Number(item.received_qty) - Number(item.inwarded_qty ?? 0));
-const fmtRolls = (mm: number, len: number): string => {
-  if (!len) return '';
-  const r = mm / len;
-  return Number.isInteger(r) ? `${r} roll${r === 1 ? '' : 's'}` : `${Math.round(r * 100) / 100} rolls`;
-};
 
 const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt' };
 
@@ -188,38 +188,31 @@ function ReceiveDialog({
   item, onClose, onDone,
 }: { item: OrderItem; onClose: () => void; onDone: () => void }) {
   const remaining = item.ordered_qty - item.received_qty;
-  const len       = rollLen(item);
-  const remRolls  = len ? Math.floor(remaining / len) : 0;
+  const roll      = isRoll(item);
+  const ordLen    = Number(item.ordered_length_mm) || 0;
 
-  // Roll mode: N standard rolls + optional odd-length rolls (one-time lots)
-  const [rollCount, setRollCount] = useState(String(remRolls));
-  const [odd, setOdd]             = useState<{ rolls: string; length: string }[]>([]);
-  // Plain mode (V-belt / conveyor / timing belt without roll size)
+  // Roll mode: rows of QTY × MM (prefilled from what was ordered), Full sleeve / Cut pcs per row
+  const [rows, setRows] = useState<RollRows>(() => {
+    const n = ordLen > 0 ? Math.floor(remaining / ordLen) : 0;
+    return n > 0 ? [{ qty: String(n), mm: String(ordLen), cut: !!item.ordered_is_cut }]
+                 : [{ qty: '', mm: '', cut: !!item.ordered_is_cut }];
+  });
+  // Plain mode (V-belt / conveyor)
   const [qty, setQty]     = useState(String(remaining));
   const [notes, setNotes] = useState('');
   const [busy, setBusy]   = useState(false);
   const [err, setErr]     = useState<string | null>(null);
 
-  const rollsPayload = useMemo(() => {
-    if (!len) return [];
-    const out: { rolls: number; roll_length: number }[] = [];
-    const n = Math.floor(Number(rollCount) || 0);
-    if (n > 0) out.push({ rolls: n, roll_length: len });
-    for (const o of odd) {
-      const r = Math.floor(Number(o.rolls) || 0), l = Number(o.length) || 0;
-      if (r > 0 && l > 0) out.push({ rolls: r, roll_length: l });
-    }
-    return out;
-  }, [len, rollCount, odd]);
-  const rollsTotal = rollsPayload.reduce((a, r) => a + r.rolls * r.roll_length, 0);
+  const rollList  = useMemo(() => (roll ? rollsPayload(rows) : []), [roll, rows]);
+  const rollTotal = rollsTotal(rollList);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     let body: Record<string, unknown>;
-    if (len) {
-      if (rollsTotal <= 0)        { setErr('Enter at least one roll.'); return; }
-      if (rollsTotal > remaining) { setErr(`That is ${rollsTotal} mm but only ${remaining} mm is left on this order.`); return; }
-      body = { action: 'receive', item_id: item.id, rolls: rollsPayload, notes: notes || null };
+    if (roll) {
+      if (rollTotal <= 0)        { setErr('Enter QTY and MM for at least one row.'); return; }
+      if (rollTotal > remaining) { setErr(`That is ${rollTotal} mm but only ${remaining} mm is left on this order.`); return; }
+      body = { action: 'receive', item_id: item.id, rolls: rollList, notes: notes || null };
     } else {
       const n = Number(qty);
       if (!n || n <= 0)  { setErr('Enter a valid quantity.'); return; }
@@ -252,60 +245,16 @@ function ReceiveDialog({
             <p className="text-[13px] text-ink-3">
               {item.skus?.brand_name ?? '—'}
               {item.skus?.product_type ? ` · ${TYPE_LABEL[item.skus.product_type] ?? ''}` : ''}
-              {len ? ` · roll = ${len} mm` : ''}
             </p>
             <div className="flex gap-4 mt-1.5 flex-wrap">
-              <span className="text-[13px] text-ink-3">Ordered: <strong className="text-ink">{fmtQty(item.ordered_qty, unit)}</strong>{len ? ` (${fmtRolls(item.ordered_qty, len)})` : ''}</span>
+              <span className="text-[13px] text-ink-3">Ordered: <strong className="text-ink">{fmtQty(item.ordered_qty, unit)}</strong>{orderedLabel(item) ? ` (${orderedLabel(item)})` : ''}</span>
               <span className="text-[13px] text-ink-3">Received: <strong className="q-in">{fmtQty(item.received_qty, unit)}</strong></span>
-              <span className="text-[13px] text-ink-3">Left: <strong className="q-left">{fmtQty(remaining, unit)}</strong>{len ? ` (${fmtRolls(remaining, len)})` : ''}</span>
+              <span className="text-[13px] text-ink-3">Left: <strong className="q-left">{fmtQty(remaining, unit)}</strong></span>
             </div>
           </div>
 
-          {len ? (
-            <div className="space-y-3">
-              <div>
-                <label className="label">Standard rolls received ({len} mm each)</label>
-                <input
-                  className="field num text-[18px] h-11"
-                  inputMode="numeric"
-                  value={rollCount}
-                  onChange={(e) => setRollCount(e.target.value.replace(/[^0-9]/g, ''))}
-                  autoFocus
-                />
-              </div>
-
-              {odd.map((o, i) => (
-                <div key={i} className="flex items-end gap-2">
-                  <div className="flex-1">
-                    <label className="label">Odd rolls</label>
-                    <input className="field num" inputMode="numeric" value={o.rolls}
-                      onChange={(e) => setOdd((p) => p.map((x, j) => j === i ? { ...x, rolls: e.target.value.replace(/[^0-9]/g, '') } : x))} />
-                  </div>
-                  <div className="flex-1">
-                    <label className="label">Length (mm)</label>
-                    <input className="field num" inputMode="decimal" value={o.length} placeholder="e.g. 45"
-                      onChange={(e) => setOdd((p) => p.map((x, j) => j === i ? { ...x, length: e.target.value.replace(/[^0-9.]/g, '') } : x))} />
-                  </div>
-                  <button type="button" className="btn btn-ghost h-9 w-9 p-0" onClick={() => setOdd((p) => p.filter((_, j) => j !== i))}>
-                    <X size={14} />
-                  </button>
-                </div>
-              ))}
-              <button type="button" className="text-[14px] text-brand font-medium"
-                onClick={() => setOdd((p) => [...p, { rolls: '1', length: '' }])}>
-                + Other length (a roll that is not {len} mm)
-              </button>
-              <p className="text-[13px] text-ink-3">
-                Other-length rolls are one-time lots — the SKU&apos;s standard roll length stays {len} mm.
-              </p>
-
-              <div className="bg-ok-soft/30 rounded-lg px-3 py-2 text-[14px]">
-                Receiving <strong className="num">{rollsTotal} mm</strong>
-                {rollsPayload.length > 0 && (
-                  <span className="text-ink-3"> = {rollsPayload.map((r) => `${r.rolls}×${r.roll_length}`).join(' + ')}</span>
-                )}
-              </div>
-            </div>
+          {roll ? (
+            <RollEntry rows={rows} onChange={setRows} maxTotal={remaining} />
           ) : (
             <div>
               <label className="label">Quantity receiving ({unit ?? 'units'}) <span className="text-danger">*</span></label>
@@ -347,12 +296,12 @@ function CreateOrderDialog({
 }) {
   const [supplier, setSupplier] = useState('');
   const [notes, setNotes]       = useState('');
-  const [lines, setLines]       = useState<{ sku: Sku; qty: string }[]>([]);
+  const [lines, setLines]       = useState<{ sku: Sku; qty: string; mm: string; cut: boolean }[]>([]);
   const [busy, setBusy]         = useState(false);
   const [err, setErr]           = useState<string | null>(null);
 
   const addSku     = (s: Sku) => {
-    setLines((prev) => [...prev, { sku: s, qty: '' }]);
+    setLines((prev) => [...prev, { sku: s, qty: '', mm: '', cut: false }]);
     setTimeout(() => {
       const boxes = document.querySelectorAll<HTMLInputElement>('[data-po-qty]');
       boxes[boxes.length - 1]?.focus();
@@ -362,7 +311,16 @@ function CreateOrderDialog({
   const setQty     = (i: number, v: string) =>
     setLines((prev) => prev.map((l, j) => j === i ? { ...l, qty: v.replace(/[^0-9.]/g, '') } : l));
 
-  const invalid = lines.length === 0 || lines.some((l) => !l.qty || Number(l.qty) <= 0);
+  const setMm      = (i: number, v: string) =>
+    setLines((prev) => prev.map((l, j) => j === i ? { ...l, mm: v.replace(/[^0-9.]/g, '') } : l));
+  const setCut     = (i: number, cut: boolean) =>
+    setLines((prev) => prev.map((l, j) => j === i ? { ...l, cut } : l));
+  const isTiming   = (l: { sku: Sku }) => l.sku.product_type === 'TIMING_BELT';
+  // timing belts: total mm = QTY × MM ; others: plain quantity
+  const lineTotal  = (l: { sku: Sku; qty: string; mm: string }) =>
+    isTiming(l) ? Math.floor(Number(l.qty) || 0) * (Number(l.mm) || 0) : Number(l.qty) || 0;
+
+  const invalid = lines.length === 0 || lines.some((l) => lineTotal(l) <= 0 || (isTiming(l) && Math.floor(Number(l.qty)) < 1));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -377,7 +335,9 @@ function CreateOrderDialog({
         action:   'create',
         supplier: supplier || null,
         notes:    notes    || null,
-        items:    lines.map((l) => ({ sku_id: l.sku.id, qty: Number(l.qty) })),
+        items:    lines.map((l) => isTiming(l)
+          ? { sku_id: l.sku.id, qty: lineTotal(l), pieces: Math.floor(Number(l.qty)), length_mm: Number(l.mm), cut: l.cut }
+          : { sku_id: l.sku.id, qty: Number(l.qty) }),
       }),
     });
     const json = await res.json();
@@ -444,20 +404,33 @@ function CreateOrderDialog({
                       in stock: {fmtQty(l.sku.current_stock, l.sku.unit_code)}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {l.sku.product_type === 'TIMING_BELT' && Number(l.sku.roll_length_mm) > 0 && Number(l.qty) > 0 && (
-                      <span className="text-[13px] text-ink-3 num whitespace-nowrap">
-                        = {fmtRolls(Number(l.qty), Number(l.sku.roll_length_mm))}
-                      </span>
+                  <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                    {isTiming(l) ? (
+                      <>
+                        <input
+                          className="field num h-11 w-20 text-[16px]" inputMode="numeric"
+                          value={l.qty} onChange={(e) => setQty(i, e.target.value.replace(/[^0-9]/g, ''))}
+                          data-po-qty placeholder="Qty" aria-label="Quantity" />
+                        <span className="text-ink-3 font-semibold">×</span>
+                        <input
+                          className="field num h-11 w-24 text-[16px]" inputMode="decimal"
+                          value={l.mm} onChange={(e) => setMm(i, e.target.value)}
+                          placeholder="MM" aria-label="Length in mm" />
+                        <SleeveToggle cut={l.cut} onChange={(c) => setCut(i, c)} />
+                        {lineTotal(l) > 0 && (
+                          <span className="text-[14px] num q-total font-semibold whitespace-nowrap">= {lineTotal(l)} mm</span>
+                        )}
+                      </>
+                    ) : (
+                      <input
+                        className="field num h-9 w-28 text-[15px]"
+                        inputMode="decimal"
+                        value={l.qty}
+                        onChange={(e) => setQty(i, e.target.value)}
+                        data-po-qty
+                        placeholder={`qty (${l.sku.unit_code})`}
+                      />
                     )}
-                    <input
-                      className="field num h-9 w-28 text-[15px]"
-                      inputMode="decimal"
-                      value={l.qty}
-                      onChange={(e) => setQty(i, e.target.value)}
-                      data-po-qty
-                      placeholder={`qty (${l.sku.unit_code})`}
-                    />
                     <button type="button" onClick={() => removeLine(i)} className="text-ink-3 hover:text-danger p-1">
                       <X size={14} />
                     </button>
@@ -614,7 +587,6 @@ function OrderCard({
             shown.map((item) => {
               const itemRemaining = item.ordered_qty - item.received_qty;
               const itemPending   = pendingInward(item);
-              const itemLen       = rollLen(item);
               const sizeName  = item.skus?.exact_size  ?? '—';
               const brandName = item.skus?.brand_name  ?? '—';
               const pType     = item.skus?.product_type;
@@ -634,16 +606,14 @@ function OrderCard({
                     <div className="flex items-center gap-4 mt-1.5 flex-wrap">
                       <span className="text-[13px] text-ink-3 num">
                         Total <strong className="text-ink">{fmtQty(item.ordered_qty, item.skus?.unit_code)}</strong>
-                        {itemLen > 0 && <span> ({fmtRolls(item.ordered_qty, itemLen)})</span>}
+                        {orderedLabel(item) && <span> ({orderedLabel(item)})</span>}
                       </span>
                       <span className="text-[13px] text-ink-3 num">
                         Received <strong className="q-in">{fmtQty(item.received_qty, item.skus?.unit_code)}</strong>
-                        {itemLen > 0 && <span> ({fmtRolls(item.received_qty, itemLen)})</span>}
                       </span>
                       {itemRemaining > 0 && (
                         <span className="text-[13px] text-warn num font-medium">
                           Left {fmtQty(itemRemaining, item.skus?.unit_code)}
-                          {itemLen > 0 && ` (${fmtRolls(itemRemaining, itemLen)})`}
                         </span>
                       )}
                       {view === 'received' && (itemPending > 0 ? (
@@ -756,7 +726,6 @@ export default function PurchaseOrdersView() {
               unit_code:     cat.unit_code,
               current_stock: cat.current_stock,
               product_type:  cat.product_type,
-              roll_length_mm: cat.roll_length_mm ?? null,
             },
           };
         }),
@@ -918,11 +887,10 @@ export default function PurchaseOrdersView() {
             </div>
             <div className="p-5 space-y-3">
               <p className="text-[15px] text-ink-2">
-                This adds what has been received so far (not yet recorded) from <strong>{recordTarget.order_no}</strong> to stock — book and physical. Timing belts go in as individual roll lots.
+                This adds what has been received so far (not yet recorded) from <strong>{recordTarget.order_no}</strong> to stock — book and physical. Timing belts go in as lots of the QTY × MM that was received.
               </p>
               <div className="bg-subtle rounded-lg p-3 space-y-2">
                 {lines.map((item) => {
-                  const len = rollLen(item);
                   return (
                   <div key={item.id} className="flex items-center justify-between text-[14px] gap-2">
                     <div className="min-w-0">
@@ -931,7 +899,6 @@ export default function PurchaseOrdersView() {
                     </div>
                     <span className="num font-semibold text-ok shrink-0">
                       +{fmtQty(pendingInward(item), item.skus?.unit_code)}
-                      {len > 0 && <span className="text-ink-3 font-normal"> ({fmtRolls(pendingInward(item), len)})</span>}
                     </span>
                   </div>
                   );

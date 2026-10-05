@@ -21,7 +21,7 @@ const COLUMNS =
   'brand_code,brand_name,family_code,family_name,profile_group,belt_form,construction,standard,' +
   'pitch_mm,pitch_length_mm,width_mm,teeth,nominal_length,length_designation,rack_location,' +
   'unit_code,opening_stock,current_stock,min_stock_level,supplier_moq,reorder_quantity,' +
-  'supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty,roll_length_mm,' +
+  'supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty,' +
   'section,colour,length_mm,thickness_mm,remarks';
 
 let cache: Sku[] | null = null;
@@ -71,18 +71,11 @@ async function load(force = false): Promise<Sku[]> {
   return inflight;
 }
 
-/** Timing belts only work in rolls; until a roll length is set the SKU stays out of every picker. */
-const needsRollSize = (s: Sku) => s.product_type === 'TIMING_BELT' && !(Number(s.roll_length_mm) > 0);
-
 interface CatalogValue {
-  /** SKUs you can pick stock from (timing belts without a roll size are left out unless switched on). */
+  /** SKUs you can pick stock from. */
   skus: Sku[];
-  /** Every active SKU, including those hidden for having no roll size. */
+  /** Same list (kept for older callers). */
   allSkus: Sku[];
-  /** How many timing-belt SKUs are hidden because no roll length is defined. */
-  hiddenNoRoll: number;
-  showNoRoll: boolean;
-  setShowNoRoll: (v: boolean) => void;
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
@@ -95,11 +88,7 @@ const CatalogContext = createContext<CatalogValue | null>(null);
 
 export function CatalogProvider({ children }: { children: React.ReactNode }) {
   const [allSkus, setSkus] = useState<Sku[]>(cache ?? []);
-  const [showNoRoll, setShowNoRoll] = useState(false);
-  const skus = useMemo(
-    () => (showNoRoll ? allSkus : allSkus.filter((s) => !needsRollSize(s))),
-    [allSkus, showNoRoll]);
-  const hiddenNoRoll = useMemo(() => allSkus.filter(needsRollSize).length, [allSkus]);
+  const skus = allSkus;
   const [loading, setLoading] = useState(!cache);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
@@ -160,8 +149,8 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
   }, [skus]);
 
   const value = useMemo(
-    () => ({ skus, allSkus, hiddenNoRoll, showNoRoll, setShowNoRoll, loading, error, refresh, applyStock, search }),
-    [skus, allSkus, hiddenNoRoll, showNoRoll, loading, error, refresh, applyStock, search],
+    () => ({ skus, allSkus, loading, error, refresh, applyStock, search }),
+    [skus, allSkus, loading, error, refresh, applyStock, search],
   );
 
   return <CatalogContext.Provider value={value}>{children}</CatalogContext.Provider>;

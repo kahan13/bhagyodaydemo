@@ -29,9 +29,8 @@ export default function MovementDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const rollLen = Number(sku.roll_length_mm) > 0 && sku.product_type === 'TIMING_BELT' ? Number(sku.roll_length_mm) : 0;
-  const inRolls = action === 'inward' && rollLen > 0;
-  const rollList = inRolls ? rollsPayload(rollLen, rolls) : [];
+  const inRolls = action === 'inward' && sku.product_type === 'TIMING_BELT';
+  const rollList = inRolls ? rollsPayload(rolls) : [];
   const amount = inRolls ? rollsTotal(rollList) : Number(qty || 0);
   // For an adjustment the worker types the counted physical stock, not a delta.
   const delta = action === 'adjust' ? amount - sku.current_stock : amount;
@@ -104,7 +103,7 @@ export default function MovementDialog({
           </div>
 
           {inRolls ? (
-            <RollEntry len={rollLen} rows={rolls} onChange={setRolls} />
+            <RollEntry rows={rolls} onChange={setRolls} />
           ) : (
           <div>
             <label className="label" htmlFor="qty">

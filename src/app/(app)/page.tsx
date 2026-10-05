@@ -79,10 +79,6 @@ function rollsText(entries: LotEntry[], unit: string): string {
   for (const e of entries) by.set(Number(e.qty), (by.get(Number(e.qty)) ?? 0) + 1);
   return [...by.entries()].map(([len, n]) => `${n} × ${fmtQty(len, unit)} roll${n === 1 ? '' : 's'}`).join(' + ');
 }
-const rollsOf = (mm: number, len: number) => {
-  const r = mm / len;
-  return `${Number.isInteger(r) ? r : Math.round(r * 100) / 100} roll${r === 1 ? '' : 's'}`;
-};
 
 /* ── Transactions pane ───────────────────────────────────────────────────── */
 type MovRow = {
@@ -187,7 +183,7 @@ type POItem = {
   ordered_qty: number; received_qty: number; status: string;
   order_no: string; supplier_name: string | null; order_status: string; created_at: string;
   exact_size: string; brand_name: string; unit_code: string; product_type: string;
-  roll_len?: number;
+  ordered_as?: string;
 };
 
 async function OrdersPane() {
@@ -207,21 +203,21 @@ async function OrdersPane() {
     const orderIds = orders.map((o) => o.id);
     const { data: items } = await svc
       .from('purchase_order_items')
-      .select('id,order_id,sku_id,ordered_qty,received_qty,status')
+      .select('id,order_id,sku_id,ordered_qty,ordered_pieces,ordered_length_mm,ordered_is_cut,received_qty,status')
       .in('order_id', orderIds)
       .order('created_at');
 
-    const its = (items ?? []) as { id: string; order_id: string; sku_id: string; ordered_qty: number; received_qty: number; status: string }[];
+    const its = (items ?? []) as { id: string; order_id: string; sku_id: string; ordered_qty: number; ordered_pieces: number | null; ordered_length_mm: number | null; ordered_is_cut: boolean; received_qty: number; status: string }[];
 
     if (its.length > 0) {
       const skuIds = [...new Set(its.map((i) => i.sku_id))];
       const { data: skuRows } = await svc
         .from('v_sku_status')
-        .select('id,exact_size,brand_name,unit_code,product_type,roll_length_mm')
+        .select('id,exact_size,brand_name,unit_code,product_type')
         .in('id', skuIds);
 
-      const skuMap: Record<string, { exact_size: string; brand_name: string; unit_code: string; product_type: string; roll_length_mm: number | null }> = {};
-      for (const s of (skuRows ?? []) as { id: string; exact_size: string; brand_name: string; unit_code: string; product_type: string; roll_length_mm: number | null }[]) {
+      const skuMap: Record<string, { exact_size: string; brand_name: string; unit_code: string; product_type: string }> = {};
+      for (const s of (skuRows ?? []) as { id: string; exact_size: string; brand_name: string; unit_code: string; product_type: string }[]) {
         skuMap[s.id] = s;
       }
 
@@ -238,7 +234,7 @@ async function OrdersPane() {
         brand_name:    skuMap[i.sku_id]?.brand_name        ?? '—',
         unit_code:     skuMap[i.sku_id]?.unit_code         ?? '',
         product_type:  skuMap[i.sku_id]?.product_type      ?? '',
-        roll_len:      skuMap[i.sku_id]?.product_type === 'TIMING_BELT' ? Number(skuMap[i.sku_id]?.roll_length_mm ?? 0) : 0,
+        ordered_as:    i.ordered_pieces && i.ordered_length_mm ? `${i.ordered_pieces} × ${Number(i.ordered_length_mm)} mm${i.ordered_is_cut ? ' cut pcs' : ''}` : '',
       }));
     }
   }
@@ -286,20 +282,17 @@ async function OrdersPane() {
                 </div>
               </div>
               <div className="text-right shrink-0">
-                {i.roll_len ? (
-                  <div className="text-[14px] font-semibold num">
-                    {Number(i.received_qty) / i.roll_len}
-                    <span className="text-ink-3 font-normal">/{Number(i.ordered_qty) / i.roll_len} rolls</span>
-                  </div>
+                {i.ordered_as ? (
+                  <div className="text-[14px] font-semibold num">{i.ordered_as}</div>
                 ) : null}
-                <div className={i.roll_len ? 'text-[12px] text-ink-3 num' : 'text-[14px] font-semibold num'}>
+                <div className={i.ordered_as ? 'text-[12px] text-ink-3 num' : 'text-[14px] font-semibold num'}>
                   {i.received_qty}
                   <span className="text-ink-3 font-normal">/{i.ordered_qty}</span>
                   <span className="text-[12px] text-ink-3 ml-0.5">{i.unit_code}</span>
                 </div>
                 {remaining > 0 ? (
                   <div className="text-[12px] text-warn num">
-                    {i.roll_len ? `${rollsOf(remaining, i.roll_len)} (${remaining} ${i.unit_code}) left` : `${remaining} left`}
+                    {`${remaining} left`}
                   </div>
                 ) : (
                   <div className="text-[12px] text-ok flex items-center justify-end gap-0.5">

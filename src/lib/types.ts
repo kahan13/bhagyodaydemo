@@ -89,9 +89,6 @@ export interface Sku {
   stock_status: StockStatus;
   shortfall: number;
   suggested_purchase_qty: number;
-  /** mm per full roll for this SKU — null if not yet set in Product Master. Lot
-   *  tracking (timing belts) is only possible once this is defined. */
-  roll_length_mm: number | null;
 }
 
 export interface Movement {

@@ -86,9 +86,8 @@ export default function DashboardEntryDialog({
     setTimeout(() => searchRef.current?.focus(), 50);
   };
 
-  const rollLen = Number(sku?.roll_length_mm) > 0 && sku?.product_type === 'TIMING_BELT' ? Number(sku?.roll_length_mm) : 0;
-  const inRolls = action === 'inward' && rollLen > 0;
-  const rollList = inRolls ? rollsPayload(rollLen, rolls) : [];
+  const inRolls = action === 'inward' && sku?.product_type === 'TIMING_BELT';
+  const rollList = inRolls ? rollsPayload(rolls) : [];
   const amount = inRolls ? rollsTotal(rollList) : Number(qty || 0);
   const projected = action === 'inward' ? (sku?.current_stock ?? 0) + amount
     : (sku?.current_stock ?? 0) - amount;
@@ -241,7 +240,7 @@ export default function DashboardEntryDialog({
           {/* Quantity */}
           {inRolls ? (
             <div>
-              <RollEntry len={rollLen} rows={rolls} onChange={setRolls} />
+              <RollEntry rows={rolls} onChange={setRolls} />
               {amount > 0 && sku && (
                 <p className="text-[14px] text-ink-3 mt-1 num">
                   After: <span className="font-medium">{fmtQty(projected, sku.unit_code)}</span>

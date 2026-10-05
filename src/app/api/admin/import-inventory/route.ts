@@ -212,7 +212,7 @@ async function handle(req: Request) {
   }
 
   // Resolve each planned row to a SKU id (skipping rows whose new SKU failed)
-  interface Target { skuId: string; isNew: boolean; baseStock: number; basePhysical: number; roll: number | null; fullLen: number | null; added: number; location: string; remarks: string }
+  interface Target { skuId: string; isNew: boolean; baseStock: number; basePhysical: number; added: number; location: string; remarks: string }
   const targets = new Map<string, Target>(); // keyed by identity key
   for (const p of planned) {
     const key = p.id.key;
@@ -226,15 +226,12 @@ async function handle(req: Request) {
         baseStock: mode === 'OVERWRITE' || !p.sku ? 0 : Number(p.sku.current_stock ?? 0),
         // Physical (production-available) stock moves together with book stock.
         basePhysical: mode === 'OVERWRITE' || !p.sku ? 0 : Number(p.sku.physical_prod_stock ?? 0),
-        roll: p.sku?.roll_length_mm ?? null,
-        fullLen: null,
         added: 0,
         location: '',
         remarks: '',
       });
     }
     const t = targets.get(key)!;
-    if (p.lot === 'FULL_SLEEVE' && p.uom && t.fullLen === null) t.fullLen = p.uom;
     if (p.location) t.location = p.location;
     if (p.remarks) t.remarks = p.remarks;
   }
@@ -246,9 +243,7 @@ async function handle(req: Request) {
     if (!t) continue;
 
     if (meta.usesLots && p.lot && p.uom) {
-      const roll = p.lot === 'FULL_SLEEVE'
-        ? p.uom
-        : Math.max(t.roll ?? t.fullLen ?? p.uom, p.uom); // a cut piece can't be longer than its roll
+      const roll = p.uom; // every lot carries its own length (UOM in MM from the sheet)
       for (let n = 0; n < p.qty; n++) {
         const { error } = await svc.rpc('create_opening_lot', {
           p_sku_id: t.skuId,
@@ -276,7 +271,6 @@ async function handle(req: Request) {
       updated_at: new Date().toISOString(),
     };
     if (t.isNew || mode === 'OVERWRITE') patch.opening_stock = current;
-    if (meta.usesLots && t.roll === null && t.fullLen !== null) patch.roll_length_mm = t.fullLen;
     if (t.location) patch.rack_location = t.location;
     if (t.remarks) patch.remarks = t.remarks;
     const { error } = await svc.from('skus').update(patch).eq('id', t.skuId);
