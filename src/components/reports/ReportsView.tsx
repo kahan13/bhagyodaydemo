@@ -135,7 +135,7 @@ export default function ReportsView({
           .sort((a, b) => b.skus - a.skus));
       } else {
         let q = db.from('v_movements')
-          .select('txn_no,occurred_at,txn_type,txn_mode,product_type,exact_size,brand_name,family_code,quantity,unit_code,previous_stock,new_stock,user_name,operated_by_name,invoice_no,notes');
+          .select('txn_no,occurred_at,txn_type,txn_mode,product_type,exact_size,brand_name,family_code,quantity,unit_code,previous_stock,new_stock,user_name,operated_by_name,invoice_no,notes,lot_breakdown');
         if (kind === 'inward') q = q.eq('txn_type', 'INWARD');
         if (kind === 'waste') q = q.eq('txn_type', 'ADJUSTMENT').ilike('notes', '%wasted:%');
         if (kind === 'outward') q = q.eq('txn_type', 'OUTWARD');
@@ -167,6 +167,7 @@ export default function ReportsView({
           { key: 'brand_name',       label: 'Brand' },
           { key: 'family_code',      label: 'Family' },
           { key: 'quantity',         label: 'Qty',    numeric: true },
+          { key: 'qty_mm',           label: 'Qty × MM' },
           { key: 'unit_code',        label: 'Unit' },
           { key: 'previous_stock',   label: 'Before', numeric: true },
           { key: 'new_stock',        label: 'After',  numeric: true },
@@ -187,7 +188,27 @@ export default function ReportsView({
 
   useEffect(() => { void run(); }, [run]);
 
+  /** "3 × 470 Full Sleeve + 1 × 445 Cut Pcs" from the lots this movement touched (timing belts). */
+  function qtyMm(row: Record<string, unknown>): string {
+    const b = row.lot_breakdown as { status?: string; qty?: number }[] | null | undefined;
+    if (row.product_type !== 'TIMING_BELT' || !Array.isArray(b) || b.length === 0) return '—';
+    const label: Record<string, string> = { FULL_SLEEVE: 'Full Sleeve', CUT_PCS: 'Cut Pcs', WASTED: 'Waste' };
+    const by = new Map<string, { n: number; qty: number; st: string }>();
+    for (const e of b) {
+      const qty = Number(e.qty) || 0;
+      if (qty <= 0) continue;
+      const st = label[String(e.status)] ?? '';
+      const k = `${st}|${qty}`;
+      const cur = by.get(k) ?? { n: 0, qty, st };
+      cur.n += 1;
+      by.set(k, cur);
+    }
+    const parts = [...by.values()].map((v) => `${v.n} × ${fmtQty(v.qty)}${v.st ? ` ${v.st}` : ''}`);
+    return parts.length ? parts.join(' + ') : '—';
+  }
+
   function cell(row: Record<string, unknown>, key: string): string {
+    if (key === 'qty_mm') return qtyMm(row);
     const value = row[key];
     if (value === null || value === undefined || value === '') return '—';
     if (key === 'occurred_at') return fmtDateTime(String(value));

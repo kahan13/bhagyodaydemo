@@ -15,7 +15,7 @@ export const PAPER = { widthMm: 80, marginMm: 4, chars: 42, fontPt: 8 } as const
 export const SHOP_NAME = 'BHAGYODAY BELTS';
 
 export interface ReceiptPart { label: string; qty: number; note?: string }
-export interface ReceiptItem { name: string; qty: number; unit: string; parts: ReceiptPart[]; direct: boolean }
+export interface ReceiptItem { name: string; qty: number; unit: string; parts: ReceiptPart[]; direct: boolean; pieces?: number | null; mm?: number | null }
 export interface ReceiptModel {
   orderNo: string;
   createdAt: string;
@@ -71,7 +71,9 @@ export function receiptLines(m: ReceiptModel, chars: number = PAPER.chars): RLin
   text('ITEMS', { bold: true });
   m.items.forEach((it, i) => {
     wrap(`${i + 1}. ${it.name}`, chars).forEach((s) => text(s, { bold: true }));
-    text(`   Qty: ${num(it.qty)} ${it.unit}`);
+    text(it.pieces && it.mm && it.pieces * it.mm === it.qty
+      ? `   Qty: ${num(it.pieces)} x ${num(it.mm)} = ${num(it.qty)} ${it.unit}`
+      : `   Qty: ${num(it.qty)} ${it.unit}`);
     if (it.direct) text('   (direct - no stock)');
     for (const p of it.parts) {
       text(`   > ${p.label}: ${num(p.qty)} ${it.unit}${p.note ? ` ${p.note}` : ''}`);
@@ -127,6 +129,8 @@ export async function loadReceiptModel(db: SupabaseClient, order: ProductionOrde
       unit: i.unit_code,
       parts: byItem[i.id] ?? [],
       direct: !!order.is_direct,
+      pieces: i.pieces ?? null,
+      mm: i.length_mm ?? null,
     })),
   };
 }

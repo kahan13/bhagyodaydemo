@@ -66,7 +66,7 @@ function buildMessage(fields: {
   order_no?: string;
   direct?: boolean;
   customer_name: string;
-  items: Array<{ display_name: string; quantity: string; unit_code: string; detail?: string }>;
+  items: Array<{ display_name: string; quantity: string; unit_code: string; detail?: string; pieces?: string; mm?: string }>;
   time_tag: string;
   delivery_mode: string;
   delivery_note: string;
@@ -76,7 +76,10 @@ function buildMessage(fields: {
   const itemLines = fields.items
     .filter((i) => i.display_name)
     .map((i, idx) =>
-      `  ${idx + 1}. ${i.display_name}${i.quantity ? ` × ${i.quantity} ${i.unit_code}`.trimEnd() : ''}${i.detail ? ` (${i.detail})` : ''}`
+      `  ${idx + 1}. ${i.display_name}${
+        i.pieces && i.mm && Number(i.pieces) * Number(i.mm) === Number(i.quantity)
+          ? ` — ${i.pieces} × ${i.mm} = ${i.quantity} ${i.unit_code}`.trimEnd()
+          : i.quantity ? ` × ${i.quantity} ${i.unit_code}`.trimEnd() : ''}${i.detail ? ` (${i.detail})` : ''}`
     );
 
   const lines = [
@@ -800,6 +803,22 @@ function lineQM(li: { quantity: string; pieces: string; mm: string }): { pieces:
   if ((Math.floor(Number(li.pieces)) || 0) * (Number(li.mm) || 0) === q) return { pieces: li.pieces, mm: li.mm };
   return q > 0 ? { pieces: '1', mm: String(q) } : { pieces: '', mm: '' };
 }
+/** pieces × mm of a line, only for lines entered as Qty × MM (timing belts / direct MM lines). */
+function qmOf(li: LineItem, isDirect: boolean): { pieces: number; mm: number } | null {
+  const isQm = isDirect ? li.manualUnit === 'MM' : li.skuSearch.sku?.product_type === 'TIMING_BELT';
+  if (!isQm) return null;
+  const qm = lineQM(li);
+  const pieces = Math.floor(Number(qm.pieces)) || 0, mm = Number(qm.mm) || 0;
+  return pieces > 0 && mm > 0 && pieces * mm === Number(li.quantity) ? { pieces, mm } : null;
+}
+const qmFields = (li: LineItem, isDirect: boolean) => {
+  const q = qmOf(li, isDirect);
+  return q ? { pieces: String(q.pieces), mm: String(q.mm) } : {};
+};
+const qmColumns = (li: LineItem, isDirect: boolean) => {
+  const q = qmOf(li, isDirect);
+  return q ? { pieces: q.pieces, length_mm: q.mm } : {};
+};
 const qmTotal = (pieces: string, mm: string): string => {
   const t = (Math.floor(Number(pieces)) || 0) * (Number(mm) || 0);
   return t > 0 ? String(Math.round(t * 100) / 100) : '';
@@ -1012,12 +1031,13 @@ export default function ProductionOrdersView({
     direct: form.isDirect,
     customer_name: form.customer_name,
     items: form.items.map((li) => form.isDirect
-      ? { display_name: li.manualName, quantity: li.quantity, unit_code: li.manualUnit }
+      ? { display_name: li.manualName, quantity: li.quantity, unit_code: li.manualUnit, ...qmFields(li, true) }
       : {
           display_name: li.skuSearch.sku?.display_name ?? '',
           quantity: li.quantity,
           unit_code: li.skuSearch.sku?.unit_code ?? '',
           detail: allocDetail(li.allocations),
+          ...qmFields(li, false),
         }),
     time_tag: form.time_tag,
     delivery_mode: form.delivery_mode,
@@ -1174,12 +1194,13 @@ export default function ProductionOrdersView({
       direct: isDirect,
       customer_name: form.customer_name,
       items: validItems.map((li) => isDirect
-        ? { display_name: li.manualName.trim(), quantity: li.quantity, unit_code: li.manualUnit }
+        ? { display_name: li.manualName.trim(), quantity: li.quantity, unit_code: li.manualUnit, ...qmFields(li, true) }
         : {
             display_name: li.skuSearch.sku!.display_name,
             quantity: li.quantity,
             unit_code: li.skuSearch.sku!.unit_code,
             detail: allocDetail(li.allocations),
+            ...qmFields(li, false),
           }),
       time_tag: form.time_tag,
       delivery_mode: form.delivery_mode,
@@ -1220,6 +1241,7 @@ export default function ProductionOrdersView({
           display_name: li.manualName.trim(),
           unit_code:    li.manualUnit,
           quantity:     Number(li.quantity),
+          ...qmColumns(li, true),
         }
       : {
           order_id:     orderId,
@@ -1228,6 +1250,7 @@ export default function ProductionOrdersView({
           display_name: li.skuSearch.sku!.display_name,
           unit_code:    li.skuSearch.sku!.unit_code,
           quantity:     li.quantity ? Number(li.quantity) : 1,
+          ...qmColumns(li, false),
         });
 
     const { data: insertedItems, error: itemErr } = await db
@@ -1402,6 +1425,8 @@ export default function ProductionOrdersView({
         display_name: i.display_name,
         quantity: String(i.quantity),
         unit_code: i.unit_code,
+        pieces: i.pieces ? String(i.pieces) : undefined,
+        mm: i.length_mm ? String(i.length_mm) : undefined,
       })),
       time_tag: order.time_tag ?? '',
       delivery_mode: order.delivery_mode ?? '',

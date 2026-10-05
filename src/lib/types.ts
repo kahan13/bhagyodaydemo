@@ -184,6 +184,9 @@ export interface ProductionOrderItem {
   display_name: string;
   unit_code: string;
   quantity: number;
+  /** QTY × MM as typed (quantity = pieces × length_mm). NULL on older orders. */
+  pieces?: number | null;
+  length_mm?: number | null;
   reserved_qty: number;
   is_fulfilled: boolean;
   notes: string | null;
