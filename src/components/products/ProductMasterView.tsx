@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Search, Plus, Pencil, ToggleLeft, ToggleRight, X } from 'lucide-react';
 import { PRODUCT_TYPE_LABEL, type Permission, type ProductType } from '@/lib/types';
-import { PRODUCT_TYPES, TYPE_META, buildIdentity, isIdentityError } from '@/lib/sheet-config';
+import { PRODUCT_TYPES, TYPE_META, UNSPECIFIED, buildIdentity, isIdentityError } from '@/lib/sheet-config';
+import { fmtMsl } from '@/lib/format';
 
 interface Product {
   id: string; sku_code: string; product_type: ProductType;
@@ -15,6 +16,7 @@ interface Product {
   remarks?: string | null; created_via?: string;
   unit_code: string; current_stock: number; min_stock_level: number;
   rack_location: string | null; is_active: boolean; stock_status: string;
+  missing_fields?: string[];
 }
 
 interface Brand { id: string; code: string; name: string; }
@@ -34,6 +36,11 @@ const EMPTY: Form = {
   rack_location: '', remarks: '',
 };
 
+/** Shows UNSPECIFIED (a value the sheet left blank) in amber. */
+function Un({ v }: { v: string | null | undefined }) {
+  return v === UNSPECIFIED ? <span className="text-warn font-medium">UNSPECIFIED</span> : <>{v}</>;
+}
+
 const numStr = (n: number | null | undefined) => (n === null || n === undefined ? '' : String(n));
 
 export default function ProductMasterView({
@@ -49,6 +56,8 @@ export default function ProductMasterView({
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<ProductType | 'ALL'>('ALL');
   const [showInactive, setShowInactive] = useState(false);
+  const [onlyFix, setOnlyFix] = useState(false);
+  const [onlyNoMsl, setOnlyNoMsl] = useState(false);
   const [dialog, setDialog] = useState<'add' | 'edit' | null>(null);
   const [editing, setEditing] = useState<Product | null>(null);
   const [form, setForm] = useState<Form>(EMPTY);
@@ -68,20 +77,27 @@ export default function ProductMasterView({
     return products.filter((p) => {
       if (!showInactive && !p.is_active) return false;
       if (typeFilter !== 'ALL' && p.product_type !== typeFilter) return false;
+      if (onlyFix && !(p.missing_fields?.length)) return false;
+      if (onlyNoMsl && Number(p.min_stock_level) > 0) return false;
       if (!q) return true;
       return [p.sku_code, p.exact_size, p.brand_name, p.hier_l1, p.hier_l2, p.remarks ?? '']
         .some((v) => v.toLowerCase().includes(q));
     });
-  }, [products, query, typeFilter, showInactive]);
+  }, [products, query, typeFilter, showInactive, onlyFix, onlyNoMsl]);
+
+  const needFix = products.filter((p) => p.is_active && p.missing_fields?.length).length;
+  // MSL not set = 0 (an alert level of 0 would never fire, so 0 is treated as "not set").
+  const noMsl = products.filter((p) => p.is_active && (typeFilter === 'ALL' || p.product_type === typeFilter) && !(Number(p.min_stock_level) > 0)).length;
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
 
   const openAdd = () => { setForm({ ...EMPTY, product_type: typeFilter === 'ALL' ? 'TIMING_BELT' : typeFilter }); setEditing(null); setErr(''); setDialog('add'); };
   const openEdit = (p: Product) => {
     setEditing(p);
+    const blank = (v: string) => (v === UNSPECIFIED ? '' : v);
     setForm({
-      product_type: p.product_type, family: p.family_name, section: p.section ?? '', size: p.hier_l3,
-      colour: p.colour ?? '', brand: p.brand_name,
+      product_type: p.product_type, family: blank(p.family_name), section: blank(p.section ?? ''), size: blank(p.hier_l3),
+      colour: blank(p.colour ?? ''), brand: blank(p.brand_name),
       length: numStr(p.length_mm), width: numStr(p.width_mm), thickness: numStr(p.thickness_mm),
       display_name: p.display_name, min_stock_level: numStr(p.min_stock_level),
       rack_location: p.rack_location ?? '', remarks: p.remarks ?? '',
@@ -109,6 +125,12 @@ export default function ProductMasterView({
       : {
         id: editing!.id, display_name: form.display_name, min_stock_level: form.min_stock_level,
         rack_location: form.rack_location, remarks: form.remarks,
+        ...(editing!.missing_fields?.length ? {
+          fix: {
+            family: form.family, section: form.section, size: form.size, colour: form.colour, brand: form.brand,
+            length: form.length, width: form.width, thickness: form.thickness,
+          },
+        } : {}),
       };
     const r = await fetch('/api/products', {
       method: adding ? 'POST' : 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -134,6 +156,9 @@ export default function ProductMasterView({
 
   const unitLabel = (p: Product) => (p.unit_code === 'MM' ? 'mm' : p.unit_code);
   const lockId = dialog === 'edit';
+  const missingSet = new Set(editing?.missing_fields ?? []);
+  // In edit mode an identity field is open only if the import left it blank.
+  const lockedField = (label: string) => lockId && !missingSet.has(label);
 
   return (
     <div className="flex flex-col h-[calc(100vh/var(--z,1)-56px)]">
@@ -149,6 +174,16 @@ export default function ProductMasterView({
           <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} className="rounded" />
           Show inactive
         </label>
+        <button onClick={() => setOnlyNoMsl((v) => !v)} title="Products with no MSL (minimum stock level) set"
+          className={`btn text-[14px] ${onlyNoMsl ? 'btn-primary' : ''}`}>
+          No MSL · {noMsl}
+        </button>
+        {needFix > 0 && (
+          <button onClick={() => setOnlyFix((v) => !v)}
+            className={`btn text-[14px] ${onlyFix ? 'btn-primary' : ''}`}>
+            Needs attention · {needFix}
+          </button>
+        )}
         {can('products.create') && (
           <button onClick={openAdd} className="btn btn-primary ml-auto flex items-center gap-1.5 text-[15px]">
             <Plus size={14} /> Add Product
@@ -184,7 +219,7 @@ export default function ProductMasterView({
                 <th>Size</th>
                 <th>Make</th>
                 <th className="num">Stock</th>
-                <th className="num">Min</th>
+                <th className="num">MSL</th>
                 <th>Remarks</th>
                 <th>Status</th>
                 {can('products.edit') && <th />}
@@ -195,14 +230,19 @@ export default function ProductMasterView({
                 <tr key={p.id} className={!p.is_active ? 'opacity-45' : ''}>
                   <td className="font-mono text-[14px] whitespace-nowrap">{p.sku_code}</td>
                   <td>{TYPE_META[p.product_type].short}</td>
-                  <td>{p.hier_l1}</td>
-                  <td>{p.section ?? p.colour ?? p.hier_l2}</td>
-                  <td className="whitespace-nowrap">{p.hier_l3}</td>
-                  <td>{p.brand_name}</td>
+                  <td><Un v={p.hier_l1} /></td>
+                  <td><Un v={p.section ?? p.colour ?? p.hier_l2} /></td>
+                  <td className="whitespace-nowrap"><Un v={p.hier_l3} /></td>
+                  <td><Un v={p.brand_name} /></td>
                   <td className="num whitespace-nowrap">{p.current_stock} {unitLabel(p)}</td>
-                  <td className="num">{p.min_stock_level}</td>
+                  <td className="num whitespace-nowrap">{p.min_stock_level > 0 ? fmtMsl(p.min_stock_level, p.unit_code, p.product_type) : <span className="text-ink-3">—</span>}</td>
                   <td className="text-ink-3 max-w-[200px] truncate" title={p.remarks ?? ''}>{p.remarks ?? '—'}</td>
-                  <td>
+                  <td className="whitespace-nowrap">
+                    {!!p.missing_fields?.length && (
+                      <span className="badge badge-warn mr-1.5" title={`Missing: ${p.missing_fields.join(', ')}`}>
+                        Missing {p.missing_fields.join(', ')}
+                      </span>
+                    )}
                     <span className={`badge ${p.stock_status === 'OK' ? 'badge-ok' : p.stock_status === 'OUT_OF_STOCK' ? 'badge-danger' : 'badge-warn'}`}>
                       {p.stock_status === 'OK' ? 'OK' : p.stock_status === 'OUT_OF_STOCK' ? 'Out' : 'Low'}
                     </span>
@@ -243,6 +283,13 @@ export default function ProductMasterView({
                 </div>
               </div>
 
+              {dialog === 'edit' && !!editing?.missing_fields?.length && (
+                <p className="col-span-2 text-[14px] text-warn bg-warn-soft border border-warn-line rounded-lg px-3 py-2">
+                  Missing from the import: <strong>{editing.missing_fields.join(', ')}</strong>. Fill in the open field(s) below — the product
+                  keeps its SKU and stock.
+                </p>
+              )}
+
               <div className="col-span-2">
                 <label className="label">SKU</label>
                 <p className="text-[15px] font-mono">
@@ -252,7 +299,7 @@ export default function ProductMasterView({
 
               <div>
                 <label className="label">Product Family <span className="text-danger">*</span></label>
-                <input className="field w-full" list="pm-families" disabled={lockId} value={form.family}
+                <input className="field w-full" list="pm-families" disabled={lockedField('Product Family')} value={form.family}
                   onChange={(e) => set('family', e.target.value)} placeholder={isConveyor ? 'e.g. PU, PVC' : 'e.g. CLASSICAL'} />
                 <datalist id="pm-families">{familyOptions.map((f) => <option key={f.id} value={f.name} />)}</datalist>
               </div>
@@ -260,12 +307,12 @@ export default function ProductMasterView({
               {isConveyor ? (
                 <div>
                   <label className="label">Colour <span className="text-danger">*</span></label>
-                  <input className="field w-full" disabled={lockId} value={form.colour} onChange={(e) => set('colour', e.target.value)} />
+                  <input className="field w-full" disabled={lockedField('Colour')} value={form.colour} onChange={(e) => set('colour', e.target.value)} />
                 </div>
               ) : (
                 <div>
                   <label className="label">{form.product_type === 'V_BELT' ? 'Section of V Belt' : 'Section of Timing Belt'} <span className="text-danger">*</span></label>
-                  <input className="field w-full" disabled={lockId} value={form.section} onChange={(e) => set('section', e.target.value)} placeholder="e.g. L, MXL, A, B" />
+                  <input className="field w-full" disabled={lockedField('Section')} value={form.section} onChange={(e) => set('section', e.target.value)} placeholder="e.g. L, MXL, A, B" />
                 </div>
               )}
 
@@ -273,13 +320,13 @@ export default function ProductMasterView({
                 <>
                   <div>
                     <label className="label">Make <span className="text-danger">*</span></label>
-                    <input className="field w-full" list="pm-brands" disabled={lockId} value={form.brand} onChange={(e) => set('brand', e.target.value)} />
+                    <input className="field w-full" list="pm-brands" disabled={lockedField('Make')} value={form.brand} onChange={(e) => set('brand', e.target.value)} />
                   </div>
                   <div className="grid grid-cols-3 gap-3">
                     <div><label className="label">L <span className="text-danger">*</span></label>
-                      <input type="number" className="field w-full" disabled={lockId} value={form.length} onChange={(e) => set('length', e.target.value)} /></div>
+                      <input type="number" className="field w-full" disabled={lockedField('L')} value={form.length} onChange={(e) => set('length', e.target.value)} /></div>
                     <div><label className="label">W <span className="text-danger">*</span></label>
-                      <input type="number" className="field w-full" disabled={lockId} value={form.width} onChange={(e) => set('width', e.target.value)} /></div>
+                      <input type="number" className="field w-full" disabled={lockedField('W')} value={form.width} onChange={(e) => set('width', e.target.value)} /></div>
                     <div><label className="label">T</label>
                       <input type="number" step="any" className="field w-full" disabled={lockId} value={form.thickness} onChange={(e) => set('thickness', e.target.value)} /></div>
                   </div>
@@ -288,11 +335,11 @@ export default function ProductMasterView({
                 <>
                   <div>
                     <label className="label">Size <span className="text-danger">*</span></label>
-                    <input className="field w-full" disabled={lockId} value={form.size} onChange={(e) => set('size', e.target.value)} />
+                    <input className="field w-full" disabled={lockedField('Size')} value={form.size} onChange={(e) => set('size', e.target.value)} />
                   </div>
                   <div>
                     <label className="label">Make <span className="text-danger">*</span></label>
-                    <input className="field w-full" list="pm-brands" disabled={lockId} value={form.brand} onChange={(e) => set('brand', e.target.value)} />
+                    <input className="field w-full" list="pm-brands" disabled={lockedField('Make')} value={form.brand} onChange={(e) => set('brand', e.target.value)} />
                   </div>
                 </>
               )}
@@ -306,7 +353,7 @@ export default function ProductMasterView({
               )}
 
               <div>
-                <label className="label">Minimum Stock Level ({meta.unit === 'MM' ? 'mm' : 'pcs'})</label>
+                <label className="label">MSL — minimum stock level ({meta.usesLots ? 'pieces' : 'pcs'})</label>
                 <input type="number" className="field w-full" value={form.min_stock_level} onChange={(e) => set('min_stock_level', e.target.value)} />
               </div>
               <div>

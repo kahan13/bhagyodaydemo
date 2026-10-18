@@ -198,7 +198,7 @@ function AtpBadge({ sku, qty, otherQty = 0 }: { sku: SkuWithAtp; qty: string; ot
 
   let colour: string;
   if (effectiveAtp <= 0) colour = 'text-danger font-semibold';
-  else if (effectiveAtp < (sku.min_stock_level ?? 0)) colour = 'text-warn font-semibold';
+  else if (sku.product_type !== 'TIMING_BELT' && effectiveAtp < (sku.min_stock_level ?? 0)) colour = 'text-warn font-semibold';
   else colour = 'text-ok';
 
   return (
@@ -371,7 +371,7 @@ function SkuCombobox({
             const atpColour =
               avail <= 0
                 ? 'text-danger'
-                : !group && avail < (sku.min_stock_level ?? 0)
+                : !group && sku.product_type !== 'TIMING_BELT' && avail < (sku.min_stock_level ?? 0)
                 ? 'text-warn'
                 : 'text-ok';
             return (

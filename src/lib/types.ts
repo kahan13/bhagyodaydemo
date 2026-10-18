@@ -89,6 +89,10 @@ export interface Sku {
   stock_status: StockStatus;
   shortfall: number;
   suggested_purchase_qty: number;
+  /** Timing belts: pieces in stock (what MSL is compared with). Others: same as stock. */
+  stock_pieces?: number;
+  /** Identity parts an import could not fill (saved as UNSPECIFIED). Empty = complete. */
+  missing_fields?: string[];
 }
 
 export interface Movement {

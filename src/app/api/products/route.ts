@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseServer, supabaseService } from '@/lib/supabase-server';
 import { requirePermission } from '@/lib/auth';
 import type { ProductType } from '@/lib/types';
-import { PRODUCT_TYPES, buildIdentity, isIdentityError, uniqueSkuCode } from '@/lib/sheet-config';
+import { PRODUCT_TYPES, UNSPECIFIED, buildIdentity, isIdentityError, uniqueSkuCode } from '@/lib/sheet-config';
 import { ensureBrandsAndFamilies, loadAllSkus, newSkuRow } from '@/lib/sheet-import-server';
 
 export const dynamic = 'force-dynamic';
@@ -12,7 +12,7 @@ export async function GET() {
   const db = await supabaseServer();
   const { data, error } = await db
     .from('v_sku_status')
-    .select('id,sku_code,product_type,display_name,exact_size,hier_l1,hier_l2,hier_l3,brand_code,brand_name,family_code,family_name,section,colour,length_mm,width_mm,thickness_mm,remarks,created_via,unit_code,current_stock,min_stock_level,rack_location,is_active,stock_status')
+    .select('id,sku_code,product_type,display_name,exact_size,hier_l1,hier_l2,hier_l3,brand_code,brand_name,family_code,family_name,section,colour,length_mm,width_mm,thickness_mm,remarks,created_via,unit_code,current_stock,min_stock_level,rack_location,is_active,stock_status,stock_pieces,missing_fields')
     .order('product_type').order('hier_l1').order('hier_l2').order('hier_l3');
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data);
@@ -67,6 +67,47 @@ export async function PATCH(req: Request) {
   if (!id) return NextResponse.json({ error: 'Missing product id.' }, { status: 400 });
 
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+
+  // Fill in the identity parts an import left as UNSPECIFIED (Make, Section, Size, Family, …).
+  // Only blank values are replaced; the SKU code never changes.
+  if (body.fix && typeof body.fix === 'object') {
+    const svc0 = await supabaseService();
+    const { data: cur, error: curErr } = await svc0.from('v_sku_status')
+      .select('id,sku_code,product_type,family_name,brand_name,section,colour,hier_l3,length_mm,width_mm,thickness_mm,missing_fields')
+      .eq('id', id).single();
+    if (curErr || !cur) return NextResponse.json({ error: 'Product not found.' }, { status: 404 });
+    const type = cur.product_type as ProductType;
+    const f = body.fix as Record<string, unknown>;
+    const keep = (v: unknown) => (String(v ?? '').trim() === UNSPECIFIED ? '' : v);
+    const pick = (fixed: unknown, current: unknown) => (String(fixed ?? '').trim() !== '' ? fixed : keep(current));
+
+    const built = buildIdentity(type, {
+      family: pick(f.family, cur.family_name),
+      brand: pick(f.brand, cur.brand_name),
+      section: pick(f.section, cur.section),
+      colour: pick(f.colour, cur.colour),
+      size: pick(f.size, cur.hier_l3),
+      length: pick(f.length, cur.length_mm),
+      width: pick(f.width, cur.width_mm),
+      thickness: pick(f.thickness, cur.thickness_mm),
+    });
+    if (isIdentityError(built)) return NextResponse.json({ error: built.error }, { status: 400 });
+
+    const all = await loadAllSkus(svc0);
+    const twin = all.find((s) => s.id !== id && s.product_type === type && s.identity_key === built.key);
+    if (twin) {
+      return NextResponse.json({ error: `That makes this product identical to ${twin.sku_code}. Deactivate one of them instead.` }, { status: 409 });
+    }
+    const { brandId, familyId } = await ensureBrandsAndFamilies(svc0, type, [built]);
+    const fresh = newSkuRow(built, cur.sku_code, familyId.get(built.family)!, brandId.get(built.brand)!, 'MANUAL');
+    /* eslint-disable @typescript-eslint/no-unused-vars */
+    const { sku_code, product_type, created_via, unit_code, opening_stock, current_stock, min_stock_level,
+      supplier_moq, reorder_quantity, is_active, ...identityFields } = fresh;
+    /* eslint-enable @typescript-eslint/no-unused-vars */
+    Object.assign(update, identityFields);
+    delete body.display_name; // the name follows the fixed identity
+  }
+
   if ('display_name' in body) update.display_name = body.display_name || null;
   if ('min_stock_level' in body) update.min_stock_level = Number(body.min_stock_level) || 0;
   if ('rack_location' in body) update.rack_location = body.rack_location || null;

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { FileSpreadsheet, FileText, RefreshCw } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
-import { fmtDate, fmtQty, fmtDateTime } from '@/lib/format';
+import { fmtDate, fmtQty, fmtMsl, fmtDateTime } from '@/lib/format';
 
 type ReportKind =
   | 'current_stock' | 'low_stock' | 'movements' | 'inward' | 'outward'
@@ -104,7 +104,13 @@ export default function ReportsView({
             : [{ key: 'rack_location', label: 'Rack' }]),
           { key: 'stock_status', label: 'Status' },
         ]);
-        setRows((data ?? []) as Record<string, unknown>[]);
+        // Timing belts: MSL (and the reorder figure) count pieces, not mm.
+        setRows(((data ?? []) as Record<string, unknown>[]).map((r) =>
+          r.product_type === 'TIMING_BELT'
+            ? { ...r,
+                min_stock_level: fmtMsl(r.min_stock_level as number, 'MM', 'TIMING_BELT'),
+                suggested_purchase_qty: fmtMsl(r.suggested_purchase_qty as number, 'MM', 'TIMING_BELT') }
+            : r));
       } else if (kind === 'brand_summary' || kind === 'family_summary') {
         const { data, error } = await db.from('v_sku_status')
           .select('brand_name,family_code,current_stock,unit_code,stock_status')

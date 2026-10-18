@@ -22,7 +22,7 @@ const COLUMNS =
   'pitch_mm,pitch_length_mm,width_mm,teeth,nominal_length,length_designation,rack_location,' +
   'unit_code,opening_stock,current_stock,min_stock_level,supplier_moq,reorder_quantity,' +
   'supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty,' +
-  'section,colour,length_mm,thickness_mm,remarks';
+  'section,colour,length_mm,thickness_mm,remarks,stock_pieces,missing_fields';
 
 let cache: Sku[] | null = null;
 let inflight: Promise<Sku[]> | null = null;
@@ -117,6 +117,8 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
     const row = cache.find((s) => s.sku_code === skuCode);
     if (!row) return;
     row.current_stock = newStock;
+    // Timing belts: MSL counts pieces, which only the server knows — keep its status until refresh().
+    if (row.product_type === 'TIMING_BELT') { setSkus([...cache]); return; }
     row.stock_status = newStock <= 0 ? 'OUT_OF_STOCK'
       : newStock < row.min_stock_level ? 'LOW_STOCK' : 'OK';
     row.shortfall = Math.max(row.min_stock_level - newStock, 0);

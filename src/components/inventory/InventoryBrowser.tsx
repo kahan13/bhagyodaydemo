@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X, ChevronRight, Package, TrendingDown, ChevronDown } from 'lucide-react';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
 import { supabaseBrowser } from '@/lib/supabase-browser';
-import { fmtQty, fmtRelative, CHANNEL_LABEL } from '@/lib/format';
+import { fmtQty, fmtMsl, fmtRelative, CHANNEL_LABEL } from '@/lib/format';
 import { HIERARCHY, type Movement, type Permission, type ProductType, type Sku } from '@/lib/types';
 import MovementDialog from '@/components/inventory/MovementDialog';
 import SkuLotsPanel from '@/components/inventory/SkuLotsPanel';
@@ -609,7 +609,7 @@ export default function InventoryBrowser({
                     {isExpanded && (
                       <div className="mx-1.5 mb-1 px-3 py-2 rounded-md bg-subtle border border-line text-[14px] space-y-1">
                         <p className="text-ink-3 font-mono">{s.sku_code}</p>
-                        <p className="text-ink-3">Min: <span className="text-ink font-medium">{fmtQty(s.min_stock_level, s.unit_code)}</span></p>
+                        <p className="text-ink-3">Min: <span className="text-ink font-medium">{fmtMsl(s.min_stock_level, s.unit_code, s.product_type)}</span></p>
                         {s.rack_location && <p className="text-ink-3">Location: <span className="text-ink font-medium">{s.rack_location}</span></p>}
                         {s.remarks && <p className="text-ink-3">Remark: <span className="text-ink">{s.remarks}</span></p>}
                       </div>
@@ -776,7 +776,7 @@ function DetailPanel({
 
           {sku.stock_status !== 'OK' && (
             <p className="text-[14px] text-warn mt-2.5 leading-relaxed">
-              Minimum is {fmtQty(sku.min_stock_level, sku.unit_code)}.
+              Minimum is {fmtMsl(sku.min_stock_level, sku.unit_code, sku.product_type)}.
             </p>
           )}
         </div>
@@ -797,7 +797,7 @@ function DetailPanel({
 
         <dl className="px-5 py-4 border-b border-line grid grid-cols-2 gap-y-3 gap-x-4">
           <Field label="Unit" value={sku.unit_code} />
-          <Field label="Minimum" value={fmtQty(sku.min_stock_level, sku.unit_code)} />
+          <Field label="Minimum" value={fmtMsl(sku.min_stock_level, sku.unit_code, sku.product_type)} />
           <Field label="Location" value={sku.rack_location} />
           <Field label="Opening stock" value={fmtQty(sku.opening_stock, sku.unit_code)} />
           {specs.filter(([, v]) => v).map(([k, v]) => <Field key={k} label={k} value={v} />)}

@@ -13,6 +13,15 @@ export function fmtQty(value: number | string | null | undefined, unit?: string 
   return `${text} ${unit.toUpperCase() === 'MTR' ? 'm' : unit.toLowerCase()}`;
 }
 
+/**
+ * A minimum-stock (MSL) or reorder figure. Timing belts are stocked in mm but their MSL counts
+ * PIECES, so it is shown as "2 pcs"; every other type keeps its own unit.
+ */
+export function fmtMsl(value: number | string | null | undefined, unit: string | null | undefined, productType?: string | null): string {
+  if (productType === 'TIMING_BELT') return `${Number(value ?? 0)} pcs`;
+  return fmtQty(value, unit);
+}
+
 export function fmtDateTime(iso: string): string {
   return new Date(iso).toLocaleString('en-IN', {
     timeZone: IST, day: '2-digit', month: 'short', year: 'numeric',

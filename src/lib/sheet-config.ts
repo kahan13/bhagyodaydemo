@@ -14,12 +14,12 @@
 
 import type { ProductType } from '@/lib/types';
 
-export type ImportKind = 'SKU' | 'INVENTORY';
+export type ImportKind = 'SKU' | 'INVENTORY' | 'MSL';
 
 export type FieldKey =
   | 'family' | 'section' | 'size' | 'colour' | 'brand'
   | 'length' | 'width' | 'thickness'
-  | 'lot_type' | 'uom_mm' | 'qty' | 'location' | 'remarks';
+  | 'lot_type' | 'uom_mm' | 'qty' | 'location' | 'remarks' | 'msl';
 
 export interface FieldDef {
   key: FieldKey;
@@ -93,6 +93,8 @@ const F = {
   thickness:{ key: 'thickness',label: 'T (Thickness)',  aliases: ['t', 'thickness'], hint: 'Optional — some round belts have none' } as FieldDef,
   location: { key: 'location', label: 'Location',       aliases: ['location', 'rack', 'rack location'] } as FieldDef,
   remarks:  { key: 'remarks',  label: 'Remarks',        aliases: ['remarks', 'remark'] } as FieldDef,
+  msl:      { key: 'msl',      label: 'MSL (min. stock)', aliases: ['msl', 'min stock', 'min stock level', 'minimum stock level', 'minimum stock', 'min'],
+              hint: 'Optional — alert level. Timing belts: number of pieces; others: pieces' } as FieldDef,
 };
 
 const sectionField = (label: string, aliases: string[]): FieldDef =>
@@ -116,7 +118,11 @@ const IDENTITY: Record<ProductType, FieldDef[]> = {
 };
 
 /** Product (SKU) import: identity only. No stock, no cut/full, no location. */
-export const SKU_FIELDS: Record<ProductType, FieldDef[]> = IDENTITY;
+export const SKU_FIELDS: Record<ProductType, FieldDef[]> = {
+  TIMING_BELT: [...IDENTITY.TIMING_BELT, F.msl],
+  V_BELT: [...IDENTITY.V_BELT, F.msl],
+  CONVEYOR_BELT: [...IDENTITY.CONVEYOR_BELT, F.msl],
+};
 
 /** Inventory import: identity (to find the SKU) + what is physically in stock. */
 export const INVENTORY_FIELDS: Record<ProductType, FieldDef[]> = {
@@ -129,28 +135,38 @@ export const INVENTORY_FIELDS: Record<ProductType, FieldDef[]> = {
       hint: 'Length of ONE piece / roll in mm' },
     { key: 'qty', label: 'QTY', required: true, aliases: ['qty', 'quantity'],
       hint: 'How many such pieces / rolls' },
-    F.location, F.remarks,
+    F.location, F.remarks, F.msl,
   ],
   V_BELT: [
     ...IDENTITY.V_BELT,
     { key: 'qty', label: 'UOM (PCS)', required: true, aliases: ['uom (pcs)', 'uom pcs', 'qty', 'quantity'],
       hint: 'Pieces in stock' },
-    F.location, F.remarks,
+    F.location, F.remarks, F.msl,
   ],
   CONVEYOR_BELT: [
     ...IDENTITY.CONVEYOR_BELT,
     { key: 'qty', label: 'QTY', required: true, aliases: ['qty', 'quantity'], hint: 'Pieces in stock' },
-    F.location, F.remarks,
+    F.location, F.remarks, F.msl,
   ],
 };
 
+/** MSL-only import: identity columns (to find the product) + the MSL column. Nothing else is read. */
+export const MSL_FIELDS: Record<ProductType, FieldDef[]> = {
+  TIMING_BELT: [...IDENTITY.TIMING_BELT, { ...F.msl, required: true }],
+  V_BELT: [...IDENTITY.V_BELT, { ...F.msl, required: true }],
+  CONVEYOR_BELT: [...IDENTITY.CONVEYOR_BELT, { ...F.msl, required: true }],
+};
+
 export const fieldsFor = (kind: ImportKind, type: ProductType): FieldDef[] =>
-  (kind === 'SKU' ? SKU_FIELDS : INVENTORY_FIELDS)[type];
+  (kind === 'SKU' ? SKU_FIELDS : kind === 'MSL' ? MSL_FIELDS : INVENTORY_FIELDS)[type];
 
 // ── Header matching ──────────────────────────────────────────────────────────
 
 export const normHeader = (s: unknown): string =>
   String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+/** Collapse stray spaces in a header ("MAKE " -> "MAKE"). Used by BOTH the browser and the server. */
+export const cleanHeader = (h: unknown): string => String(h ?? '').replace(/\s+/g, ' ').trim();
 
 /** Exact (normalised) match of sheet headers to fields — no fuzzy guessing. */
 export function autoMap(headers: string[], fields: FieldDef[]): Record<string, string> {
@@ -161,7 +177,20 @@ export function autoMap(headers: string[], fields: FieldDef[]): Record<string, s
     const hit = headers.find((h) => !used.has(h) && wanted.has(normHeader(h)));
     if (hit) { out[f.key] = hit; used.add(hit); }
   }
+  // A sheet whose first header cell holds a family NAME instead of "PRODUCT FAMILY"
+  // (e.g. the Bando "B" tab says CLASSICAL): the first column is the family column.
+  const fam = fields.find((f) => f.key === 'family');
+  if (fam && !out.family && headers.length && !used.has(headers[0])) out.family = headers[0];
   return out;
+}
+
+/** Work out the product type from a sheet's column headings (more reliable than the tab name). */
+export function detectTypeFromHeaders(headers: string[]): ProductType | null {
+  const n = headers.map(normHeader);
+  if (n.some((h) => h.includes('sectionoftimingbelt') || h.startsWith('cutpcs') || h === 'uominmm')) return 'TIMING_BELT';
+  if (n.some((h) => h.includes('sectionofvbelt'))) return 'V_BELT';
+  if ((n.includes('colour') || n.includes('color')) && (n.includes('l') || n.includes('length'))) return 'CONVEYOR_BELT';
+  return null;
 }
 
 // ── Cell helpers ─────────────────────────────────────────────────────────────
@@ -179,7 +208,7 @@ export function toNumber(v: unknown): number | null {
 const fmtNum = (n: number): string => String(Number(n.toFixed(3)));
 
 const slug = (s: string): string =>
-  s.toUpperCase().replace(/\s+/g, '').replace(/[^A-Z0-9.]+/g, '-').replace(/^-+|-+$/g, '');
+  (s === UNSPECIFIED ? 'NA' : s).toUpperCase().replace(/\s+/g, '').replace(/[^A-Z0-9.]+/g, '-').replace(/^-+|-+$/g, '');
 
 const keyPart = (s: string): string => s.toLowerCase().replace(/\s+/g, ' ').trim();
 
@@ -218,31 +247,41 @@ export interface Identity {
   displayName: string;
   /** Preferred SKU code, e.g. TB-L-165-OPTI (may get a suffix if taken). */
   codeBase: string;
+  /** Identity parts the sheet left blank (they were saved as UNSPECIFIED). Empty = complete. */
+  missing: string[];
 }
+
+/** What a blank identity part is saved as, so the product can still be created and fixed later. */
+export const UNSPECIFIED = 'UNSPECIFIED';
 
 export type RawIdentity = Partial<Record<
   'family' | 'section' | 'size' | 'colour' | 'brand' | 'length' | 'width' | 'thickness', unknown>>;
 
-/** Build a product identity from raw cell values. Returns an error string when required parts are missing. */
+/**
+ * Build a product identity from raw cell values.
+ * A blank part does NOT reject the row: it is saved as UNSPECIFIED and listed in `missing`,
+ * so the product exists, is flagged in Product Master, and can be fixed there.
+ * Only a row with no identity at all (every part blank) comes back as an error.
+ */
 export function buildIdentity(type: ProductType, raw: RawIdentity): Identity | { error: string } {
-  const family = cleanText(raw.family);
-  const brand = cleanText(raw.brand);
   const missing: string[] = [];
-  if (!family) missing.push('Product Family');
-  if (!brand) missing.push('Make');
+  const part = (v: unknown, label: string): string => {
+    const t = cleanText(v);
+    if (!t) { missing.push(label); return UNSPECIFIED; }
+    return t;
+  };
+  const meta = TYPE_META[type];
 
   if (type === 'CONVEYOR_BELT') {
-    const colour = cleanText(raw.colour);
-    const l = toNumber(raw.length);
-    const w = toNumber(raw.width);
-    const t = toNumber(raw.thickness);
-    if (!colour) missing.push('Colour');
+    const family = part(raw.family, 'Product Family');
+    const colour = part(raw.colour, 'Colour');
+    const brand = part(raw.brand, 'Make');
+    const l = toNumber(raw.length), w = toNumber(raw.width), t = toNumber(raw.thickness);
     if (l === null) missing.push('L');
     if (w === null) missing.push('W');
-    if (missing.length) return { error: `Missing ${missing.join(', ')}` };
+    if (missing.length >= 5) return { error: 'No product details in this row' };
 
-    const sizeLabel = [l, w, t].filter((n): n is number => n !== null).map(fmtNum).join(' X ');
-    const meta = TYPE_META[type];
+    const sizeLabel = [l, w, t].filter((n): n is number => n !== null).map(fmtNum).join(' X ') || UNSPECIFIED;
     return {
       type, family, section: null, colour, brand, sizeLabel,
       lengthMm: l, widthMm: w, thicknessMm: t,
@@ -251,17 +290,19 @@ export function buildIdentity(type: ProductType, raw: RawIdentity): Identity | {
       exactSize: sizeLabel,
       displayName: `${colour} ${sizeLabel} ${brand}`,
       codeBase: [meta.prefix, slug(family), slug(colour), slug(sizeLabel), slug(brand)].join('-'),
+      missing,
     };
   }
 
-  const section = cleanText(raw.section);
+  const family = part(raw.family, 'Product Family');
+  const brand = part(raw.brand, 'Make');
+  const section = part(raw.section, 'Section');
   const sizeNum = toNumber(raw.size);
-  const size = sizeNum !== null ? fmtNum(sizeNum) : cleanText(raw.size);
-  if (!section) missing.push('Section');
-  if (!size) missing.push('Size');
-  if (missing.length) return { error: `Missing ${missing.join(', ')}` };
+  const sizeText = sizeNum !== null ? fmtNum(sizeNum) : cleanText(raw.size);
+  if (!sizeText) missing.push('Size');
+  const size = sizeText || UNSPECIFIED;
+  if (missing.length >= 4) return { error: 'No product details in this row' };
 
-  const meta = TYPE_META[type];
   const exactSize = `${section}-${size}`;
   return {
     type, family, section, colour: null, brand, sizeLabel: size,
@@ -272,6 +313,7 @@ export function buildIdentity(type: ProductType, raw: RawIdentity): Identity | {
     exactSize,
     displayName: `${exactSize} ${brand}`,
     codeBase: [meta.prefix, slug(section), slug(size), slug(brand)].join('-'),
+    missing,
   };
 }
 

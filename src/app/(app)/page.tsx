@@ -3,7 +3,7 @@ import { ArrowDownLeft, ArrowUpRight, ShoppingCart, Check, Package, Clock, Ban }
 import { requireSession, can } from '@/lib/auth';
 import { supabaseServer, supabaseService } from '@/lib/supabase-server';
 
-import { fmtQty, fmtRelative, fmtDate } from '@/lib/format';
+import { fmtQty, fmtMsl, fmtRelative, fmtDate } from '@/lib/format';
 import type { DashboardSummary, Movement, Sku, ProductionOrder, ProductionOrderItem } from '@/lib/types';
 import DashboardActions from '@/components/dashboard/DashboardActions';
 import Link from 'next/link';
@@ -553,7 +553,7 @@ async function LowStock() {
                       {fmtQty(r.current_stock, r.unit_code)}
                     </span>
                   </td>
-                  <td className="num text-right font-medium py-1.5">{fmtQty(r.suggested_purchase_qty, r.unit_code)}</td>
+                  <td className="num text-right font-medium py-1.5">{fmtMsl(r.suggested_purchase_qty, r.unit_code, r.product_type)}</td>
                 </tr>
               ))}
             </tbody>
