@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { RefreshCw, Check, X, UserPlus, AlertCircle, ShieldCheck } from 'lucide-react';
+import { RefreshCw, Check, X, UserPlus, AlertCircle, ShieldCheck, LayoutList } from 'lucide-react';
 import { fmtDateTime, ROLE_LABEL } from '@/lib/format';
+import { PAGES } from '@/lib/pages';
 
 interface TeamMember {
   id: string | null;
@@ -16,9 +17,105 @@ interface TeamMember {
   status: 'active' | 'pending' | 'disabled' | 'orphaned';
   is_configured_admin: boolean;
   is_self: boolean;
+  pages: { page: string; can_edit: boolean }[];
 }
 
-const ROLES = ['SUPER_ADMIN', 'MANAGER', 'INVENTORY_OPERATOR', 'VIEWER'] as const;
+/** Three roles. Admin: everything. Accounts: everything except the Administration group.
+ *  Workshop: only the pages switched on for that person (see PageAccessDialog). */
+const ROLES = ['SUPER_ADMIN', 'MANAGER', 'VIEWER'] as const;
+const ROLE_NOTE: Record<(typeof ROLES)[number], string> = {
+  SUPER_ADMIN: 'Everything, including Product Master, Teams & Users, Import Data, Admin and Activity.',
+  MANAGER:     'Every daily page. Not the Administration group.',
+  VIEWER:      'Only the pages you switch on — each one view-only or editable.',
+};
+
+/** Pick which pages a Workshop person sees, and whether each is view-only or editable. */
+function PageAccessDialog({
+  member, onClose, onSave,
+}: {
+  member: TeamMember;
+  onClose: () => void;
+  onSave: (pages: { page: string; can_edit: boolean }[]) => Promise<void>;
+}) {
+  // 'off' | 'view' | 'edit' per page
+  const [level, setLevel] = useState<Record<string, 'off' | 'view' | 'edit'>>(() => {
+    const m: Record<string, 'off' | 'view' | 'edit'> = {};
+    for (const p of PAGES) {
+      const hit = member.pages.find((x) => x.page === p.key);
+      m[p.key] = hit ? (hit.can_edit ? 'edit' : 'view') : 'off';
+    }
+    return m;
+  });
+  const [busy, setBusy] = useState(false);
+  const on = PAGES.filter((p) => level[p.key] !== 'off').length;
+
+  const setAll = (v: 'off' | 'view' | 'edit') =>
+    setLevel(Object.fromEntries(PAGES.map((p) => [p.key, v])) as Record<string, 'off' | 'view' | 'edit'>);
+
+  async function save() {
+    setBusy(true);
+    await onSave(PAGES.filter((p) => level[p.key] !== 'off').map((p) => ({ page: p.key, can_edit: level[p.key] === 'edit' })));
+    setBusy(false);
+  }
+
+  const seg = (key: string, v: 'off' | 'view' | 'edit', label: string) => (
+    <button
+      type="button" onClick={() => setLevel((l) => ({ ...l, [key]: v }))}
+      aria-pressed={level[key] === v}
+      className={`px-2.5 py-1 text-[13px] font-medium border -ml-px first:ml-0 first:rounded-l-md last:rounded-r-md transition-colors ${
+        level[key] === v
+          ? v === 'off' ? 'bg-subtle text-ink border-line-strong'
+            : v === 'view' ? 'bg-brand-soft text-brand border-brand'
+            : 'bg-ok-soft text-ok border-ok-line'
+          : 'bg-surface text-ink-3 border-line hover:text-ink'
+      }`}
+    >{label}</button>
+  );
+
+  return (
+    <div className="fixed inset-0 z-[90] grid place-items-center bg-ink/30 backdrop-blur-[2px] p-4">
+      <div className="w-full max-w-[560px] bg-surface border border-line rounded-xl shadow-xl max-h-[92vh] flex flex-col">
+        <div className="card-head border-b shrink-0">
+          <h2 className="card-title">Page access — {member.full_name}</h2>
+          <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={onClose}><X size={15} /></button>
+        </div>
+        <div className="p-5 overflow-y-auto space-y-3">
+          <p className="text-[14px] text-ink-3">
+            <strong className="text-ink-2">Off</strong> hides the page. <strong className="text-ink-2">View only</strong> lets them
+            read it but not change anything. <strong className="text-ink-2">Can edit</strong> lets them do the page&apos;s work.
+          </p>
+          <div className="flex gap-2 text-[13px]">
+            <button type="button" className="text-brand hover:underline" onClick={() => setAll('view')}>All view only</button>
+            <span className="text-ink-3">·</span>
+            <button type="button" className="text-brand hover:underline" onClick={() => setAll('off')}>All off</button>
+          </div>
+          <ul className="divide-y divide-line rounded-lg border border-line">
+            {PAGES.map((p) => (
+              <li key={p.key} className="px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[15px] font-medium">{p.label}</p>
+                  <p className="text-[13px] text-ink-3">{p.hint}</p>
+                </div>
+                <div className="inline-flex shrink-0" role="group" aria-label={`${p.label} access`}>
+                  {seg(p.key, 'off', 'Off')}{seg(p.key, 'view', 'View only')}{seg(p.key, 'edit', 'Can edit')}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="flex items-center justify-between gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl shrink-0">
+          <span className="text-[14px] text-ink-3">{on} of {PAGES.length} pages on</span>
+          <div className="flex gap-2">
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={save}>
+              {busy ? 'Saving…' : <><Check size={14} /> Save access</>}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const STATUS: Record<TeamMember['status'], { label: string; cls: string; note: string }> = {
   active:   { label: 'Active',       cls: 'badge-ok',      note: 'Can sign in' },
@@ -36,6 +133,7 @@ export default function TeamView() {
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
+  const [accessFor, setAccessFor] = useState<TeamMember | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -122,6 +220,17 @@ export default function TeamView() {
         </p>
       )}
 
+      {accessFor && (
+        <PageAccessDialog
+          member={accessFor}
+          onClose={() => setAccessFor(null)}
+          onSave={async (pages) => {
+            await save(accessFor, { pages });
+            setAccessFor(null);
+          }}
+        />
+      )}
+
       <section className="card overflow-hidden">
         <div className="card-head">
           <h2 className="card-title">People</h2>
@@ -205,6 +314,16 @@ export default function TeamView() {
                             {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
                           </select>
                           {locked && <ShieldCheck size={14} className="text-brand shrink-0" />}
+                          {m.role_code === 'VIEWER' && m.id && (
+                            <button
+                              className={`btn btn-sm ${m.pages.length === 0 ? 'btn-primary' : 'btn-secondary'}`}
+                              title="Choose which pages this person sees"
+                              onClick={() => setAccessFor(m)}
+                            >
+                              <LayoutList size={13} />
+                              {m.pages.length === 0 ? 'Set pages' : `Pages · ${m.pages.length}`}
+                            </button>
+                          )}
                         </span>
                       </td>
 
@@ -244,11 +363,20 @@ export default function TeamView() {
           </li>
           <li>It appears here as <span className="badge badge-warn">Needs a role</span>.</li>
           <li>Pick a role. It applies the moment they sign in — they do not need to sign in first.</li>
+          <li>
+            For a <span className="font-medium text-ink">Workshop</span> person, press <span className="font-medium text-ink">Set pages</span> and
+            switch on only what they need — each page either view-only or editable.
+          </li>
           <li>Click a name to rename. Disable revokes access without deleting their history.</li>
         </ol>
+        <ul className="text-[14px] text-ink-2 mt-3.5 space-y-1 leading-relaxed">
+          {ROLES.map((r) => (
+            <li key={r}><span className="font-medium text-ink">{ROLE_LABEL[r]}</span> — {ROLE_NOTE[r]}</li>
+          ))}
+        </ul>
         <p className="text-[14px] text-ink-3 mt-3.5 leading-relaxed">
           The account marked with a shield is the one set in
-          <span className="font-mono"> ADMIN_EMAIL</span>. It stays Super Admin no matter what is
+          <span className="font-mono"> ADMIN_EMAIL</span>. It stays Admin no matter what is
           clicked here — to move it, change the variable and redeploy. You cannot change your own
           role or disable yourself, so the system can never be left without an admin.
         </p>

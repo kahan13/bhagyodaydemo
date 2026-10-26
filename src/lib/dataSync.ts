@@ -53,7 +53,7 @@ export function installFetchWatcher() {
       if (method !== 'GET' && method !== 'HEAD' && res.ok) {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
         const ours = url.includes('/api/') && !url.includes('/api/voice');
-        const supa = url.includes('/rest/v1/');
+        const supa = url.includes('/rest/v1/') && !url.includes('/rpc/mark_production_order_read');   // opening an order is not a data change
         if (ours || supa) {
           if (timer) clearTimeout(timer);
           timer = setTimeout(notifyDataChanged, 350);   // several saves in a row -> one refresh

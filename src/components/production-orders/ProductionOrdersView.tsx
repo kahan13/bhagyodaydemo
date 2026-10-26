@@ -1,21 +1,15 @@
 'use client';
 
-import { useState, useTransition, useEffect, useRef } from 'react';
-import {
-  Plus, Send, CheckCircle, Clock, Loader, Pencil, X,
-  Search, Trash2, AlertTriangle, AlertCircle, Ban,
-  ArrowDownCircle, CheckSquare, ChevronDown, ChevronRight, Trash, Printer, FileDown,
-} from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
+import { Plus, Pencil, Search, X, Loader, Send, ArrowRight } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
 import type {
   ProductionOrder,
   ProductionOrderItem,
-  ProductionOrderStatus,
+  ProductType,
   Session,
-  Sku,
-  SkuMismatch,
-  MismatchOrderItem,
   TimeTag,
   DeliveryMode,
 } from '@/lib/types';
@@ -23,171 +17,33 @@ import { useListNav } from '@/lib/useListNav';
 import { onDataChanged } from '@/lib/dataSync';
 import { takeAction } from '@/lib/keytips';
 import LotAllocationPicker, { type LotAllocation } from './LotAllocationPicker';
-import type { LotGroup, PendingAdjustment } from '@/lib/types';
-import { loadReceiptModel, printReceipt, downloadReceiptPdf, receiptHtml, type ReceiptModel } from '@/lib/order-receipt';
+import type { LotGroup } from '@/lib/types';
 import { groupText, groupLabel } from '@/components/inventory/LotBreakdown';
+import { fmtQty } from '@/lib/format';
+import { makeMatcher, hasQuery } from '@/lib/search';
+import { loadSkus, peekSkus, invalidateSkuCache, getSkuVersion, type SkuWithAtp, type SkuPick } from './skuCache';
+import { buildMessage, openWhatsApp } from './poShared';
+
+/**
+ * Production Order — creating an order.
+ * Following it afterwards (in progress, completed, outward, mismatch) happens on
+ * "Production Order in Progress".
+ */
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const STATUS_LABEL: Record<ProductionOrderStatus, string> = {
-  CREATED:     'Created',
-  SENT:        'Sent',
-  IN_PROGRESS: 'In Progress',
-  COMPLETED:   'Completed',
-  CANCELLED:   'Cancelled',
-};
-
-const STATUS_BADGE: Record<ProductionOrderStatus, string> = {
-  CREATED:     'badge-warn',
-  SENT:        'badge-brand',
-  IN_PROGRESS: 'badge-ok',
-  COMPLETED:   'bg-subtle text-ink-3 px-2 py-0.5 rounded-full text-[13px] font-medium',
-  CANCELLED:   'bg-danger-soft text-danger px-2 py-0.5 rounded-full text-[13px] font-medium',
-};
-
-const STATUS_NEXT: Partial<Record<ProductionOrderStatus, ProductionOrderStatus>> = {
-  CREATED:     'SENT',
-  SENT:        'IN_PROGRESS',
-  IN_PROGRESS: 'COMPLETED',
-};
-
-const STATUS_NEXT_LABEL: Partial<Record<ProductionOrderStatus, string>> = {
-  CREATED:     'Mark Sent',
-  SENT:        'Mark In Progress',
-  IN_PROGRESS: 'Mark Completed',
-};
 
 const TIME_TAGS: TimeTag[] = ['15-20 min', '30-40 min', '1 hour', '2 hours'];
 const DELIVERY_MODES: DeliveryMode[] = ['Hand', 'Porter', 'Courier', 'Transportation'];
 
-// ─── WhatsApp message builder ─────────────────────────────────────────────────
 
-function buildMessage(fields: {
-  order_no?: string;
-  direct?: boolean;
-  customer_name: string;
-  items: Array<{ display_name: string; quantity: string; unit_code: string; detail?: string; pieces?: string; mm?: string }>;
-  time_tag: string;
-  delivery_mode: string;
-  delivery_note: string;
-  assigned_to: string;
-  notes: string;
-}) {
-  const itemLines = fields.items
-    .filter((i) => i.display_name)
-    .map((i, idx) =>
-      `  ${idx + 1}. ${i.display_name}${
-        i.pieces && i.mm && Number(i.pieces) * Number(i.mm) === Number(i.quantity)
-          ? ` — ${i.pieces} × ${i.mm} = ${i.quantity} ${i.unit_code}`.trimEnd()
-          : i.quantity ? ` × ${i.quantity} ${i.unit_code}`.trimEnd() : ''}${i.detail ? ` (${i.detail})` : ''}`
-    );
+const CATEGORY_PILLS: [ProductType, string][] = [
+  ['TIMING_BELT', 'Timing Belt'], ['V_BELT', 'V-Belt'], ['CONVEYOR_BELT', 'Conveyor'],
+];
 
-  const lines = [
-    `*Production Order${fields.direct ? ' (DIRECT)' : ''}*`,
-    `PO No: ${fields.order_no ?? '(assigned when created)'}`,
-    fields.customer_name ? `Customer: ${fields.customer_name}` : null,
-    itemLines.length > 0 ? `Items:\n${itemLines.join('\n')}` : null,
-    fields.time_tag ? `Time: ${fields.time_tag}` : null,
-    fields.delivery_mode
-      ? `Delivery: ${fields.delivery_mode}${fields.delivery_note ? ` (${fields.delivery_note})` : ''}`
-      : null,
-    fields.assigned_to ? `Assigned to: ${fields.assigned_to}` : null,
-    fields.notes ? `Notes: ${fields.notes}` : null,
-  ].filter(Boolean);
-  return lines.join('\n');
-}
+/** The category last picked on any order line — the next new line starts there. */
+let lastCategory: ProductType = 'TIMING_BELT';
 
-// ─── ATP / Physical Stock types ───────────────────────────────────────────────
-
-interface SkuAtp {
-  sku_id: string;
-  current_stock: number;
-  physical_prod_stock: number;
-  reserved_qty: number;
-  atp_stock: number;
-}
-
-type SkuPick = { sku: SkuWithAtp | null; query: string; group?: LotGroup | null };
-
-type SkuWithAtp = Sku & {
-  atp_stock: number;        // = physical_prod_stock (already decremented by open orders)
-  reserved_qty: number;
-};
-
-// ─── Shared SKU + ATP cache ───────────────────────────────────────────────────
-
-let _skuCache: SkuWithAtp[] | null = null;
-let _skuInflight: Promise<SkuWithAtp[]> | null = null;
-let _skuVersion = 0;
-
-function fetchSkus(): Promise<SkuWithAtp[]> {
-  if (_skuInflight) return _skuInflight;
-
-  const p: Promise<SkuWithAtp[]> = Promise.all([
-    supabaseBrowser()
-      .from('v_sku_status')
-      .select(
-        'id,sku_code,display_name,exact_size,brand_name,family_name,unit_code,product_type,' +
-        'hier_l1,hier_l2,hier_l3,search_text,brand_code,family_code,profile_group,belt_form,' +
-        'construction,standard,pitch_mm,pitch_length_mm,width_mm,teeth,nominal_length,' +
-        'length_designation,rack_location,opening_stock,current_stock,min_stock_level,' +
-        'supplier_moq,reorder_quantity,supplier_name,is_active,stock_status,shortfall,suggested_purchase_qty'
-      )
-      .eq('is_active', true)
-      .order('product_type')
-      .order('hier_l1')
-      .order('hier_l2'),
-    supabaseBrowser()
-      .from('v_sku_atp')
-      .select('sku_id,current_stock,physical_prod_stock,reserved_qty,atp_stock'),
-    supabaseBrowser()
-      .from('v_sku_lot_groups_free')
-      .select('sku_id,status,piece_qty,pieces,total_qty'),
-  ]).then(([skuRes, atpRes, grpRes]) => {
-    const groups: Record<string, LotGroup[]> = {};
-    for (const r of ((grpRes.data ?? []) as unknown as (LotGroup & { sku_id: string })[])) {
-      (groups[r.sku_id] ??= []).push({
-        status: r.status, piece_qty: Number(r.piece_qty), pieces: Number(r.pieces), total_qty: Number(r.total_qty),
-      });
-    }
-    for (const k of Object.keys(groups)) {
-      groups[k].sort((a, b) => (a.status === b.status ? b.piece_qty - a.piece_qty : a.status === 'FULL_SLEEVE' ? -1 : 1));
-    }
-    if (atpRes.error) {
-      console.error('[ATP] v_sku_atp fetch failed:', atpRes.error.message);
-    }
-    const skuData = (skuRes.data ?? []) as unknown as Sku[];
-    const atpData = (atpRes.data ?? []) as SkuAtp[];
-
-    const atpMap: Record<string, SkuAtp> = {};
-    for (const row of atpData) atpMap[row.sku_id] = row;
-
-    _skuCache = skuData.map((s) => ({
-      ...s,
-      physical_prod_stock: atpMap[s.id]?.physical_prod_stock ?? s.current_stock,
-      atp_stock:           atpMap[s.id]?.atp_stock ?? s.current_stock,
-      reserved_qty:        atpMap[s.id]?.reserved_qty ?? 0,
-      lot_groups:          groups[s.id],
-    }));
-    _skuInflight = null;
-    return _skuCache;
-  });
-
-  _skuInflight = p;
-  return p;
-}
-
-function loadSkus(): Promise<SkuWithAtp[]> {
-  if (_skuCache) return Promise.resolve(_skuCache);
-  return fetchSkus();
-}
-
-function invalidateSkuCache() {
-  _skuCache = null;
-  _skuInflight = null;
-  _skuVersion += 1;
-}
-function getSkuVersion() { return _skuVersion; }
 
 // ─── ATP badge helper ─────────────────────────────────────────────────────────
 
@@ -220,6 +76,7 @@ function AtpBadge({ sku, qty, otherQty = 0 }: { sku: SkuWithAtp; qty: string; ot
   );
 }
 
+
 // ─── SKU Search Combobox ──────────────────────────────────────────────────────
 
 function SkuCombobox({
@@ -227,7 +84,11 @@ function SkuCombobox({
   onChange,
   cacheVersion,
   usedElsewhere,
-  placeholder = 'Search SKU code, name, size…',
+  placeholder = 'Search size, brand or code (h100 = h-100)',
+  lead,
+  headerRight,
+  below,
+  trailing,
 }: {
   value: SkuPick;
   onChange: (val: SkuPick) => void;
@@ -235,11 +96,22 @@ function SkuCombobox({
   /** Quantity other order lines already use of this SKU / classification (screen-only deduction) */
   usedElsewhere?: (sku: SkuWithAtp, group: LotGroup | null) => number;
   placeholder?: string;
+  /** shown before the category pills (the line number) */
+  lead?: React.ReactNode;
+  /** shown at the far right of the pill row (remove button) */
+  headerRight?: React.ReactNode;
+  /** shown under the search box (what was picked) */
+  below?: React.ReactNode;
+  /** shown to the right of the search box, level with it (quantity) */
+  trailing?: React.ReactNode;
 }) {
-  const [skus, setSkus] = useState<SkuWithAtp[]>(_skuCache ?? []);
-  const [loadingSkus, setLoadingSkus] = useState(!_skuCache);
+  const [skus, setSkus] = useState<SkuWithAtp[]>(peekSkus() ?? []);
+  const [loadingSkus, setLoadingSkus] = useState(!peekSkus());
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'CUT_PCS' | 'FULL_SLEEVE' | 'ALL'>('CUT_PCS');
+  // Which kind of belt is being searched. A new line starts on whatever was used last,
+  // so ten V-belt lines in a row don't need ten clicks.
+  const [category, setCategory] = useState<ProductType>(value.sku?.product_type ?? lastCategory);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -259,16 +131,12 @@ function SkuCombobox({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const q = value.query.toLowerCase();
-  const filtered = q.length < 1
-    ? skus.slice(0, 40)
-    : skus.filter((s) =>
-        s.sku_code.toLowerCase().includes(q) ||
-        s.display_name.toLowerCase().includes(q) ||
-        s.exact_size.toLowerCase().includes(q) ||
-        s.brand_name.toLowerCase().includes(q) ||
-        (s.search_text ?? '').toLowerCase().includes(q)
-      ).slice(0, 40);
+  // Only the chosen category is searched, so "A-38" can never turn up a conveyor or a timing belt.
+  const inCategory = skus.filter((s) => s.product_type === category);
+  const match = makeMatcher(value.query);
+  const filtered = !hasQuery(value.query)
+    ? inCategory.slice(0, 40)
+    : inCategory.filter((s) => match([s.sku_code, s.display_name, s.exact_size, s.brand_name, s.search_text])).slice(0, 40);
 
   // One option per classification: a timing belt with 4×50 Full Sleeve and 1×50 Cut Pcs
   // appears as two separate, tagged entries. Other SKUs stay a single entry.
@@ -281,7 +149,7 @@ function SkuCombobox({
   const cutCount = allOptions.filter((o) => o.group?.status === 'CUT_PCS').length;
   const fullCount = allOptions.filter((o) => o.group?.status === 'FULL_SLEEVE').length;
   const options = allOptions
-    .filter((o) => !o.group || tab === 'ALL' || o.group.status === tab)
+    .filter((o) => !o.group || category !== 'TIMING_BELT' || tab === 'ALL' || o.group.status === tab)
     // Cut pieces always first
     .sort((a, b) => (a.group?.status === 'CUT_PCS' ? 0 : 1) - (b.group?.status === 'CUT_PCS' ? 0 : 1));
 
@@ -314,8 +182,40 @@ function SkuCombobox({
     },
   });
 
+  function pickCategory(next: ProductType) {
+    if (next === category) return;
+    setCategory(next);
+    lastCategory = next;
+    // the chosen product belongs to the old category, so start the line afresh
+    onChange({ sku: null, query: '' });
+    setTab(next === 'TIMING_BELT' ? 'CUT_PCS' : 'ALL');
+    inputRef.current?.focus();
+  }
+
   return (
-    <div className="relative">
+    <div>
+      <div className="flex items-center gap-2 mb-1.5">
+        {lead}
+        <div className="flex gap-1 flex-wrap" role="group" aria-label="Product category">
+          {CATEGORY_PILLS.map(([t, label]) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => pickCategory(t)}
+              aria-pressed={category === t}
+              className={`px-2.5 py-0.5 rounded-full text-[13px] font-medium border transition-colors ${
+                category === t ? 'bg-brand text-white border-brand' : 'bg-surface border-line text-ink-2 hover:border-brand hover:text-brand'
+              }`}
+            >{label}</button>
+          ))}
+        </div>
+        {headerRight && <div className="ml-auto">{headerRight}</div>}
+      </div>
+
+      {/* search and quantity share one row, so the boxes line up */}
+      <div className="flex gap-2 items-start">
+      <div className="flex-1 min-w-0">
+      <div className="relative">
       <div className="relative flex items-center">
         <Search size={13} className="absolute left-2.5 text-ink-3 pointer-events-none" />
         <input
@@ -347,6 +247,7 @@ function SkuCombobox({
           ref={(el) => { (dropdownRef as React.MutableRefObject<HTMLDivElement | null>).current = el; (nav.listRef as React.MutableRefObject<HTMLDivElement | null>).current = el; }}
           className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg max-h-72 overflow-y-auto"
         >
+          {category === 'TIMING_BELT' && (
           <div className="sticky top-0 z-10 flex gap-1 bg-surface border-b border-line px-2 py-1.5">
             {([['CUT_PCS', `Cut Pcs (${cutCount})`], ['FULL_SLEEVE', `Full Sleeve (${fullCount})`], ['ALL', 'Show all']] as const).map(([k, label]) => (
               <button
@@ -360,6 +261,7 @@ function SkuCombobox({
               >{label}</button>
             ))}
           </div>
+          )}
           {options.length === 0 && (
             <p className="px-3 py-4 text-center text-[14px] text-ink-3">
               Nothing in this tab — try {tab === 'CUT_PCS' ? 'Full Sleeve' : 'Show all'}.
@@ -418,352 +320,15 @@ function SkuCombobox({
           No SKUs match &quot;{value.query}&quot;
         </div>
       )}
-    </div>
-  );
-}
-
-// ─── Delete Confirm Modal ─────────────────────────────────────────────────────
-
-function DeleteConfirmModal({
-  orderNo, onConfirm, onCancel, deleting,
-}: {
-  orderNo: string; onConfirm: () => void; onCancel: () => void; deleting: boolean;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-surface rounded-xl border border-line shadow-xl p-6 max-w-sm w-full space-y-4">
-        <div className="flex items-start gap-3">
-          <div className="mt-0.5 shrink-0 rounded-full bg-danger-soft p-2">
-            <AlertTriangle size={18} className="text-danger" />
-          </div>
-          <div>
-            <h3 className="text-[17px] font-semibold">Delete Order {orderNo}?</h3>
-            <p className="text-[15px] text-ink-3 mt-1">
-              This will permanently delete the order and all its items. Physical stock will be restored.
-            </p>
-          </div>
-        </div>
-        <div className="flex justify-end gap-2">
-          <button className="btn btn-secondary" onClick={onCancel} disabled={deleting}>Cancel</button>
-          <button
-            className="btn bg-danger text-white hover:bg-danger/90 border-danger"
-            onClick={onConfirm}
-            disabled={deleting}
-          >
-            {deleting ? <Loader size={14} className="animate-spin" /> : <Trash2 size={14} />}
-            Delete
-          </button>
-        </div>
+      </div>
+      {below}
+      </div>
+      {trailing}
       </div>
     </div>
   );
 }
 
-// ─── Record Outward Confirm Modal ─────────────────────────────────────────────
-
-function RecordOutwardModal({
-  item,
-  onConfirm,
-  onCancel,
-  recording,
-}: {
-  item: MismatchOrderItem;
-  onConfirm: (notes: string, invoiceNo: string, operatedBy: string) => void;
-  onCancel: () => void;
-  recording: boolean;
-}) {
-  const [notes, setNotes] = useState('');
-  const [invoiceNo, setInvoiceNo] = useState('');
-  const [operatedBy, setOperatedBy] = useState('');
-  const [users, setUsers] = useState<{ id: string; full_name: string }[]>([]);
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      const { data } = await supabaseBrowser().from('app_users').select('id,full_name').eq('is_active', true).order('full_name');
-      if (alive) setUsers((data ?? []) as { id: string; full_name: string }[]);
-    })();
-    return () => { alive = false; };
-  }, []);
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-surface rounded-xl border border-line shadow-xl p-6 max-w-sm w-full space-y-4">
-        <div className="flex items-start gap-3">
-          <div className="mt-0.5 shrink-0 rounded-full bg-brand/10 p-2">
-            <ArrowDownCircle size={18} className="text-brand" />
-          </div>
-          <div>
-            <h3 className="text-[17px] font-semibold">Record Outward</h3>
-            <p className="text-[15px] text-ink-3 mt-1">
-              Record an OUTWARD inventory entry for{' '}
-              <span className="font-medium text-ink">
-                {item.quantity} {item.unit_code}
-              </span>{' '}
-              from order <span className="font-mono text-brand">{item.order_no}</span>
-              {item.customer_name ? ` (${item.customer_name})` : ''}.
-              This will update both book stock and physical stock.
-            </p>
-          </div>
-        </div>
-        <div>
-          <label className="eyebrow mb-1 block">Invoice no (optional)</label>
-          <input className="field" placeholder="INV-001" value={invoiceNo}
-            onChange={(e) => setInvoiceNo(e.target.value)} autoFocus />
-        </div>
-        <div>
-          <label className="eyebrow mb-1 block">Operated by</label>
-          <select className="field" value={operatedBy} onChange={(e) => setOperatedBy(e.target.value)}>
-            <option value="">— select team member —</option>
-            {users.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="eyebrow mb-1 block">Notes (optional)</label>
-          <input
-            className="field"
-            placeholder="e.g. Dispatched via courier"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-        </div>
-        <div className="flex justify-end gap-2">
-          <button className="btn btn-secondary" onClick={onCancel} disabled={recording}>Cancel</button>
-          <button
-            className="btn btn-primary"
-            onClick={() => onConfirm(notes, invoiceNo, operatedBy)}
-            disabled={recording}
-          >
-            {recording ? <Loader size={14} className="animate-spin" /> : <CheckSquare size={14} />}
-            Confirm Outward
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Collapsible pane ─────────────────────────────────────────────────────────
-
-function Pane({
-  title, subtitle, count, tone = 'neutral', open, onToggle, children,
-}: {
-  title: string;
-  subtitle?: string;
-  count?: number;
-  tone?: 'neutral' | 'warn';
-  open: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className={`rounded-xl border bg-surface overflow-hidden ${tone === 'warn' && (count ?? 0) > 0 ? 'border-warn/60' : 'border-line'}`}>
-      <button
-        type="button"
-        onClick={onToggle}
-        className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-subtle transition-colors"
-        aria-expanded={open}
-      >
-        {open ? <ChevronDown size={15} className="text-ink-3" /> : <ChevronRight size={15} className="text-ink-3" />}
-        <span className="text-[16px] font-semibold">{title}</span>
-        {count != null && (
-          <span className={`rounded-full px-2 py-0.5 text-[13px] font-semibold ${
-            tone === 'warn' && count > 0 ? 'bg-warn/20 text-warn' : 'bg-subtle text-ink-3 border border-line'
-          }`}>{count}</span>
-        )}
-        {subtitle && <span className="text-[14px] text-ink-3 truncate">{subtitle}</span>}
-      </button>
-      {open && <div className="border-t border-line">{children}</div>}
-    </section>
-  );
-}
-
-// ─── Mismatch Pane (content) ──────────────────────────────────────────────────
-// Two traced kinds of difference between book and physical stock:
-//   1. Pending outward  — production planned/consumed stock, outward not posted yet
-//   2. Book-only moves  — a waste or adjustment changed book stock; apply it to physical
-
-function MismatchPane({
-  mismatches, pending, onRecordOutward, onResolve, resolvingId, loadingMismatches,
-}: {
-  mismatches: SkuMismatch[];
-  pending: PendingAdjustment[];
-  onRecordOutward: (item: MismatchOrderItem) => void;
-  onResolve: (p: PendingAdjustment) => void;
-  resolvingId: string | null;
-  loadingMismatches: boolean;
-}) {
-  if (loadingMismatches) {
-    return (
-      <div className="p-4 flex items-center gap-2 text-[15px] text-ink-3">
-        <Loader size={14} className="animate-spin" /> Checking stock status…
-      </div>
-    );
-  }
-  if (mismatches.length === 0 && pending.length === 0) {
-    return <p className="p-4 text-[15px] text-ink-3">Book and physical stock agree — nothing to reconcile.</p>;
-  }
-
-  return (
-    <div className="divide-y divide-line">
-      {pending.length > 0 && (
-        <div className="p-4 space-y-2">
-          <p className="text-[13px] text-ink-3 font-medium uppercase tracking-wide">
-            Stock movements not yet applied to production stock
-          </p>
-          {pending.map((p) => {
-            const unit = p.skus?.unit_code ?? '';
-            const removed = p.delta < 0;
-            return (
-              <div key={p.id} className="flex items-center justify-between gap-3 rounded-lg bg-surface border border-line px-3 py-2">
-                <div className="text-[14px] min-w-0">
-                  <span className="font-mono text-brand font-medium">{p.skus?.sku_code}</span>
-                  <span className="text-ink ml-1.5">{p.skus?.display_name}</span>
-                  <div className="text-[13px] text-ink-3 mt-0.5">
-                    <span className={`font-semibold ${removed ? 'text-danger' : 'text-ok'}`}>
-                      {removed ? '' : '+'}{p.delta} {unit}
-                    </span>
-                    {' · '}{p.source === 'WASTE' ? `Lot ${p.lot_no ?? ''} marked as waste` : 'Stock adjustment'}
-                    {p.reason && p.source !== 'WASTE' ? ` — ${p.reason}` : ''}
-                    {' · '}{p.created_by ?? 'system'} · {formatDateTime(p.created_at)}
-                  </div>
-                </div>
-                <button
-                  className="btn btn-primary btn-sm shrink-0"
-                  disabled={resolvingId === p.id}
-                  onClick={() => onResolve(p)}
-                  title="Apply this change to production (physical) stock so both match"
-                >
-                  {resolvingId === p.id ? <Loader size={12} className="animate-spin" /> : <Trash size={12} />}
-                  {p.source === 'WASTE' ? 'Mark here as waste' : 'Apply to production'}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {mismatches.length > 0 && (
-        <div className="divide-y divide-warn/20">
-          <p className="px-4 pt-4 text-[13px] text-ink-3 font-medium uppercase tracking-wide">
-            Pending outward
-          </p>
-          {mismatches.map((m) => (
-            <div key={m.sku_id} className="p-4 space-y-3">
-              <div>
-                <p className="text-[15px] font-semibold">
-                  <span className="font-mono text-brand">{m.sku_code}</span>{' – '}{m.display_name}
-                </p>
-                <div className="flex items-center gap-3 mt-1 text-[14px] flex-wrap">
-                  <span className="text-ink-3">
-                    Book: <span className="font-medium text-ink">{m.current_stock} {m.unit_code}</span>
-                  </span>
-                  <span className="text-ink-3">
-                    Physical: <span className="font-medium text-danger">{m.physical_prod_stock} {m.unit_code}</span>
-                  </span>
-                  <span className="rounded-full bg-warn/20 text-warn px-2 py-0.5 font-semibold">
-                    {m.stock_gap > 0 ? `−${m.stock_gap} ${m.unit_code} outward not posted` : `+${-m.stock_gap} ${m.unit_code} physical above book`}
-                  </span>
-                </div>
-              </div>
-
-              {m.open_order_items.length > 0 && m.stock_gap > 0 && (
-                <div className="space-y-1.5">
-                  <p className="text-[13px] text-ink-3 font-medium uppercase tracking-wide">
-                    Open production orders consuming this stock:
-                  </p>
-                  {m.open_order_items.map((oi) => (
-                    <div key={oi.poi_id} className="flex items-center justify-between gap-3 rounded-lg bg-surface border border-line px-3 py-2">
-                      <div className="text-[14px] min-w-0">
-                        <span className="font-mono text-brand font-medium">{oi.order_no}</span>
-                        {oi.customer_name && <span className="text-ink-3 ml-1.5">· {oi.customer_name}</span>}
-                        <span className="text-ink ml-2 font-medium">{oi.quantity} {oi.unit_code}</span>
-                        <span className={`ml-2 text-[13px] px-1.5 py-0.5 rounded-full ${
-                          oi.order_status === 'IN_PROGRESS' ? 'bg-ok/10 text-ok' :
-                          oi.order_status === 'SENT' ? 'bg-brand/10 text-brand' :
-                          'bg-warn/10 text-warn'
-                        }`}>{STATUS_LABEL[oi.order_status]}</span>
-                      </div>
-                      <button
-                        className="btn btn-primary btn-sm shrink-0"
-                        onClick={() => onRecordOutward(oi)}
-                        title="Record OUTWARD inventory entry for this production order item"
-                      >
-                        <ArrowDownCircle size={12} /> Record Outward
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {(m.open_order_items.length === 0 || m.stock_gap < 0) && (
-                <p className="text-[14px] text-ink-3 italic">
-                  No movement or open order explains this difference. Check the Movements pane for the
-                  SKU, or record a manual entry from the Inventory page.
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Movements pane (content) ─────────────────────────────────────────────────
-
-interface MovementRow {
-  id: string;
-  txn_no: string;
-  txn_type: string;
-  txn_mode: string;
-  quantity: number;
-  unit_code: string;
-  occurred_at: string;
-  user_name: string;
-  notes: string | null;
-  lot_breakdown: { lot_no: string; status: string; qty: number }[] | null;
-  skus: { sku_code: string; display_name: string } | null;
-}
-
-function MovementsPane({ rows, loading, pendingMovementIds }: { rows: MovementRow[]; loading: boolean; pendingMovementIds: Set<string> }) {
-  if (loading) return <div className="p-4 flex items-center gap-2 text-[15px] text-ink-3"><Loader size={14} className="animate-spin" /> Loading…</div>;
-  if (rows.length === 0) return <p className="p-4 text-[15px] text-ink-3">No stock movements yet.</p>;
-  return (
-    <div className="divide-y divide-line max-h-96 overflow-y-auto">
-      {rows.map((m) => {
-        const isAdj = m.txn_type === 'ADJUSTMENT';
-        const tag = isAdj ? (m.notes?.includes(' wasted:') ? 'Waste' : 'Adjustment') : m.txn_type === 'INWARD' ? 'Inward' : 'Outward';
-        const sync = m.txn_type === 'INWARD'
-          ? 'Book + physical'
-          : m.txn_type === 'OUTWARD' ? 'Physical already planned'
-          : pendingMovementIds.has(m.id) ? 'Awaiting production' : 'Reconciled';
-        return (
-          <div key={m.id} className="px-4 py-2 flex items-center justify-between gap-3 text-[14px]">
-            <div className="min-w-0">
-              <span className="font-mono text-brand">{m.skus?.sku_code}</span>
-              <span className="text-ink ml-1.5">{m.skus?.display_name}</span>
-              <div className="text-[13px] text-ink-3 truncate">
-                {m.txn_no} · {m.user_name} · {formatDateTime(m.occurred_at)}{m.notes ? ` · ${m.notes}` : ''}
-              </div>
-              {m.lot_breakdown && m.lot_breakdown.length > 0 && (
-                <div className="flex gap-1 flex-wrap mt-1">
-                  {m.lot_breakdown.map((b, k) => (
-                    <span key={k} className={`badge ${b.status === 'FULL_SLEEVE' ? 'badge-ok' : 'badge-warn'}`}>
-                      {b.status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs'} {b.qty}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="text-right shrink-0">
-              <div className="font-medium">{tag} {m.quantity} {m.unit_code}</div>
-              <div className={`text-[13px] ${sync === 'Awaiting production' ? 'text-warn font-semibold' : 'text-ink-3'}`}>{sync}</div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 // ─── Line item row type ───────────────────────────────────────────────────────
 
@@ -771,7 +336,7 @@ interface LineItem {
   id: string;
   skuSearch: SkuPick;
   quantity: string;
-  /** Qty × MM entry (timing belts, and direct lines in MM). quantity = pieces × mm. */
+  /** MM × PCS entry (timing belts, and direct lines in MM). quantity = pieces × mm. */
   pieces: string;
   mm: string;
   /** Direct orders: typed product name / unit (no SKU) */
@@ -803,7 +368,7 @@ function lineQM(li: { quantity: string; pieces: string; mm: string }): { pieces:
   if ((Math.floor(Number(li.pieces)) || 0) * (Number(li.mm) || 0) === q) return { pieces: li.pieces, mm: li.mm };
   return q > 0 ? { pieces: '1', mm: String(q) } : { pieces: '', mm: '' };
 }
-/** pieces × mm of a line, only for lines entered as Qty × MM (timing belts / direct MM lines). */
+/** pieces × mm of a line, only for lines entered as MM × PCS (timing belts / direct MM lines). */
 function qmOf(li: LineItem, isDirect: boolean): { pieces: number; mm: number } | null {
   const isQm = isDirect ? li.manualUnit === 'MM' : li.skuSearch.sku?.product_type === 'TIMING_BELT';
   if (!isQm) return null;
@@ -837,12 +402,7 @@ function makeEmptyForm() {
   };
 }
 
-function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  const date = d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-  const time = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-  return `${date}, ${time}`;
-}
+
 
 /** "Cut Pcs 50, Full Sleeve 20" from a line's chosen lots */
 function allocDetail(allocs: LotAllocation[]): string {
@@ -866,164 +426,73 @@ function usedElsewhereIn(items: LineItem[], excludeId: string, sku: { id: string
     .reduce((sum, o) => sum + (parseFloat(o.quantity) || 0), 0);
 }
 
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ProductionOrdersView({
   session,
-  initialOrders,
   defaultWhatsapp,
 }: {
   session: Session;
-  initialOrders: ProductionOrder[];
   defaultWhatsapp: string;
 }) {
-  const [orders, setOrders] = useState<ProductionOrder[]>(initialOrders);
-  const [showForm, setShowForm] = useState(true);
-
-  // opened here from another page by Alt+M → OR
-  useEffect(() => {
-    if (takeAction(['new-order'])) {
-      setShowForm(true);
-      setTimeout(() => document.querySelector<HTMLInputElement>('[data-new-order-first]')?.focus(), 80);
-    }
-  }, []);
-
-  // keyboard: "n" opens the new-order window and puts the cursor in the first field
-  useEffect(() => {
-    const h = (e: Event) => {
-      if ((e as CustomEvent).detail !== 'new-order') return;
-      setShowForm(true);
-      setTimeout(() => document.querySelector<HTMLInputElement>('[data-new-order-first]')?.focus(), 60);
-    };
-    window.addEventListener('bb:action', h);
-    return () => window.removeEventListener('bb:action', h);
-  }, []);
-  const [ordersOpen, setOrdersOpen] = useState(false);
-  const [movementsOpen, setMovementsOpen] = useState(false);
-  const [mismatchOpen, setMismatchOpen] = useState(false);
-  const [directOpen, setDirectOpen] = useState(false);
-  const [receipt, setReceipt] = useState<ReceiptModel | null>(null);
-  const [allocMap, setAllocMap] = useState<Record<string, { label: string; qty: number; piece: number }[]>>({});
-
-  async function loadAllocs(list: ProductionOrder[]) {
-    const ids = list.flatMap((o) => (o.items ?? []).map((i) => i.id));
-    if (ids.length === 0) { setAllocMap({}); return; }
-    const { data } = await db
-      .from('lot_allocations')
-      .select('item_id,allocated_qty,lot_status,piece_qty,sku_lots(status,current_qty)')
-      .in('item_id', ids);
-    const m: Record<string, { label: string; qty: number; piece: number }[]> = {};
-    for (const r of (data ?? []) as any[]) {
-      const status = r.lot_status ?? r.sku_lots?.status ?? 'CUT_PCS';
-      (m[r.item_id] ??= []).push({
-        label: status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs',
-        qty: Number(r.allocated_qty),
-        piece: Number(r.piece_qty ?? r.sku_lots?.current_qty ?? 0),
-      });
-    }
-    for (const k of Object.keys(m)) m[k].sort((a, b) => (a.label === b.label ? 0 : a.label === 'Cut Pcs' ? -1 : 1));
-    setAllocMap(m);
-  }
-  useEffect(() => { loadAllocs(orders); }, [orders]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [pending, setPending] = useState<PendingAdjustment[]>([]);
-  const [resolvingId, setResolvingId] = useState<string | null>(null);
-  const [movements, setMovements] = useState<MovementRow[]>([]);
-  const [loadingMovements, setLoadingMovements] = useState(false);
   const [form, setForm] = useState(makeEmptyForm);
   const [whatsapp, setWhatsapp] = useState(defaultWhatsapp);
   const [editingWhatsapp, setEditingWhatsapp] = useState(false);
   const [whatsappDraft, setWhatsappDraft] = useState(defaultWhatsapp);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<ProductionOrder | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [createdOrder, setCreatedOrder] = useState<ProductionOrder | null>(null);
   const [skuVersion, setSkuVersion] = useState(0);
-  const [, startTransition] = useTransition();
-
-  // Mismatch pane state
-  const [mismatches, setMismatches] = useState<SkuMismatch[]>([]);
-  const [loadingMismatches, setLoadingMismatches] = useState(true);
-  const [outwardTarget, setOutwardTarget] = useState<MismatchOrderItem | null>(null);
-  const [recordingOutward, setRecordingOutward] = useState(false);
 
   const { refresh: refreshCatalog } = useCatalog();
   const db = supabaseBrowser();
   const canCreate = session.permissions.includes('transactions.create');
 
-  // ── Mismatch fetch ─────────────────────────────────────────────────────────
-
-  async function fetchMismatches() {
-    setLoadingMismatches(true);
-    const { data, error: err } = await db
-      .from('v_production_stock_status')
-      .select('*')
-      .eq('is_mismatched', true)
-      .order('stock_gap', { ascending: false });
-
-    if (!err && data) {
-      setMismatches(data as unknown as SkuMismatch[]);
-    }
-
-    const pend = await db
-      .from('prod_pending_adjustments')
-      .select('*, skus(sku_code,display_name,unit_code)')
-      .is('resolved_at', null)
-      .order('created_at', { ascending: false });
-    if (!pend.error && pend.data) setPending(pend.data as unknown as PendingAdjustment[]);
-    setLoadingMismatches(false);
+  function focusFirst() {
+    setTimeout(() => document.querySelector<HTMLInputElement>('[data-new-order-first]')?.focus(), 60);
   }
 
-  async function fetchMovements() {
-    setLoadingMovements(true);
-    const { data } = await db
-      .from('inventory_movements')
-      .select('id,txn_no,txn_type,txn_mode,quantity,unit_code,occurred_at,user_name,notes,lot_breakdown,skus(sku_code,display_name)')
-      .order('occurred_at', { ascending: false })
-      .limit(40);
-    setMovements((data ?? []) as unknown as MovementRow[]);
-    setLoadingMovements(false);
-  }
+  // opened here from another page by Alt+M → OR
+  useEffect(() => {
+    if (takeAction(['new-order'])) focusFirst();
+  }, []);
 
-  async function handleResolve(p: PendingAdjustment) {
-    setResolvingId(p.id);
-    const { error: rerr } = await db.rpc('resolve_prod_adjustment', { p_id: p.id });
-    setResolvingId(null);
-    if (rerr) { window.alert(rerr.message); return; }
-    refreshAll();
-  }
-
-  // Fetch mismatches on mount and after any action
-  useEffect(() => { fetchMismatches(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // keyboard: "n" puts the cursor in the first field
+  useEffect(() => {
+    const h = (e: Event) => { if ((e as CustomEvent).detail === 'new-order') focusFirst(); };
+    window.addEventListener('bb:action', h);
+    return () => window.removeEventListener('bb:action', h);
+  }, []);
 
   function refreshAll() {
-    refreshCatalog();            // Inventory view must see the new lot state
-    loadAllocs(orders);
-    if (movementsOpen) fetchMovements();
+    refreshCatalog();            // Inventory view must see the new reservation
     invalidateSkuCache();
     setSkuVersion(getSkuVersion());
-    fetchMismatches();
   }
 
-  useEffect(() => { if (movementsOpen) fetchMovements(); }, [movementsOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  // stock changed anywhere (here, another screen, another tab): the search list must not go stale
+  useEffect(() => onDataChanged(() => { invalidateSkuCache(); setSkuVersion(getSkuVersion()); }), []);
 
-  // live refresh when anything is saved (here, another screen, another tab)
-  const syncRef = useRef<() => void>(() => {});
-  syncRef.current = async () => {
-    invalidateSkuCache();
-    setSkuVersion(getSkuVersion());
-    fetchMismatches();
-    if (movementsOpen) fetchMovements();
-    const { data: fresh } = await db
-      .from('production_orders')
-      .select('*, production_order_items(*)')
-      .order('created_at', { ascending: false });
-    if (fresh) {
-      const next = fresh.map((o: any) => ({ ...o, items: o.production_order_items ?? [] })) as ProductionOrder[];
-      setOrders(next);
-      loadAllocs(next);
-    }
-  };
-  useEffect(() => onDataChanged(() => { syncRef.current(); }), []);
+  function resetForm() {
+    setError(null);
+    setForm(makeEmptyForm());
+    focusFirst();
+  }
+
+  if (!canCreate) {
+    return (
+      <div className="p-4 lg:p-6 max-w-[700px] mx-auto">
+        <div className="card p-8 text-center space-y-3">
+          <h1 className="text-[19px] font-semibold">Production Order</h1>
+          <p className="text-[15px] text-ink-3">Your role cannot create production orders. You can follow and finish them on the next page.</p>
+          <Link href="/production-orders/in-progress" className="btn btn-primary inline-flex">
+            Production Order in Progress <ArrowRight size={14} />
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   const needsDeliveryNote = form.delivery_mode === 'Courier' || form.delivery_mode === 'Transportation';
 
@@ -1141,6 +610,8 @@ export default function ProductionOrdersView({
     setWhatsapp(whatsappDraft);
     setEditingWhatsapp(false);
   }
+
+  // ── Create order ───────────────────────────────────────────────────────────
 
   // ── Create order ───────────────────────────────────────────────────────────
 
@@ -1309,323 +780,14 @@ export default function ProductionOrdersView({
       setError(msg);
       window.alert(msg);
     }
-
     const newOrder: ProductionOrder = {
       ...(created as ProductionOrder),
       items: rows,
     };
 
-    setOrders((prev) => [newOrder, ...prev]);
+    setCreatedOrder(newOrder);
     setForm(makeEmptyForm());
     refreshAll();
-  }
-
-  // ── Delete order ───────────────────────────────────────────────────────────
-
-  async function handleDelete() {
-    if (!deleteTarget) return;
-    setDeleting(true);
-    const { error: err } = await db
-      .from('production_orders')
-      .delete()
-      .eq('id', deleteTarget.id);
-    setDeleting(false);
-    if (err) { setError(err.message); setDeleteTarget(null); return; }
-    setOrders((prev) => prev.filter((o) => o.id !== deleteTarget.id));
-    setDeleteTarget(null);
-    refreshAll();
-  }
-
-  // ── Cancel order ───────────────────────────────────────────────────────────
-
-  async function handleCancel(order: ProductionOrder) {
-    const confirmed = window.confirm(
-      `Cancel order ${order.order_no}? Physical stock for all items will be restored.`
-    );
-    if (!confirmed) return;
-
-    const { data } = await db
-      .from('production_orders')
-      .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
-      .eq('id', order.id)
-      .select('*')
-      .single();
-
-    if (data) {
-      setOrders((prev) => prev.map((o) =>
-        o.id === order.id ? { ...(data as ProductionOrder), items: o.items } : o
-      ));
-      refreshAll();
-    }
-  }
-
-  // ── Status advance ─────────────────────────────────────────────────────────
-
-  async function advanceStatus(order: ProductionOrder) {
-    const next = STATUS_NEXT[order.status];
-    if (!next) return;
-    const { data } = await db
-      .from('production_orders')
-      .update({ status: next, updated_at: new Date().toISOString() })
-      .eq('id', order.id)
-      .select('*')
-      .single();
-    if (data) {
-      setOrders((prev) => prev.map((o) =>
-        o.id === order.id ? { ...(data as ProductionOrder), items: o.items } : o
-      ));
-      if (next === 'COMPLETED') refreshAll();
-    }
-  }
-
-  // ── Record Outward (from mismatch pane) ────────────────────────────────────
-
-  async function handleRecordOutward(notes: string, invoiceNo: string, operatedBy: string) {
-    if (!outwardTarget) return;
-    setRecordingOutward(true);
-
-    // record_production_outward_with_lots (013) wraps the original
-    // record_production_outward (010) — same ledger behaviour, plus it drains
-    // whatever lots were allocated to this item (no-op if none were).
-    const { error: err } = await db.rpc('record_production_outward_with_lots', {
-      p_poi_id:  outwardTarget.poi_id,
-      p_notes:   notes || null,
-      p_channel: 'WEB',
-      p_invoice_no:  invoiceNo.trim() || null,
-      p_operated_by: operatedBy || null,
-    });
-
-    setRecordingOutward(false);
-    if (err) {
-      alert('Error recording outward: ' + err.message);
-      return;
-    }
-
-    setOutwardTarget(null);
-    refreshAll();
-
-    // Reload orders to reflect fulfilled status on items
-    const { data: fresh } = await db
-      .from('production_orders')
-      .select('*, production_order_items(*)')
-      .order('created_at', { ascending: false });
-
-    if (fresh) {
-      setOrders(fresh.map((o: any) => ({ ...o, items: o.production_order_items ?? [] })));
-    }
-  }
-
-  // ── WhatsApp open ──────────────────────────────────────────────────────────
-
-  function openWhatsApp(order: ProductionOrder) {
-    const num = (order.whatsapp_number ?? whatsapp).replace(/\D/g, '');
-    const text = order.whatsapp_message ?? buildMessage({
-      customer_name: order.customer_name ?? '',
-      items: (order.items ?? []).map((i) => ({
-        display_name: i.display_name,
-        quantity: String(i.quantity),
-        unit_code: i.unit_code,
-        pieces: i.pieces ? String(i.pieces) : undefined,
-        mm: i.length_mm ? String(i.length_mm) : undefined,
-      })),
-      time_tag: order.time_tag ?? '',
-      delivery_mode: order.delivery_mode ?? '',
-      delivery_note: order.delivery_note ?? '',
-      assigned_to: order.assigned_to ?? '',
-      notes: order.notes ?? '',
-    });
-    window.open(`https://wa.me/${num}?text=${encodeURIComponent(text)}`, '_blank');
-  }
-
-  // ── Active (non-cancelled, non-completed) orders ───────────────────────────
-
-  const regularOrders = orders.filter((o) => !o.is_direct);
-  const directOrders = orders.filter((o) => o.is_direct);
-  const pendingDirect = directOrders.filter(
-    (o) => o.status !== 'CANCELLED' && !(o.direct_inward_at && o.direct_outward_at)
-  ).length;
-  const activeOrders = regularOrders.filter(
-    (o) => o.status !== 'CANCELLED' && o.status !== 'COMPLETED'
-  );
-  const closedOrders = regularOrders.filter(
-    (o) => o.status === 'CANCELLED' || o.status === 'COMPLETED'
-  );
-
-  function renderOrderCard(order: ProductionOrder) {
-    return (
-            <div key={order.id} className="card p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[13px] font-mono text-ink-3">{order.order_no}</span>
-                    <span className={`badge ${STATUS_BADGE[order.status]}`}>{STATUS_LABEL[order.status]}</span>
-                    {order.is_direct && <span className="badge badge-brand">Direct</span>}
-                    {order.time_tag && (
-                      <span className="text-[13px] bg-subtle border border-line rounded-full px-2 py-0.5 text-ink-2">
-                        ⏱ {order.time_tag}
-                      </span>
-                    )}
-                    {order.created_at && (
-                      <span className="text-[13px] text-ink-3">🕐 {formatDateTime(order.created_at)}</span>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1.5 text-[14px] text-ink-3">
-                    {order.customer_name && (
-                      <span>Customer: <span className="text-ink">{order.customer_name}</span></span>
-                    )}
-                    {order.delivery_mode && (
-                      <span>
-                        Delivery: <span className="text-ink">{order.delivery_mode}</span>
-                        {order.delivery_note ? <span className="text-ink-3"> ({order.delivery_note})</span> : null}
-                      </span>
-                    )}
-                    {order.assigned_to && (
-                      <span>Assigned: <span className="text-ink font-medium">{order.assigned_to}</span></span>
-                    )}
-                  </div>
-
-                  {order.items && order.items.length > 0 ? (
-                    <ul className="mt-2 space-y-1">
-                      {order.items.map((item, idx) => (
-                        <li key={item.id} className="flex items-center gap-2 text-[15px]">
-                          <span className="text-ink-3 font-mono text-[13px] w-4 shrink-0">{idx + 1}.</span>
-                          <span className="font-medium text-ink truncate">{item.display_name}</span>
-                          {item.quantity != null && (
-                            <span className="text-ink-3 shrink-0">× {item.quantity} {item.unit_code}</span>
-                          )}
-                          {item.is_fulfilled && (
-                            <span className="text-[12px] bg-ok/10 text-ok px-1.5 rounded-full shrink-0">Outward posted</span>
-                          )}
-                          {(allocMap[item.id] ?? []).length > 0 && (
-                            <span className="flex gap-1 flex-wrap">
-                              {allocMap[item.id].map((p, k) => (
-                                <span
-                                  key={k}
-                                  className={`badge ${p.label === 'Full Sleeve' ? 'badge-ok' : 'badge-warn'}`}
-                                  title={p.label === 'Full Sleeve' && p.piece > p.qty ? `${p.qty} of a ${p.piece} sleeve — rest becomes Cut Pcs` : undefined}
-                                >
-                                  {p.label} {p.qty}
-                                </span>
-                              ))}
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    order.product_description && (
-                      <p className="text-[15px] font-medium mt-1">{order.product_description}
-                        {order.quantity != null && (
-                          <span className="text-ink-3 font-normal ml-2">× {order.quantity} {order.unit_code ?? ''}</span>
-                        )}
-                      </p>
-                    )
-                  )}
-
-                  {order.notes && (
-                    <p className="text-[14px] text-ink-3 mt-1 truncate max-w-[500px]">{order.notes}</p>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => openWhatsApp(order)}
-                    title="Send via WhatsApp"
-                  >
-                    <Send size={13} /> WhatsApp
-                  </button>
-
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => showReceipt(order)}
-                    title="Preview and print on thermal paper"
-                  >
-                    <Printer size={13} /> Print
-                  </button>
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => pdfReceipt(order)}
-                    title="Download as PDF"
-                  >
-                    <FileDown size={13} /> PDF
-                  </button>
-
-                  {STATUS_NEXT[order.status] && (
-                    <button
-                      className="btn btn-primary btn-sm"
-                      onClick={() => startTransition(() => { advanceStatus(order); })}
-                    >
-                      {order.status === 'IN_PROGRESS' ? <CheckCircle size={13} /> : <Clock size={13} />}
-                      {STATUS_NEXT_LABEL[order.status]}
-                    </button>
-                  )}
-
-                  {canCreate && order.status !== 'COMPLETED' && (
-                    <button
-                      className="btn btn-ghost btn-sm text-ink-3 hover:text-warn hover:bg-warn/10"
-                      onClick={() => handleCancel(order)}
-                      title="Cancel order (restores physical stock)"
-                    >
-                      <Ban size={13} />
-                    </button>
-                  )}
-
-                  {canCreate && (
-                    <button
-                      className="btn btn-ghost btn-sm text-ink-3 hover:text-danger hover:bg-danger-soft"
-                      onClick={() => setDeleteTarget(order)}
-                      title="Delete order"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {order.is_direct && (
-                <div className="mt-3 pt-3 border-t border-line flex flex-wrap items-center gap-2">
-                  <span className="text-[13px] text-ink-3 mr-1">Post in Inventory:</span>
-                  {(['INWARD', 'OUTWARD'] as const).map((step) => {
-                    const at = step === 'INWARD' ? order.direct_inward_at : order.direct_outward_at;
-                    const by = step === 'INWARD' ? order.direct_inward_by : order.direct_outward_by;
-                    return (
-                      <button
-                        key={step}
-                        className={`btn btn-sm ${at ? 'btn-secondary' : 'btn-primary'}`}
-                        onClick={() => markDirect(order, step, !at)}
-                      >
-                        {at ? <CheckCircle size={12} /> : <ArrowDownCircle size={12} />}
-                        {step === 'INWARD' ? 'Inward' : 'Outward'}
-                        {at ? ` done · ${by ?? ''} · ${formatDateTime(at)}` : ' — mark done'}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-    );
-  }
-
-  async function markDirect(order: ProductionOrder, step: 'INWARD' | 'OUTWARD', done: boolean) {
-    if (!done && !window.confirm(`Un-mark ${step.toLowerCase()} as done for ${order.order_no}?`)) return;
-    const { error: derr } = await db.rpc('set_direct_step', { p_order_id: order.id, p_step: step, p_done: done });
-    if (derr) { window.alert(derr.message); return; }
-    const at = done ? new Date().toISOString() : null;
-    const by = done ? session.user.full_name : null;
-    setOrders((prev) => prev.map((o) => o.id !== order.id ? o : (
-      step === 'INWARD'
-        ? { ...o, direct_inward_at: at, direct_inward_by: by }
-        : { ...o, direct_outward_at: at, direct_outward_by: by }
-    )));
-  }
-
-  async function showReceipt(order: ProductionOrder) {
-    setReceipt(await loadReceiptModel(db, order));
-  }
-  async function pdfReceipt(order: ProductionOrder) {
-    await downloadReceiptPdf(await loadReceiptModel(db, order));
   }
 
   // ─── Render ────────────────────────────────────────────────────────────────
@@ -1633,86 +795,64 @@ export default function ProductionOrdersView({
   return (
     <div className="p-4 lg:p-6 max-w-[1100px] mx-auto space-y-4">
 
-      {/* Modals */}
-      {deleteTarget && (
-        <DeleteConfirmModal
-          orderNo={deleteTarget.order_no}
-          onConfirm={handleDelete}
-          onCancel={() => setDeleteTarget(null)}
-          deleting={deleting}
-        />
-      )}
-      {outwardTarget && (
-        <RecordOutwardModal
-          item={outwardTarget}
-          onConfirm={handleRecordOutward}
-          onCancel={() => setOutwardTarget(null)}
-          recording={recordingOutward}
-        />
-      )}
-
-      {receipt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={() => setReceipt(null)}>
-          <div className="bg-surface rounded-xl border border-line shadow-xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-line">
-              <p className="text-[16px] font-semibold">Thermal print preview · 80 mm</p>
-              <button className="btn btn-ghost h-7 w-7 p-0" onClick={() => setReceipt(null)}><X size={15} /></button>
-            </div>
-            <div className="overflow-auto bg-subtle p-4">
-              <div className="bg-white shadow mx-auto px-3 py-3 w-fit" dangerouslySetInnerHTML={{ __html: receiptHtml(receipt) }} />
-            </div>
-            <div className="flex justify-end gap-2 px-4 py-3 border-t border-line">
-              <button className="btn btn-secondary" onClick={() => downloadReceiptPdf(receipt)}><FileDown size={14} /> PDF</button>
-              <button className="btn btn-primary" onClick={() => printReceipt(receipt)}><Printer size={14} /> Print</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-[21px] font-semibold">Production Orders</h1>
-          <p className="text-[15px] text-ink-3 mt-0.5">
-            {activeOrders.length} active · {closedOrders.length} closed
-          </p>
+          <h1 className="text-[21px] font-semibold">Production Order</h1>
+          <p className="text-[15px] text-ink-3 mt-0.5">Create a new order. Follow it afterwards on Production Order in Progress.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 text-[15px]">
-            <span className="text-ink-3 hidden sm:inline">WhatsApp:</span>
-            {editingWhatsapp ? (
-              <>
-                <input
-                  className="field w-36"
-                  value={whatsappDraft}
-                  onChange={(e) => setWhatsappDraft(e.target.value)}
-                  placeholder="+91 98765 43210"
-                  autoFocus
-                />
-                <button className="btn btn-primary btn-sm" onClick={saveWhatsapp}>Save</button>
-                <button className="btn btn-secondary btn-sm" onClick={() => setEditingWhatsapp(false)}>Cancel</button>
-              </>
-            ) : (
-              <>
-                <span className="font-medium">{whatsapp || <span className="text-ink-3 italic">not set</span>}</span>
-                <button className="text-brand text-[14px] hover:underline" onClick={() => { setWhatsappDraft(whatsapp); setEditingWhatsapp(true); }}>
-                  <Pencil size={12} className="inline mr-0.5" />Change
-                </button>
-              </>
-            )}
-          </div>
-          {canCreate && (
-            <button className="btn btn-primary" data-kt="N" data-kt-label="New production order" onClick={() => { setShowForm(true); setError(null); setForm(makeEmptyForm()); }}>
-              <Plus size={14} /> New Order
-            </button>
+        <div className="flex items-center gap-2 text-[15px]">
+          <span className="text-ink-3 hidden sm:inline">WhatsApp:</span>
+          {editingWhatsapp ? (
+            <>
+              <input
+                className="field w-36"
+                value={whatsappDraft}
+                onChange={(e) => setWhatsappDraft(e.target.value)}
+                placeholder="+91 98765 43210"
+                autoFocus
+              />
+              <button className="btn btn-primary btn-sm" onClick={saveWhatsapp}>Save</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => setEditingWhatsapp(false)}>Cancel</button>
+            </>
+          ) : (
+            <>
+              <span className="font-medium">{whatsapp || <span className="text-ink-3 italic">not set</span>}</span>
+              <button className="text-brand text-[14px] hover:underline" onClick={() => { setWhatsappDraft(whatsapp); setEditingWhatsapp(true); }}>
+                <Pencil size={12} className="inline mr-0.5" />Change
+              </button>
+            </>
           )}
         </div>
       </div>
 
-      {/* ── 1. New order window (top) ── */}
-      <Pane title="New Production Order" open={showForm} onToggle={() => setShowForm((v) => !v)}>
-        <div className="p-5 space-y-4">
+      {/* The order just created */}
+      {createdOrder && (
+        <div className="rounded-xl border border-ok/40 bg-ok-soft px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[15px] text-ok font-medium">
+            Order <span className="font-mono">{createdOrder.order_no}</span> created.
+          </p>
+          <div className="flex items-center gap-2">
+            <button className="btn btn-secondary btn-sm" onClick={() => openWhatsApp(createdOrder, whatsapp)}>
+              <Send size={13} /> Send on WhatsApp
+            </button>
+            <Link href="/production-orders/in-progress" className="btn btn-primary btn-sm">
+              Open in progress <ArrowRight size={13} />
+            </Link>
+            <button className="btn btn-ghost h-7 w-7 p-0" aria-label="Dismiss" onClick={() => setCreatedOrder(null)}><X size={14} /></button>
+          </div>
+        </div>
+      )}
 
+      {/* ── New order ── */}
+      <section className="card">
+        <div className="card-head">
+          <h2 className="card-title">New Production Order</h2>
+          <button className="btn btn-secondary btn-sm" data-kt="N" data-kt-label="New production order" onClick={resetForm}>
+            <Plus size={13} /> New
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
           {error && <p className="text-[15px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>}
 
           <div>
@@ -1798,19 +938,19 @@ export default function ProductionOrdersView({
                             return (
                               <>
                                 <input
-                                  className="field w-16 text-center" inputMode="numeric" placeholder="Qty"
-                                  value={qm.pieces}
-                                  onChange={(e) => { const p = e.target.value.replace(/[^0-9]/g, ''); updateItem(li.id, { pieces: p, mm: qm.mm, quantity: qmTotal(p, qm.mm) }); }}
-                                />
-                                <span className="mt-2 text-ink-3 font-semibold">×</span>
-                                <input
                                   className="field w-24 text-center" inputMode="decimal" placeholder="MM"
                                   value={qm.mm}
                                   onChange={(e) => { const m = e.target.value.replace(/[^0-9.]/g, ''); updateItem(li.id, { pieces: qm.pieces, mm: m, quantity: qmTotal(qm.pieces, m) }); }}
+                                />
+                                <span className="mt-2 text-ink-3 font-semibold">×</span>
+                                <input
+                                  className="field w-16 text-center" inputMode="numeric" placeholder="PCS"
+                                  value={qm.pieces}
+                                  onChange={(e) => { const p = e.target.value.replace(/[^0-9]/g, ''); updateItem(li.id, { pieces: p, mm: qm.mm, quantity: qmTotal(p, qm.mm) }); }}
                                   onKeyDown={enter}
                                 />
                                 <span className="mt-2 text-[14px] num font-semibold q-total whitespace-nowrap min-w-[70px]">
-                                  {li.quantity ? `= ${li.quantity}` : ''}
+                                  {li.quantity ? `= ${li.quantity} mm` : ''}
                                 </span>
                               </>
                             );
@@ -1887,20 +1027,28 @@ export default function ProductionOrdersView({
 
                 return (
                   <div key={li.id} className="rounded-lg border border-line bg-subtle p-3">
-                    <div className="flex gap-2 items-start">
-                      <span className="text-[13px] text-ink-3 font-mono mt-2.5 w-4 shrink-0 text-center">{idx + 1}</span>
-                      <div className="flex-1 min-w-0">
-                        <SkuCombobox
-                          value={li.skuSearch}
-                          onChange={(val) => updateItem(li.id, {
-                            skuSearch: val,
-                            allocations: [],
-                          })}
-                          cacheVersion={skuVersion}
-                          usedElsewhere={(sku, group) => usedElsewhereIn(form.items, li.id, sku, group)}
-                          placeholder="Search SKU…"
-                        />
-                        {li.skuSearch.sku && (
+                    <SkuCombobox
+                      value={li.skuSearch}
+                      onChange={(val) => updateItem(li.id, {
+                        skuSearch: val,
+                        allocations: [],
+                      })}
+                      cacheVersion={skuVersion}
+                      usedElsewhere={(sku, group) => usedElsewhereIn(form.items, li.id, sku, group)}
+                      placeholder="Search size, brand or code (h100 = h-100)"
+                      lead={<span className="text-[13px] text-ink-3 font-mono w-4 text-center">{idx + 1}</span>}
+                      headerRight={
+                        <button
+                          type="button"
+                          className="btn btn-ghost h-7 w-7 p-0 text-ink-3 hover:text-danger"
+                          onClick={() => removeItem(li.id)}
+                          disabled={form.items.length === 1}
+                          title="Remove item"
+                        >
+                          <X size={14} />
+                        </button>
+                      }
+                      below={li.skuSearch.sku && (
                           <p className="text-[13px] text-ink-3 mt-0.5 pl-0.5">
                             {grp ? (
                               <>
@@ -1917,7 +1065,7 @@ export default function ProductionOrdersView({
                             )}
                           </p>
                         )}
-                      </div>
+                      trailing={
                       <div className={`${isLotTracked ? 'w-52' : 'w-24'} shrink-0`}>
                         {isLotTracked ? (() => {
                           const qm = lineQM(li);
@@ -1925,11 +1073,11 @@ export default function ProductionOrdersView({
                           const cls = `field text-center ${over ? 'border-danger focus:ring-danger/30' : ''}`;
                           return (
                             <div className="flex items-center gap-1.5">
-                              <input className={`${cls} w-16`} inputMode="numeric" placeholder="Qty" value={qm.pieces}
-                                onChange={(e) => { const p = e.target.value.replace(/[^0-9]/g, ''); setLineQty(li.id, qmTotal(p, qm.mm), { pieces: p, mm: qm.mm }); }} />
-                              <span className="text-ink-3 font-semibold">×</span>
                               <input className={`${cls} w-24`} inputMode="decimal" placeholder="MM" value={qm.mm}
                                 onChange={(e) => { const m = e.target.value.replace(/[^0-9.]/g, ''); setLineQty(li.id, qmTotal(qm.pieces, m), { pieces: qm.pieces, mm: m }); }} />
+                              <span className="text-ink-3 font-semibold">×</span>
+                              <input className={`${cls} w-16`} inputMode="numeric" placeholder="PCS" value={qm.pieces}
+                                onChange={(e) => { const p = e.target.value.replace(/[^0-9]/g, ''); setLineQty(li.id, qmTotal(p, qm.mm), { pieces: p, mm: qm.mm }); }} />
                             </div>
                           );
                         })() : (
@@ -1947,7 +1095,7 @@ export default function ProductionOrdersView({
                         />
                         )}
                         {isLotTracked && li.quantity && (
-                          <p className="text-[14px] num font-semibold q-total text-center mt-0.5">= {li.quantity} {li.skuSearch.sku?.unit_code}</p>
+                          <p className="text-[14px] num font-semibold q-total text-center mt-0.5">= {fmtQty(li.quantity, li.skuSearch.sku?.unit_code)}</p>
                         )}
                         {li.skuSearch.sku && (
                           grp ? (
@@ -1964,16 +1112,8 @@ export default function ProductionOrdersView({
                           )
                         )}
                       </div>
-                      <button
-                        type="button"
-                        className="btn btn-ghost h-8 w-8 p-0 mt-0.5 text-ink-3 hover:text-danger shrink-0"
-                        onClick={() => removeItem(li.id)}
-                        disabled={form.items.length === 1}
-                        title="Remove item"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
+                      }
+                    />
 
                     {grp?.status === 'CUT_PCS' && shortfall > 0 && freshFree > 0 && (
                       <div className="pl-6 mt-2">
@@ -2079,126 +1219,14 @@ export default function ProductionOrdersView({
           </div>
 
           <div className="flex justify-end gap-2">
-            <button className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+            <button className="btn btn-secondary" onClick={resetForm}>Clear</button>
             <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>
               {saving ? <Loader size={14} className="animate-spin" /> : <Plus size={14} />}
               Create Order
             </button>
           </div>
         </div>
-      </Pane>
-
-      {/* ── 2. Orders ── */}
-      <Pane
-        title="Orders"
-        subtitle={`${activeOrders.length} active · ${closedOrders.length} closed`}
-        count={activeOrders.length}
-        open={ordersOpen}
-        onToggle={() => setOrdersOpen((v) => !v)}
-      >
-      <div className="p-4 space-y-3">
-      {/* Empty state */}
-      {regularOrders.length === 0 && (
-        <div className="card p-10 text-center">
-          <p className="text-[15px] text-ink-3">No production orders yet. Create one to get started.</p>
-        </div>
-      )}
-
-      {/* ── Active Orders ── */}
-      {activeOrders.length > 0 && (
-        <div className="space-y-3">
-          {activeOrders.map((order) => renderOrderCard(order))}
-        </div>
-      )}
-
-      {/* ── Closed Orders (Completed + Cancelled) ── */}
-      {closedOrders.length > 0 && (
-        <details className="group">
-          <summary className="cursor-pointer text-[14px] text-ink-3 hover:text-ink select-none py-1">
-            Show {closedOrders.length} closed order{closedOrders.length !== 1 ? 's' : ''}
-            {' (completed &amp; cancelled)'}
-          </summary>
-          <div className="mt-2 space-y-2 opacity-70">
-            {closedOrders.map((order) => (
-              <div key={order.id} className="card p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[13px] font-mono text-ink-3">{order.order_no}</span>
-                  <span className={`badge ${STATUS_BADGE[order.status]}`}>{STATUS_LABEL[order.status]}</span>
-                  {order.customer_name && (
-                    <span className="text-[14px] text-ink-3">{order.customer_name}</span>
-                  )}
-                  {order.items && order.items.length > 0 && (
-                    <span className="text-[14px] text-ink-3">
-                      · {order.items.map((i) => `${i.display_name} ×${i.quantity}`).join(', ')}
-                    </span>
-                  )}
-                  {order.created_at && (
-                    <span className="text-[13px] text-ink-3 ml-auto">{formatDateTime(order.created_at)}</span>
-                  )}
-                  {canCreate && order.status !== 'CANCELLED' && (
-                    <button
-                      className="btn btn-ghost btn-sm text-ink-3 hover:text-danger hover:bg-danger-soft"
-                      onClick={() => setDeleteTarget(order)}
-                      title="Delete order"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
-      </div>
-      </Pane>
-
-      {/* ── 2b. Direct orders ── */}
-      <Pane
-        title="Direct Orders"
-        subtitle="supplier ships straight to customer — remember to post inward and outward"
-        count={pendingDirect}
-        tone="warn"
-        open={directOpen}
-        onToggle={() => setDirectOpen((v) => !v)}
-      >
-        <div className="p-4 space-y-3">
-          {directOrders.length === 0 && (
-            <p className="text-[15px] text-ink-3">No direct orders yet. Choose “Direct order” when creating one.</p>
-          )}
-          {directOrders.map((order) => renderOrderCard(order))}
-        </div>
-      </Pane>
-
-      {/* ── 3. Movements ── */}
-      <Pane
-        title="Movements"
-        subtitle="latest stock movements and whether production stock has caught up"
-        open={movementsOpen}
-        onToggle={() => setMovementsOpen((v) => !v)}
-      >
-        <MovementsPane rows={movements} loading={loadingMovements} pendingMovementIds={new Set(pending.map((p) => p.movement_id))} />
-      </Pane>
-
-      {/* ── 4. Mismatch ── */}
-      <Pane
-        title="Mismatch"
-        subtitle="book vs physical production stock, traced to its cause"
-        count={mismatches.length + pending.length}
-        tone="warn"
-        open={mismatchOpen}
-        onToggle={() => setMismatchOpen((v) => !v)}
-      >
-        <MismatchPane
-          mismatches={mismatches}
-          pending={pending}
-          onRecordOutward={setOutwardTarget}
-          onResolve={handleResolve}
-          resolvingId={resolvingId}
-          loadingMismatches={loadingMismatches}
-        />
-      </Pane>
-
+      </section>
     </div>
   );
 }

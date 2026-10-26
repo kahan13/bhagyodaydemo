@@ -79,6 +79,28 @@ export async function POST(request: Request) {
     return NextResponse.json({ movement: inData }, { status: 201 });
   }
 
+  // Timing-belt outward typed as MM × PCS rows, each from Full Sleeve (cut:false) or Cut Pcs (cut:true).
+  if (txn_type === 'OUTWARD' && rolls.length > 0) {
+    const total = rolls.reduce((a, r) => a + r.rolls * r.roll_length, 0);
+    if (Math.abs(total - quantity) > 0.001) {
+      return NextResponse.json({ error: `Rows add up to ${total}, but quantity is ${quantity}.` }, { status: 400 });
+    }
+    const { data: outData, error: outErr } = await db.rpc('record_outward_with_lots', {
+      p_sku_code:    sku_code,
+      p_rows:        rolls,
+      p_reference:   body.reference ? String(body.reference).slice(0, 120) : null,
+      p_notes:       body.notes ? String(body.notes).slice(0, 500) : null,
+      p_channel:     channel,
+      p_invoice_no:  body.invoice_no ? String(body.invoice_no).slice(0, 60) : null,
+      p_operated_by: body.operated_by ? String(body.operated_by) : null,
+    });
+    if (outErr) {
+      const denied = /does not allow|not signed in/i.test(outErr.message);
+      return NextResponse.json({ error: outErr.message }, { status: denied ? 403 : 400 });
+    }
+    return NextResponse.json({ movement: outData }, { status: 201 });
+  }
+
   const { data, error } = await db.rpc('record_movement', {
     p_sku_code:    sku_code,
     p_txn_type:    txn_type,

@@ -1,9 +1,9 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useState, useTransition } from 'react';
-import { Undo2, X, SlidersHorizontal, Download } from 'lucide-react';
-import { fmtDate, fmtTime, fmtQty } from '@/lib/format';
+import { useEffect, useState, useTransition } from 'react';
+import { Undo2, X, SlidersHorizontal, Download, Search } from 'lucide-react';
+import { fmtDate, fmtTime, fmtQty, fmtMmPcs } from '@/lib/format';
 import type { Movement } from '@/lib/types';
 import { qtySplit, lotChip, snapTotal, LOT_NAME, type SnapGroup } from '@/lib/lotView';
 
@@ -38,8 +38,18 @@ export default function TransactionsView({
   }
 
   const pages = Math.max(1, Math.ceil(total / pageSize));
+  // the search box has its own place in the header, so it isn't counted as a "filter"
   const activeCount = Object.entries(filters)
-    .filter(([k, v]) => v && !['range', 'from', 'to'].includes(k)).length;
+    .filter(([k, v]) => v && !['range', 'from', 'to', 'search'].includes(k)).length;
+
+  // Live search: type and the list narrows after a short pause (no Enter needed)
+  const [searchText, setSearchText] = useState(filters.search);
+  useEffect(() => { setSearchText(filters.search); }, [filters.search]);
+  useEffect(() => {
+    if (searchText === filters.search) return;
+    const t = setTimeout(() => setParam({ search: searchText.trim() }), 350);
+    return () => clearTimeout(t);
+  }, [searchText]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex flex-col h-[calc(100vh/var(--z,1)-56px)]">
@@ -49,6 +59,25 @@ export default function TransactionsView({
           <h1 className="text-[19px] font-semibold">Transactions</h1>
           <span className="text-[14px] text-ink-3 num">{total}</span>
           {pending && <span className="text-[13px] text-ink-3">Updating…</span>}
+
+          <div className="relative flex-1 min-w-[220px] max-w-[380px]">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-3 pointer-events-none" />
+            <input
+              data-global-search data-kt="S" data-kt-label="Search transactions"
+              className="field pl-9 pr-8"
+              placeholder="Search size, brand, SKU, invoice or txn no   ( / )"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') setParam({ search: searchText.trim() }); }}
+              aria-label="Search transactions"
+            />
+            {searchText && (
+              <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink"
+                aria-label="Clear search" onClick={() => { setSearchText(''); setParam({ search: '' }); }}>
+                <X size={13} />
+              </button>
+            )}
+          </div>
 
           <div className="ml-auto flex items-center gap-2">
             <select className="field w-[128px]" value={filters.range}
@@ -100,15 +129,9 @@ export default function TransactionsView({
               options={facets.users.map((u) => [u, u])} width="w-[150px]" />
             <Select label="Operated By" value={filters.operated_by} onChange={(v) => setParam({ operated_by: v })}
               options={facets.operators.map((u) => [u, u])} width="w-[150px]" />
-            <div>
-              <label className="label" htmlFor="search">Product search</label>
-              <input id="search" data-kt="S" data-kt-label="Search product" data-global-search className="field w-[170px]" defaultValue={filters.search}
-                placeholder="Size or brand"
-                onKeyDown={(e) => { if (e.key === 'Enter') setParam({ search: (e.target as HTMLInputElement).value }); }} />
-            </div>
             {activeCount > 0 && (
               <button className="btn btn-ghost btn-sm"
-                onClick={() => setParam({ type: '', mode: '', product: '', brand: '', family: '', user: '', operated_by: '', search: '' })}>
+                onClick={() => setParam({ type: '', mode: '', product: '', brand: '', family: '', user: '', operated_by: '' })}>
                 <X size={13} /> Clear
               </button>
             )}
@@ -299,7 +322,7 @@ function StateBlock({ m, which }: { m: Movement; which: 'before' | 'after' }) {
           {g.length === 0 && <span className="text-[14px] text-ink-3">no stock in lots</span>}
           {g.map((x) => (
             <span key={x.status + x.each} className={`chip ${lotChip(x.status)}`} title={LOT_NAME[x.status]}>
-              {x.count} × {fmtQty(x.each, m.unit_code)} {SHORT[x.status]}
+              {fmtMmPcs(x.each, x.count)} {SHORT[x.status]}
             </span>
           ))}
         </div>

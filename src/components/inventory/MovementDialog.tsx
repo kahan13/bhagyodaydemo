@@ -5,7 +5,7 @@ import { X, Check } from 'lucide-react';
 import { fmtQty } from '@/lib/format';
 import type { Channel, Sku } from '@/lib/types';
 import LotBreakdown from '@/components/inventory/LotBreakdown';
-import OutwardPlan from '@/components/inventory/OutwardPlan';
+import { OutwardRowsPlan, planRowsOutward } from '@/components/inventory/OutwardPlan';
 import RollEntry, { emptyRolls, rollsPayload, rollsTotal } from '@/components/inventory/RollEntry';
 
 /**
@@ -29,8 +29,11 @@ export default function MovementDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const inRolls = action === 'inward' && sku.product_type === 'TIMING_BELT';
+  // timing belts: inward and outward are typed as MM × PCS (outward also says Full Sleeve or Cut Pcs)
+  const inRolls = (action === 'inward' || action === 'outward') && sku.product_type === 'TIMING_BELT';
   const rollList = inRolls ? rollsPayload(rolls) : [];
+  const rollProblems = action === 'outward' && inRolls && sku.lot_groups && sku.lot_groups.length > 0
+    ? planRowsOutward(sku.lot_groups, rollList).problems : [];
   const amount = inRolls ? rollsTotal(rollList) : Number(qty || 0);
   // For an adjustment the worker types the counted physical stock, not a delta.
   const delta = action === 'adjust' ? amount - sku.current_stock : amount;
@@ -46,6 +49,7 @@ export default function MovementDialog({
     (inRolls && amount <= 0) ||
     (action !== 'adjust' && amount <= 0) ||
     (action === 'outward' && amount > sku.current_stock) ||
+    rollProblems.length > 0 ||
     (action === 'adjust' && (delta === 0 || !notes.trim()));
 
   async function submit(e: React.FormEvent) {
@@ -103,7 +107,7 @@ export default function MovementDialog({
           </div>
 
           {inRolls ? (
-            <RollEntry rows={rolls} onChange={setRolls} />
+            <RollEntry rows={rolls} onChange={setRolls} mode={action === 'outward' ? 'out' : 'in'} />
           ) : (
           <div>
             <label className="label" htmlFor="qty">
@@ -149,8 +153,8 @@ export default function MovementDialog({
             </div>
           )}
 
-          {action === 'outward' && !inRolls && (
-            <OutwardPlan groups={sku.lot_groups} amount={amount} unit={sku.unit_code} />
+          {action === 'outward' && inRolls && (
+            <OutwardRowsPlan groups={sku.lot_groups} rows={rollList} unit={sku.unit_code} />
           )}
 
           {action === 'outward' && amount > sku.current_stock && (

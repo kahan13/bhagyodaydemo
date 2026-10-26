@@ -23,10 +23,10 @@ export function takeAction(accept: KeyAction[]): KeyAction | null {
  */
 export function runAction(a: KeyAction, pathname: string, go: (href: string) => void) {
   const home = a === 'new-order'
-    ? (pathname.startsWith('/production-orders') ? '/production-orders' : '/purchase-orders')
+    ? (pathname.startsWith('/production-orders') ? '/production-orders' : '/purchase-orders')   // creating happens on /production-orders itself
     : '/';
   const here = a === 'new-order'
-    ? pathname.startsWith('/production-orders') || pathname.startsWith('/purchase-orders')
+    ? pathname === '/production-orders' || pathname.startsWith('/purchase-orders')
     : pathname === '/';
   if (here) window.dispatchEvent(new CustomEvent('bb:action', { detail: a }));
   else { queueAction(a); go(home); }

@@ -5,6 +5,7 @@ import { Trash2, Loader2, X, Search, AlertTriangle } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
 import { useListNav } from '@/lib/useListNav';
+import { makeMatcher, hasQuery } from '@/lib/search';
 
 interface Preview {
   skus: number; skus_with_stock: number; lots: number; movements: number;
@@ -37,11 +38,10 @@ export default function ClearDataPanel() {
   useEffect(() => { load(); }, [load]);
 
   const hits = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    if (!t) return [];
+    if (!hasQuery(q)) return [];
+    const match = makeMatcher(q);
     return allSkus
-      .filter((s) => !picked.includes(s.id) &&
-        (s.exact_size.toLowerCase().includes(t) || s.brand_name.toLowerCase().includes(t) || s.sku_code.toLowerCase().includes(t)))
+      .filter((s) => !picked.includes(s.id) && match([s.exact_size, s.brand_name, s.sku_code]))
       .slice(0, 8);
   }, [allSkus, q, picked]);
 
@@ -80,7 +80,7 @@ export default function ClearDataPanel() {
       <div className="flex items-center gap-2">
         <AlertTriangle size={16} className="text-danger" />
         <h2 className="card-title">Clear data</h2>
-        <span className="badge badge-danger">Super Admin · cannot be undone</span>
+        <span className="badge badge-danger">Admin · cannot be undone</span>
       </div>
       <p className="text-[15px] text-ink-2 mt-2 leading-relaxed">
         Use before handing the app to a client. Products (SKUs) are never deleted. Download a backup first.

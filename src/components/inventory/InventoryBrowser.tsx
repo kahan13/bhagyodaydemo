@@ -11,6 +11,8 @@ import SkuLotsPanel from '@/components/inventory/SkuLotsPanel';
 import LotBreakdown, { groupsInline, groupText } from '@/components/inventory/LotBreakdown';
 import { TYPE_META } from '@/lib/sheet-config';
 import { useListNav } from '@/lib/useListNav';
+import { makeMatcher, hasQuery } from '@/lib/search';
+import InventoryTabs from '@/components/inventory/InventoryTabs';
 
 const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
 
@@ -51,6 +53,10 @@ export default function InventoryBrowser({
   // resizable column widths as percentages [l1, l2, l3]
   const [widths, setWidths] = useState<[number, number, number]>([33.33, 33.33, 33.34]);
   const containerRef = useRef<HTMLDivElement>(null);
+  // width (px) of the right-hand details pane — also draggable, and remembered between visits
+  const ASIDE_DEFAULT = 350;
+  const [asideW, setAsideW] = useState(ASIDE_DEFAULT);
+  const asideRef = useRef<HTMLElement>(null);
   const dragRef = useRef<{ divider: 0 | 1; startX: number; startWidths: [number, number, number] } | null>(null);
 
   const can = (p: Permission) => permissions.includes(p);
@@ -83,17 +89,11 @@ export default function InventoryBrowser({
     skus.filter((s) => s.product_type === 'TIMING_BELT' && (s.lot_groups ?? []).some((g) => g.status === t)).length;
 
   const pool = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const match = makeMatcher(query);
     return viewSkus.filter((s) => {
       if (s.product_type !== type) return false;
       if (lowOnly && s.stock_status === 'OK') return false;
-      if (!q) return true;
-      return (
-        s.exact_size.toLowerCase().includes(q) ||
-        s.brand_name.toLowerCase().includes(q) ||
-        s.family_code.toLowerCase().includes(q) ||
-        s.sku_code.toLowerCase().includes(q)
-      );
+      return match([s.exact_size, s.brand_name, s.family_code, s.sku_code]);
     });
   }, [viewSkus, type, query, lowOnly]);
 
@@ -154,17 +154,11 @@ export default function InventoryBrowser({
   }
 
   const searchHits = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
+    if (!hasQuery(query)) return [];
+    const match = makeMatcher(query);
     return viewSkus.filter((s) => {
       if (lowOnly && s.stock_status === 'OK') return false;
-      return (
-        s.exact_size.toLowerCase().includes(q) ||
-        s.brand_name.toLowerCase().includes(q) ||
-        s.family_code.toLowerCase().includes(q) ||
-        s.sku_code.toLowerCase().includes(q) ||
-        s.display_name.toLowerCase().includes(q)
-      );
+      return match([s.exact_size, s.brand_name, s.family_code, s.sku_code, s.display_name]);
     }).slice(0, 8);
   }, [viewSkus, query, lowOnly]);
 
@@ -183,18 +177,59 @@ export default function InventoryBrowser({
   const sectionOpts = useMemo(() => uniq(sectionOf), [typeRows]);          // eslint-disable-line react-hooks/exhaustive-deps
   const makeOpts = useMemo(() => uniq((s) => s.brand_name), [typeRows]);   // eslint-disable-line react-hooks/exhaustive-deps
   const listRows = useMemo(() => {
+    const sizeMatch = makeMatcher(fSize);
     return pool
       .filter((s) =>
         (!fFamily || s.hier_l1 === fFamily) &&
         (!fSection || sectionOf(s) === fSection) &&
         (!fMake || s.brand_name === fMake) &&
-        (!fSize || s.exact_size.toLowerCase().includes(fSize.toLowerCase()) || s.hier_l3.toLowerCase().includes(fSize.toLowerCase())))
+        sizeMatch([s.exact_size, s.hier_l3]))
       .sort((a, b) =>
         collator.compare(a.hier_l1, b.hier_l1) ||
         collator.compare(sectionOf(a), sectionOf(b)) ||
         collator.compare(a.hier_l3, b.hier_l3) ||
         collator.compare(a.brand_name, b.brand_name));
   }, [pool, fFamily, fSection, fMake, fSize]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // remembered layout (per browser)
+  useEffect(() => {
+    try {
+      const a = Number(localStorage.getItem('bb-inv-aside'));
+      if (a >= 280 && a <= 760) setAsideW(a);
+      const w = JSON.parse(localStorage.getItem('bb-inv-cols') ?? 'null') as number[] | null;
+      if (Array.isArray(w) && w.length === 3 && w.every((n) => n >= 10) && Math.abs(w[0] + w[1] + w[2] - 100) < 0.5) {
+        setWidths([w[0], w[1], w[2]]);
+      }
+    } catch { /* storage unavailable — defaults are fine */ }
+  }, []);
+
+  /** On-screen size ÷ layout size: 1 normally, the text-size (zoom) factor when "A+" is used. */
+  const screenScale = (el: HTMLElement | null) => {
+    if (!el || !el.offsetWidth) return 1;
+    return el.getBoundingClientRect().width / el.offsetWidth || 1;
+  };
+
+  const onAsideDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX, startW = asideW;
+    const scale = screenScale(asideRef.current);
+    let latest = startW;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    const onMove = (ev: MouseEvent) => {
+      latest = Math.round(Math.max(280, Math.min(startW + (startX - ev.clientX) / scale, 760)));
+      setAsideW(latest);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      try { localStorage.setItem('bb-inv-aside', String(latest)); } catch { /* ignore */ }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [asideW]);
 
   // ── drag-to-resize ──────────────────────────────────────────────────────────
   const onDividerMouseDown = useCallback((divider: 0 | 1, e: React.MouseEvent) => {
@@ -203,7 +238,7 @@ export default function InventoryBrowser({
 
     const onMove = (ev: MouseEvent) => {
       if (!dragRef.current || !containerRef.current) return;
-      const totalW = containerRef.current.offsetWidth;
+      const totalW = containerRef.current.getBoundingClientRect().width;   // same space as the mouse, so it tracks at any text size
       const dx = ev.clientX - dragRef.current.startX;
       const dPct = (dx / totalW) * 100;
       const sw = dragRef.current.startWidths;
@@ -224,6 +259,7 @@ export default function InventoryBrowser({
       dragRef.current = null;
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      setWidths((w) => { try { localStorage.setItem('bb-inv-cols', JSON.stringify(w)); } catch { /* ignore */ } return w; });
     };
 
     window.addEventListener('mousemove', onMove);
@@ -278,6 +314,7 @@ export default function InventoryBrowser({
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-[19px] font-semibold">Inventory</h1>
+          <InventoryTabs current="book" />
 
           <div className="relative flex-1 min-w-[200px] max-w-[320px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" />
@@ -622,7 +659,19 @@ export default function InventoryBrowser({
         </div>
         )}
 
-        <aside className="w-[350px] shrink-0 border-l border-line bg-surface hidden xl:flex flex-col">
+        {/* drag handle between the lists and the details pane (double-click = default width) */}
+        <div
+          role="separator" aria-orientation="vertical" aria-label="Resize details pane"
+          title="Drag to resize · double-click to reset"
+          className="hidden xl:block w-1 shrink-0 cursor-col-resize bg-line hover:bg-brand/40 active:bg-brand/60 transition-colors"
+          onMouseDown={onAsideDividerMouseDown}
+          onDoubleClick={() => { setAsideW(ASIDE_DEFAULT); try { localStorage.removeItem('bb-inv-aside'); } catch { /* ignore */ } }}
+        />
+        <aside
+          ref={asideRef}
+          style={{ width: asideW, maxWidth: '60%' }}
+          className="shrink-0 bg-surface hidden xl:flex flex-col"
+        >
           <DetailPanel
             sku={selected}
             can={can}

@@ -29,13 +29,15 @@ interface TeamMember {
   status: 'active' | 'pending' | 'disabled' | 'orphaned';
   is_configured_admin: boolean;
   is_self: boolean;
+  /** Workshop people: the pages switched on for them */
+  pages: { page: string; can_edit: boolean }[];
 }
 
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: 'Sign in to continue.' }, { status: 401 });
   if (!session.permissions.includes('users.edit')) {
-    return NextResponse.json({ error: 'Only a Super Admin can manage users.' }, { status: 403 });
+    return NextResponse.json({ error: 'Only an Admin can manage users.' }, { status: 403 });
   }
 
   const db = await supabaseServer();
@@ -47,6 +49,15 @@ export async function GET() {
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
   const byEmail = new Map<string, TeamMember>();
+
+  // page access per person (the table only exists once migration 036 has been run)
+  const pagesByUser = new Map<string, { page: string; can_edit: boolean }[]>();
+  const { data: access } = await db.from('user_page_access').select('user_id,page_key,can_edit');
+  for (const a of (access ?? []) as { user_id: string; page_key: string; can_edit: boolean }[]) {
+    const list = pagesByUser.get(a.user_id) ?? [];
+    list.push({ page: a.page_key, can_edit: a.can_edit });
+    pagesByUser.set(a.user_id, list);
+  }
 
   for (const p of profiles ?? []) {
     const email = (p.email ?? '').toLowerCase();
@@ -65,6 +76,7 @@ export async function GET() {
       status: !p.is_active ? 'disabled' : p.auth_user_id ? 'active' : 'orphaned',
       is_configured_admin: isAdminEmail(email),
       is_self: p.id === session.user.id,
+      pages: pagesByUser.get(p.id) ?? [],
     });
   }
 
@@ -99,6 +111,7 @@ export async function GET() {
           status: 'pending',
           is_configured_admin: isAdminEmail(email),
           is_self: false,
+          pages: [],
         });
       }
     }
@@ -122,7 +135,7 @@ export async function PATCH(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: 'Sign in to continue.' }, { status: 401 });
   if (!session.permissions.includes('users.edit')) {
-    return NextResponse.json({ error: 'Only a Super Admin can manage users.' }, { status: 403 });
+    return NextResponse.json({ error: 'Only an Admin can manage users.' }, { status: 403 });
   }
 
   let body: Record<string, unknown>;
@@ -130,6 +143,20 @@ export async function PATCH(request: Request) {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: 'Send a JSON body.' }, { status: 400 });
+  }
+
+  // Page access for a Workshop person: [{ page, can_edit }, ...] (replaces their whole list)
+  if (Array.isArray(body.pages) && body.id) {
+    const pages = (body.pages as { page?: unknown; can_edit?: unknown }[])
+      .map((p) => ({ page: String(p.page ?? ''), can_edit: p.can_edit === true }))
+      .filter((p) => p.page);
+    const dbp = await supabaseServer();
+    const { error: pErr } = await dbp.rpc('set_user_page_access', { p_user_id: String(body.id), p_pages: pages });
+    if (pErr) {
+      const denied = /only an admin|not signed in/i.test(pErr.message);
+      return NextResponse.json({ error: pErr.message }, { status: denied ? 403 : 400 });
+    }
+    return NextResponse.json({ ok: true });
   }
 
   const email = String(body.email ?? '').trim().toLowerCase();

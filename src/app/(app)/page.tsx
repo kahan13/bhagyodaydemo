@@ -1,11 +1,11 @@
 import { Suspense } from 'react';
-import { ArrowDownLeft, ArrowUpRight, ShoppingCart, Check, Package, Clock, Ban } from 'lucide-react';
-import { requireSession, can } from '@/lib/auth';
+import { ArrowDownLeft, ArrowUpRight, ShoppingCart, Check } from 'lucide-react';
+import { requirePage, can } from '@/lib/auth';
 import { supabaseServer, supabaseService } from '@/lib/supabase-server';
 
-import { fmtQty, fmtMsl, fmtRelative, fmtDate } from '@/lib/format';
-import type { DashboardSummary, Movement, Sku, ProductionOrder, ProductionOrderItem } from '@/lib/types';
+import { fmtQty, fmtRelative, fmtDate, fmtMmPcs, fmtLineQty } from '@/lib/format';
 import DashboardActions from '@/components/dashboard/DashboardActions';
+import ReorderPane, { type ReorderRow } from '@/components/dashboard/ReorderPane';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
@@ -14,7 +14,6 @@ const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing', V_BELT: 'V-B
 
 const PO_STATUS_LABEL: Record<string, string> = {
   CREATED:     'Created',
-  SENT:        'Sent',
   IN_PROGRESS: 'In Progress',
   COMPLETED:   'Completed',
   CANCELLED:   'Cancelled',
@@ -22,41 +21,10 @@ const PO_STATUS_LABEL: Record<string, string> = {
 
 const PO_STATUS_STYLE: Record<string, string> = {
   CREATED:     'bg-warn/10 text-warn',
-  SENT:        'bg-brand/10 text-brand',
   IN_PROGRESS: 'bg-ok/10 text-ok',
   COMPLETED:   'bg-subtle text-ink-3',
   CANCELLED:   'bg-danger/10 text-danger',
 };
-
-/* ── Stats ───────────────────────────────────────────────────────────────── */
-function Stat({ label, value, sub, tone }: {
-  label: string; value: string | number; sub?: string; tone?: 'warn' | 'danger';
-}) {
-  return (
-    <div className="card p-4">
-      <p className="eyebrow">{label}</p>
-      <p className={`num text-[26px] font-semibold tracking-[-0.02em] mt-1.5 leading-none ${
-        tone === 'danger' ? 'text-danger' : tone === 'warn' ? 'text-warn' : ''
-      }`}>{value}</p>
-      {sub && <p className="text-[13px] text-ink-3 mt-1.5">{sub}</p>}
-    </div>
-  );
-}
-
-async function Stats() {
-  const db = await supabaseServer();
-  const { data } = await db.rpc('dashboard_summary');
-  const s = (data ?? {}) as DashboardSummary;
-  const net = (s.today_inward ?? 0) - (s.today_outward ?? 0);
-  return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <Stat label="Active SKUs" value={s.total_skus ?? 0} sub={`${s.timing_skus ?? 0} timing · ${s.vbelt_skus ?? 0} v-belt`} />
-      <Stat label="Below minimum" value={s.low_stock ?? 0} sub={`${s.out_of_stock ?? 0} out of stock`} tone={(s.low_stock ?? 0) > 0 ? 'warn' : undefined} />
-      <Stat label="Today's movements" value={(s.today_inward ?? 0) + (s.today_outward ?? 0) + (s.today_adjust ?? 0)} sub={`${s.today_inward ?? 0} in · ${s.today_outward ?? 0} out · net ${net >= 0 ? '+' : ''}${net}`} />
-      <Stat label="This month" value={s.month_moves ?? 0} sub={`${(s.total_moves ?? 0).toLocaleString('en-IN')} recorded in total`} />
-    </div>
-  );
-}
 
 /* ── Lot wording helpers (timing belts only) ─────────────────────────────── */
 type LotEntry = { lot_no?: string; status: string; qty: number };
@@ -73,11 +41,11 @@ function lotSplit(entries: LotEntry[], unit: string): string {
     .sort((a, b) => (a[0] === 'CUT_PCS' ? -1 : 1) - (b[0] === 'CUT_PCS' ? -1 : 1))
     .map(([st, q]) => `${fmtQty(q, unit)} ${LOT_NAME[st] ?? st}`).join(' + ');
 }
-/** "4 × 50 mm rolls" for an inward's new lots. */
-function rollsText(entries: LotEntry[], unit: string): string {
+/** "50 mm × 4 pcs" for an inward's new lots. */
+function rollsText(entries: LotEntry[]): string {
   const by = new Map<number, number>();
   for (const e of entries) by.set(Number(e.qty), (by.get(Number(e.qty)) ?? 0) + 1);
-  return [...by.entries()].map(([len, n]) => `${n} × ${fmtQty(len, unit)} roll${n === 1 ? '' : 's'}`).join(' + ');
+  return [...by.entries()].map(([len, n]) => fmtMmPcs(len, n)).join(' + ');
 }
 
 /* ── Transactions pane ───────────────────────────────────────────────────── */
@@ -129,7 +97,7 @@ async function Transactions() {
             <span className="shrink-0 text-right">
               {m.lot_tracked && m.lot_breakdown && m.lot_breakdown.length > 0 && (
                 <span className="block text-[13px] text-ink-2 num leading-tight">
-                  {sign === '+' ? rollsText(m.lot_breakdown, m.unit_code) : lotSplit(m.lot_breakdown, m.unit_code)}
+                  {sign === '+' ? rollsText(m.lot_breakdown) : lotSplit(m.lot_breakdown, m.unit_code)}
                 </span>
               )}
               <span className={`num text-[14px] font-semibold ${color}`}>
@@ -181,6 +149,7 @@ async function Transactions() {
 type POItem = {
   id: string; order_id: string; sku_id: string;
   ordered_qty: number; received_qty: number; status: string;
+  ordered_pieces?: number | null; ordered_length_mm?: number | null; received_pieces?: number;
   order_no: string; supplier_name: string | null; order_status: string; created_at: string;
   exact_size: string; brand_name: string; unit_code: string; product_type: string;
   ordered_as?: string;
@@ -201,13 +170,21 @@ async function OrdersPane() {
 
   if (orders.length > 0) {
     const orderIds = orders.map((o) => o.id);
-    const { data: items } = await svc
+    // received_pieces only exists once 033 has run; fall back to the older columns until then
+    const full = await svc
       .from('purchase_order_items')
-      .select('id,order_id,sku_id,ordered_qty,ordered_pieces,ordered_length_mm,ordered_is_cut,received_qty,status')
+      .select('id,order_id,sku_id,ordered_qty,ordered_pieces,ordered_length_mm,ordered_is_cut,received_qty,received_pieces,status')
       .in('order_id', orderIds)
       .order('created_at');
+    const items = full.error
+      ? (await svc
+          .from('purchase_order_items')
+          .select('id,order_id,sku_id,ordered_qty,ordered_pieces,ordered_length_mm,ordered_is_cut,received_qty,status')
+          .in('order_id', orderIds)
+          .order('created_at')).data
+      : full.data;
 
-    const its = (items ?? []) as { id: string; order_id: string; sku_id: string; ordered_qty: number; ordered_pieces: number | null; ordered_length_mm: number | null; ordered_is_cut: boolean; received_qty: number; status: string }[];
+    const its = (items ?? []) as { id: string; order_id: string; sku_id: string; ordered_qty: number; ordered_pieces: number | null; ordered_length_mm: number | null; ordered_is_cut: boolean; received_qty: number; received_pieces?: number; status: string }[];
 
     if (its.length > 0) {
       const skuIds = [...new Set(its.map((i) => i.sku_id))];
@@ -234,7 +211,7 @@ async function OrdersPane() {
         brand_name:    skuMap[i.sku_id]?.brand_name        ?? '—',
         unit_code:     skuMap[i.sku_id]?.unit_code         ?? '',
         product_type:  skuMap[i.sku_id]?.product_type      ?? '',
-        ordered_as:    i.ordered_pieces && i.ordered_length_mm ? `${i.ordered_pieces} × ${Number(i.ordered_length_mm)} mm${i.ordered_is_cut ? ' cut pcs' : ''}` : '',
+        ordered_as:    i.ordered_pieces && i.ordered_length_mm ? `${fmtMmPcs(Number(i.ordered_length_mm), i.ordered_pieces)}${i.ordered_is_cut ? ' cut pcs' : ''}` : '',
       }));
     }
   }
@@ -262,7 +239,9 @@ async function OrdersPane() {
     return (
       <ul className="divide-y divide-line">
         {rows.map((i) => {
-          const remaining = i.ordered_qty - i.received_qty;
+          const lotLine   = !!i.ordered_pieces && !!i.ordered_length_mm;
+          const pcsLeft   = lotLine ? Math.max(0, Number(i.ordered_pieces) - Number(i.received_pieces ?? 0)) : 0;
+          const remaining = i.status === 'FULFILLED' ? 0 : lotLine ? pcsLeft : i.ordered_qty - i.received_qty;
           return (
             <li key={i.id} className="flex items-center gap-3 px-4 py-2.5">
               <div className="min-w-0 flex-1">
@@ -292,7 +271,7 @@ async function OrdersPane() {
                 </div>
                 {remaining > 0 ? (
                   <div className="text-[12px] text-warn num">
-                    {`${remaining} left`}
+                    {lotLine ? `${fmtMmPcs(Number(i.ordered_length_mm), pcsLeft)} left` : `${remaining} left`}
                   </div>
                 ) : (
                   <div className="text-[12px] text-ok flex items-center justify-end gap-0.5">
@@ -359,6 +338,8 @@ type ProdOrderRow = {
     display_name: string;
     quantity: number;
     unit_code: string;
+    pieces: number | null;
+    length_mm: number | null;
     is_fulfilled: boolean;
   }>;
 };
@@ -368,7 +349,7 @@ async function ProductionOrdersPane() {
 
   const { data } = await db
     .from('production_orders')
-    .select('id,order_no,customer_name,status,time_tag,delivery_mode,assigned_to,created_at,production_order_items(id,display_name,quantity,unit_code,is_fulfilled)')
+    .select('id,order_no,customer_name,status,time_tag,delivery_mode,assigned_to,created_at,production_order_items(id,display_name,quantity,unit_code,pieces,length_mm,is_fulfilled)')
     .not('status', 'in', '("COMPLETED","CANCELLED")')
     .order('created_at', { ascending: false })
     .limit(10);
@@ -395,21 +376,20 @@ async function ProductionOrdersPane() {
 
   // Count summary
   const created    = orders.filter((o) => o.status === 'CREATED').length;
-  const sent       = orders.filter((o) => o.status === 'SENT').length;
   const inProgress = orders.filter((o) => o.status === 'IN_PROGRESS').length;
 
   return (
     <section className="card">
       <div className="card-head">
         <div className="flex items-center gap-2">
-          <h2 className="card-title">Production Orders</h2>
+          <h2 className="card-title">Active Production Orders</h2>
           {orders.length > 0 && (
             <span className="text-[12px] font-semibold px-1.5 py-0.5 rounded bg-brand/10 text-brand">
               {orders.length} active
             </span>
           )}
         </div>
-        <Link href="/production-orders" className="text-[14px] text-brand hover:underline">View all</Link>
+        <Link href="/production-orders/in-progress" className="text-[14px] text-brand hover:underline">View all</Link>
       </div>
 
       {/* Mini status summary bar */}
@@ -419,12 +399,6 @@ async function ProductionOrdersPane() {
             <span className="flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-warn inline-block" />
               <span className="text-ink-3">{created} created</span>
-            </span>
-          )}
-          {sent > 0 && (
-            <span className="flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-brand inline-block" />
-              <span className="text-ink-3">{sent} sent</span>
             </span>
           )}
           {inProgress > 0 && (
@@ -460,7 +434,7 @@ async function ProductionOrdersPane() {
                   {/* Items summary */}
                   {o.items.length > 0 && (
                     <p className="text-[13px] text-ink-3 mt-0.5">
-                      {o.items.map((i) => `${i.display_name} ×${i.quantity} ${i.unit_code}${splitByItem[i.id] ? ` (${splitByItem[i.id]})` : ''}`).join(' · ')}
+                      {o.items.map((i) => `${i.display_name} — ${fmtLineQty(i)}${splitByItem[i.id] ? ` (${splitByItem[i.id]})` : ''}`).join(' · ')}
                     </p>
                   )}
 
@@ -505,63 +479,27 @@ async function ProductionOrdersPane() {
 /* ── Needs reordering (compact) ──────────────────────────────────────────── */
 async function LowStock() {
   const db = await supabaseServer();
-  const { data } = await db
-    .from('v_sku_status')
-    .select('sku_code,exact_size,brand_name,current_stock,min_stock_level,unit_code,stock_status,shortfall,suggested_purchase_qty,product_type')
-    .eq('is_active', true)
-    .in('stock_status', ['LOW_STOCK', 'OUT_OF_STOCK'])
-    .order('shortfall', { ascending: false })
-    .limit(8);
+  const PER_TYPE = 40;
+  const types = ['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT'] as const;
 
-  const rows = (data ?? []) as Pick<Sku,
-    'sku_code'|'exact_size'|'brand_name'|'current_stock'|'min_stock_level'|
-    'unit_code'|'stock_status'|'shortfall'|'suggested_purchase_qty'|'product_type'>[];
+  // One query per category so a long list in one category can never push another one off the pane.
+  const [anyMslRes, ...perType] = await Promise.all([
+    db.from('v_sku_status').select('sku_code', { count: 'exact', head: true }).eq('is_active', true).gt('min_stock_level', 0),
+    ...types.map((t) =>
+      db.from('v_sku_status')
+        .select('sku_code,product_type,exact_size,brand_name,unit_code,current_stock,stock_pieces,min_stock_level,shortfall,suggested_purchase_qty,stock_status')
+        .eq('is_active', true)
+        .eq('product_type', t)
+        .gt('min_stock_level', 0)
+        .in('stock_status', ['LOW_STOCK', 'OUT_OF_STOCK'])
+        .order('shortfall', { ascending: false })
+        .limit(PER_TYPE)),
+  ]);
 
-  return (
-    <section className="card">
-      <div className="card-head">
-        <div className="flex items-center gap-2">
-          <h2 className="card-title">Needs reordering</h2>
-          {rows.length > 0 && (
-            <span className="text-[12px] font-semibold px-1.5 py-0.5 rounded bg-warn-soft text-warn">
-              {rows.length}
-            </span>
-          )}
-        </div>
-        <Link href="/inventory" className="text-[14px] text-brand hover:underline">View inventory</Link>
-      </div>
-      {rows.length === 0 ? (
-        <p className="px-5 py-4 text-[14px] text-ink-3 text-center">All products at or above minimum.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="table text-[14px]">
-            <thead>
-              <tr>
-                <th className="text-[13px]">Product</th>
-                <th className="text-[13px]">Brand</th>
-                <th className="text-right text-[13px]">Stock</th>
-                <th className="text-right text-[13px]">Order qty</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.sku_code} className="h-8">
-                  <td className="font-medium py-1.5">{r.exact_size}</td>
-                  <td className="text-ink-2 py-1.5">{r.brand_name}</td>
-                  <td className="num text-right py-1.5">
-                    <span className={r.stock_status === 'OUT_OF_STOCK' ? 'text-danger font-medium' : 'text-warn font-medium'}>
-                      {fmtQty(r.current_stock, r.unit_code)}
-                    </span>
-                  </td>
-                  <td className="num text-right font-medium py-1.5">{fmtMsl(r.suggested_purchase_qty, r.unit_code, r.product_type)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
-  );
+  const rows = perType.flatMap((r) => (r.data ?? [])) as unknown as ReorderRow[];
+  const capped = perType.some((r) => (r.data?.length ?? 0) >= PER_TYPE);
+
+  return <ReorderPane rows={rows} capped={capped} anyMsl={(anyMslRes.count ?? 0) > 0} />;
 }
 
 /* ── Page ────────────────────────────────────────────────────────────────── */
@@ -570,7 +508,7 @@ export default async function DashboardPage({
 }: {
   searchParams: Promise<{ denied?: string }>;
 }) {
-  const session = await requireSession();
+  const session = await requirePage('dashboard');
   const { denied } = await searchParams;
   const write = can(session, 'transactions.create');
 
@@ -595,7 +533,7 @@ export default async function DashboardPage({
       {denied && (
         <p className="text-[15px] text-warn bg-warn-soft rounded-lg px-3.5 py-2.5">
           Your role does not include <span className="font-mono text-[14px]">{denied}</span>.
-          Ask a Super Admin if you need it.
+          Ask an Admin if you need it.
         </p>
       )}
 
@@ -616,9 +554,9 @@ export default async function DashboardPage({
         </div>
       </div>
 
-      {/* Zone 1: Stats */}
-      <Suspense fallback={<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[0,1,2,3].map(i=><div key={i} className="card p-4 h-[88px] skeleton"/>)}</div>}>
-        <Stats />
+      {/* Zone 1: active production orders — what the shop floor is doing right now */}
+      <Suspense fallback={<div className="card h-[200px] skeleton" />}>
+        <ProductionOrdersPane />
       </Suspense>
 
       {/* Zone 2: Transactions + Purchase Orders side by side */}
@@ -631,12 +569,7 @@ export default async function DashboardPage({
         </Suspense>
       </div>
 
-      {/* Zone 3: Production Orders — full width */}
-      <Suspense fallback={<div className="card h-[200px] skeleton" />}>
-        <ProductionOrdersPane />
-      </Suspense>
-
-      {/* Zone 4: Reorder — compact, full width, last */}
+      {/* Zone 3: Reorder — compact, full width, last */}
       <Suspense fallback={<div className="card h-[160px] skeleton" />}>
         <LowStock />
       </Suspense>

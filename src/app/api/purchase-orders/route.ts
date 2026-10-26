@@ -8,6 +8,8 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ error: 'Sign in to continue.' }, { status: 401 });
+  if (!session.permissions.includes('transactions.view'))
+    return NextResponse.json({ error: 'Your account cannot see purchase orders.' }, { status: 403 });
 
   const svc = await supabaseService();
 
@@ -22,11 +24,18 @@ export async function GET() {
   let items: unknown[] = [];
 
   if (orderIds.length > 0) {
-    const { data, error: iErr } = await svc
+    const cols = 'id,order_id,sku_id,ordered_qty,ordered_pieces,ordered_length_mm,ordered_is_cut,received_qty,inwarded_qty,status,notes,created_at';
+    const full = await svc
       .from('purchase_order_items')
-      .select('id,order_id,sku_id,ordered_qty,ordered_pieces,ordered_length_mm,ordered_is_cut,received_qty,inwarded_qty,status,notes,created_at')
+      .select(`${cols},received_pieces,variance_qty`)
       .in('order_id', orderIds)
       .order('created_at');
+    // database not yet upgraded with 033: fall back to the old columns
+    const old  = full.error
+      ? await svc.from('purchase_order_items').select(cols).in('order_id', orderIds).order('created_at')
+      : null;
+    const data = (old ? old.data : full.data) as { sku_id: string; [key: string]: unknown }[] | null;
+    const iErr = old ? old.error : full.error;
 
     if (iErr) return NextResponse.json({ error: iErr.message }, { status: 500 });
 
@@ -62,6 +71,9 @@ export async function POST(request: Request) {
   catch { return NextResponse.json({ error: 'Send a JSON body.' }, { status: 400 }); }
 
   const action = String(body.action ?? '');
+  // Every change to a purchase order needs write access (view-only accounts can read, not change)
+  if (!session.permissions.includes('transactions.create'))
+    return NextResponse.json({ error: 'Your account can view purchase orders but not change them.' }, { status: 403 });
   const svc = await supabaseService();
 
   /* ── create order: ONE PO per item, no clubbing ── */
@@ -135,7 +147,18 @@ export async function POST(request: Request) {
       p_qty:     rolls.length ? null : qty,
       p_rolls:   rolls.length ? rolls : null,
       p_notes:   notes,
+      p_complete: body.complete === true,
     });
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    return NextResponse.json({ ok: true });
+  }
+
+  /* ── close a line early: nothing more is coming, the rest stops being outstanding ── */
+  if (action === 'close_item') {
+    const item_id = String(body.item_id ?? '');
+    if (!item_id) return NextResponse.json({ error: 'item_id required.' }, { status: 400 });
+    const userDb = await supabaseServer();
+    const { error } = await userDb.rpc('close_po_item', { p_item_id: item_id });
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
     return NextResponse.json({ ok: true });
   }

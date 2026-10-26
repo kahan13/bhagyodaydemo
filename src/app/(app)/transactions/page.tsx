@@ -1,7 +1,8 @@
-import { requirePermission } from '@/lib/auth';
+import { requirePage } from '@/lib/auth';
 import { supabaseServer } from '@/lib/supabase-server';
 import TransactionsView from '@/components/transactions/TransactionsView';
 import type { Movement } from '@/lib/types';
+import { makeMatcher, hasQuery } from '@/lib/search';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,12 +49,44 @@ function resolveRange(range: string, from?: string, to?: string) {
   }
 }
 
+/**
+ * Product search that ignores dashes, spaces and case ("h100" finds "H-100"). The movement list is
+ * filtered in the database, so the matching is done on the product list first (a few hundred rows),
+ * then the movements are limited to those products. It also looks at the movement number,
+ * invoice number and reference as typed.
+ */
+async function searchFilter(
+  db: Awaited<ReturnType<typeof supabaseServer>>, text: string,
+): Promise<string | null> {
+  if (!hasQuery(text)) return null;
+  const match = makeMatcher(text);
+  const codes: string[] = [];
+  for (let from = 0; from < 10_000; from += 1000) {
+    const { data } = await db
+      .from('v_sku_status')
+      .select('sku_code,exact_size,display_name,brand_name,family_code')
+      .range(from, from + 999);
+    const rows = (data ?? []) as { sku_code: string; exact_size: string; display_name: string; brand_name: string; family_code: string }[];
+    for (const r of rows) {
+      if (match([r.sku_code, r.exact_size, r.display_name, r.brand_name, r.family_code])) codes.push(r.sku_code);
+    }
+    if (rows.length < 1000) break;
+  }
+  // characters that would break a PostgREST filter list are dropped from the free-text part
+  const raw = text.trim().replace(/[,()*%\\"]/g, ' ').replace(/\s+/g, ' ').trim();
+  const parts: string[] = [];
+  if (codes.length) parts.push(`sku_code.in.(${codes.slice(0, 150).map((c) => `"${c.replace(/"/g, '')}"`).join(',')})`);
+  if (raw) parts.push(`txn_no.ilike.%${raw}%`, `invoice_no.ilike.%${raw}%`, `reference.ilike.%${raw}%`);
+  // a plain string on purpose: returning the query builder itself from an async function would run it
+  return parts.length ? parts.join(',') : null;
+}
+
 export default async function TransactionsPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  const session = await requirePermission('transactions.view');
+  const session = await requirePage('transactions');
   const sp = await searchParams;
   const db = await supabaseServer();
 
@@ -80,7 +113,8 @@ export default async function TransactionsPage({
   if (sp.family) q = q.eq('family_code', sp.family);
   if (sp.user) q = q.eq('user_name', sp.user);
   if (sp.operated_by) q = q.eq('operated_by_name', sp.operated_by);
-  if (sp.search) q = q.ilike('display_name', `%${sp.search}%`);
+  const searchOr = await searchFilter(db, sp.search ?? '');
+  if (searchOr) q = q.or(searchOr);
 
   const [{ data, count, error }, brands, families, users, operators] = await Promise.all([
     q.range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1),

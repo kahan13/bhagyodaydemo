@@ -37,7 +37,7 @@ export default async function NoAccessPage() {
         </ul>
 
         <p className="text-[15px] text-ink-2 leading-relaxed mt-3">
-          A Super Admin can fix this in Supabase by setting{' '}
+          An Admin can fix this in Supabase by setting{' '}
           <span className="font-mono text-[14px]">is_active</span> on the{' '}
           <span className="font-mono text-[14px]">app_users</span> row for this email.
         </p>

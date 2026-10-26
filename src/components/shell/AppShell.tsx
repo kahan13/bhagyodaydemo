@@ -5,10 +5,11 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   LayoutDashboard, Boxes, ArrowLeftRight, FileText, Settings,
-  ShieldCheck, Menu, X, Search, ChevronDown, Users, Package, Upload, ClipboardList, ShoppingCart,
+  ShieldCheck, Menu, X, Search, ChevronDown, Users, Package, Upload, ClipboardList, ListChecks, ShoppingCart,
 } from 'lucide-react';
 import { ROLE_LABEL, initials } from '@/lib/format';
-import type { Permission, Session } from '@/lib/types';
+import type { PageKey, Permission, Session } from '@/lib/types';
+import { pageLevel } from '@/lib/pages';
 import SignOutButton from '@/components/shell/SignOutButton';
 import CommandPalette from '@/components/shell/CommandPalette';
 import ShortcutsList from '@/components/shell/ShortcutsList';
@@ -17,19 +18,23 @@ import { GO_KEYS } from '@/lib/shortcuts';
 import { DATA_CHANGED, installFetchWatcher, onDataChanged } from '@/lib/dataSync';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
 
-type Item = { href: string; label: string; icon: typeof Boxes; needs?: Permission };
+/** `page` = a page of the daily menu (Admin/Accounts always, Workshop when switched on); `needs` = an Administration permission */
+type Item = { href: string; label: string; icon: typeof Boxes; page?: PageKey; needs?: Permission };
 
+/** Main menu, top to bottom — the order the shop works in. */
 const MAIN: Item[] = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/inventory', label: 'Inventory', icon: Boxes, needs: 'inventory.view' },
-  { href: '/products', label: 'Product Master', icon: Package, needs: 'products.view' },
-  { href: '/transactions', label: 'Transactions', icon: ArrowLeftRight, needs: 'transactions.view' },
-  { href: '/purchase-orders', label: 'Purchase Orders', icon: ShoppingCart, needs: 'transactions.view' },
-  { href: '/production-orders', label: 'Production Orders', icon: ClipboardList, needs: 'transactions.view' },
-  { href: '/reports', label: 'Reports', icon: FileText, needs: 'reports.view' },
+  { href: '/', label: 'Dashboard', icon: LayoutDashboard, page: 'dashboard' },
+  { href: '/production-orders', label: 'Production Order', icon: ClipboardList, page: 'production_orders' },
+  { href: '/production-orders/in-progress', label: 'Production Order in Progress', icon: ListChecks, page: 'production_in_progress' },
+  { href: '/inventory', label: 'Inventory', icon: Boxes, page: 'inventory' },
+  { href: '/purchase-orders', label: 'Purchase Orders', icon: ShoppingCart, page: 'purchase_orders' },
+  { href: '/transactions', label: 'Transactions', icon: ArrowLeftRight, page: 'transactions' },
+  { href: '/reports', label: 'Reports', icon: FileText, page: 'reports' },
 ];
 
+/** Everything about setting the system up lives here, away from the daily work. */
 const ADMIN: Item[] = [
+  { href: '/products', label: 'Product Master', icon: Package, needs: 'products.view' },
   { href: '/admin/team', label: 'Teams & Users', icon: Users, needs: 'users.edit' },
   { href: '/admin/import', label: 'Import Data', icon: Upload, needs: 'settings.import' },
   { href: '/admin', label: 'Admin', icon: Settings, needs: 'settings.view' },
@@ -155,8 +160,15 @@ export default function AppShell({
     return () => window.removeEventListener('keydown', onKey);
   }, [router, paletteOpen, helpOpen]);
 
-  const allowed = (i: Item) => !i.needs || session.permissions.includes(i.needs);
-  const active  = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
+  const allowed = (i: Item) =>
+    i.page ? !!pageLevel(session.pages, i.page) : !i.needs || session.permissions.includes(i.needs);
+  // The most specific menu item that matches the page is the one lit up
+  // (so "Production Order in Progress" does not also light up "Production Order").
+  const current = [...MAIN, ...ADMIN]
+    .map((i) => i.href)
+    .filter((h) => (h === '/' ? pathname === '/' : pathname === h || pathname.startsWith(h + '/')))
+    .sort((a, b) => b.length - a.length)[0];
+  const active  = (href: string) => href === current;
 
   const Group = ({ title, items }: { title?: string; items: Item[] }) => {
     const visible = items.filter(allowed);

@@ -11,12 +11,13 @@ export interface ShortcutGroup { title: string; items: { keys: string[]; label: 
 
 export const GO_KEYS: Record<string, { href: string; label: string }> = {
   d: { href: '/',                  label: 'Dashboard' },
+  o: { href: '/production-orders', label: 'Production Order' },
+  w: { href: '/production-orders/in-progress', label: 'Production Order in Progress' },
   i: { href: '/inventory',         label: 'Inventory' },
-  m: { href: '/products',          label: 'Product Master' },
-  t: { href: '/transactions',      label: 'Transactions' },
   p: { href: '/purchase-orders',   label: 'Purchase Orders' },
-  o: { href: '/production-orders', label: 'Production Orders' },
+  t: { href: '/transactions',      label: 'Transactions' },
   r: { href: '/reports',           label: 'Reports' },
+  m: { href: '/products',          label: 'Product Master (Administration)' },
   u: { href: '/admin/team',        label: 'Teams & Users' },
   e: { href: '/admin/import',      label: 'Import Data' },
   a: { href: '/admin',             label: 'Admin (incl. Clear data)' },
@@ -30,10 +31,11 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     items: [
       { keys: ['Alt', 'M'], label: 'Open key tips — shows this page\'s own keys too' },
       { keys: ['D'], label: 'Dashboard' },
+      { keys: ['P', 'R'], label: 'Production Order', then: true },
+      { keys: ['P', 'I'], label: 'Production Order in Progress', then: true },
       { keys: ['I'], label: 'Inventory' },
-      { keys: ['T'], label: 'Transactions' },
       { keys: ['P', 'U'], label: 'Purchase Orders', then: true },
-      { keys: ['P', 'R'], label: 'Production Orders', then: true },
+      { keys: ['T'], label: 'Transactions' },
       { keys: ['R'], label: 'Reports' },
       { keys: ['I', 'N'], label: 'Record Inward', then: true },
       { keys: ['O'], label: 'Record Outward' },
@@ -58,7 +60,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     items: [
       { keys: ['i'], label: 'Dashboard: record Inward' },
       { keys: ['o'], label: 'Dashboard: record Outward' },
-      { keys: ['n'], label: 'Purchase / Production Orders: new order' },
+      { keys: ['n'], label: 'Purchase Orders / Production Order: new order (cursor goes to the first box)' },
     ],
   },
   {

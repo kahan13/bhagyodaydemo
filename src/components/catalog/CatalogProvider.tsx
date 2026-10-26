@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import type { LotGroup, Sku } from '@/lib/types';
+import { queryTerms, squash } from '@/lib/search';
 
 /* =============================================================================
    The whole SKU catalogue, fetched once and held in memory.
@@ -128,20 +129,23 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const search = useCallback((query: string, limit = 40): Sku[] => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    const terms = q.split(/\s+/).filter(Boolean);
+    // "h100", "H-100" and "h 100" are the same search (see lib/search.ts).
+    const terms = queryTerms(query);
+    if (terms.length === 0) return [];
     const scored: { sku: Sku; rank: number }[] = [];
 
     for (const sku of skus) {
-      const hay = `${sku.exact_size} ${sku.brand_name} ${sku.family_code} ${sku.sku_code} ${sku.hier_l2} ${sku.hier_l3}`.toLowerCase();
+      const size = squash(sku.exact_size);
+      const brand = squash(sku.brand_name);
+      const hay = [sku.exact_size, sku.brand_name, sku.family_code, sku.sku_code, sku.hier_l2, sku.hier_l3]
+        .map(squash).join('|');
       let rank = 0;
       let all = true;
       for (const t of terms) {
         if (!hay.includes(t)) { all = false; break; }
-        if (sku.exact_size.toLowerCase().startsWith(t)) rank += 12;
-        else if (sku.exact_size.toLowerCase().includes(t)) rank += 8;
-        if (sku.brand_name.toLowerCase().startsWith(t)) rank += 5;
+        if (size.startsWith(t)) rank += 12;
+        else if (size.includes(t)) rank += 8;
+        if (brand.startsWith(t)) rank += 5;
         rank += 1;
       }
       if (all) scored.push({ sku, rank });

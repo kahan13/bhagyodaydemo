@@ -72,11 +72,11 @@ export function receiptLines(m: ReceiptModel, chars: number = PAPER.chars): RLin
   m.items.forEach((it, i) => {
     wrap(`${i + 1}. ${it.name}`, chars).forEach((s) => text(s, { bold: true }));
     text(it.pieces && it.mm && it.pieces * it.mm === it.qty
-      ? `   Qty: ${num(it.pieces)} x ${num(it.mm)} = ${num(it.qty)} ${it.unit}`
-      : `   Qty: ${num(it.qty)} ${it.unit}`);
+      ? `   ${num(it.mm)} mm x ${num(it.pieces)} pcs = ${num(it.qty)} mm`
+      : `   Qty: ${num(it.qty)} ${it.unit.toLowerCase()}`);
     if (it.direct) text('   (direct - no stock)');
     for (const p of it.parts) {
-      text(`   > ${p.label}: ${num(p.qty)} ${it.unit}${p.note ? ` ${p.note}` : ''}`);
+      text(`   > ${p.label}: ${num(p.qty)} ${it.unit.toLowerCase()}${p.note ? ` ${p.note}` : ''}`);
     }
     if (i < m.items.length - 1) text('');
   });

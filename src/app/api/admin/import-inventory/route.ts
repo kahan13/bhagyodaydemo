@@ -196,7 +196,7 @@ async function handle(req: Request) {
         family: built.family, sectionOrColour: built.section ?? built.colour ?? '',
         size: built.sizeLabel, brand: built.brand,
         lot: lot ? (lot === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs') : '',
-        load: qty === 0 ? 'no stock' : meta.usesLots ? `${qty} × ${uom} mm = ${load} mm` : `+${load} pcs`,
+        load: qty === 0 ? 'no stock' : meta.usesLots ? `${uom} mm × ${qty} pcs = ${load} mm` : `+${load} pcs`,
         msl: msl === null ? '' : String(msl),
         note: notes.join(' · ') || (sku ? 'Matched to existing SKU' : 'SKU not in Product Master — will be created'),
       });

@@ -19,7 +19,7 @@ type Tip = {
 };
 
 const NAV: Record<string, string> = {
-  '/': 'D', '/inventory': 'I', '/transactions': 'T', '/purchase-orders': 'PU', '/production-orders': 'PR',
+  '/': 'D', '/inventory': 'I', '/transactions': 'T', '/purchase-orders': 'PU', '/production-orders': 'PR', '/production-orders/in-progress': 'PI',
   '/reports': 'R', '/products': 'M', '/admin/team': 'U', '/admin/import': 'E', '/admin': 'A', '/admin/activity': 'L',
 };
 export const NAV_KEYS = NAV;

@@ -6,8 +6,9 @@ import {
   ChevronRight, Loader2, ArrowDownLeft, ClipboardCheck, Trash2,
 } from 'lucide-react';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
-import { fmtQty, fmtDate } from '@/lib/format';
+import { fmtQty, fmtDate, fmtMmPcs } from '@/lib/format';
 import { useListNav } from '@/lib/useListNav';
+import { makeMatcher } from '@/lib/search';
 import { onDataChanged } from '@/lib/dataSync';
 import { takeAction } from '@/lib/keytips';
 import type { ProductType, Sku } from '@/lib/types';
@@ -25,6 +26,8 @@ interface OrderItem {
   ordered_length_mm?: number | null;
   ordered_is_cut?: boolean;
   received_qty: number;
+  /** pieces that have arrived (lot-wise lines) */
+  received_pieces?: number;
   inwarded_qty?: number;
   status: ItemStatus;
   notes: string | null;
@@ -45,12 +48,29 @@ interface Order {
   items: OrderItem[];
 }
 
-/** Timing belts are ordered / received as QTY × MM (no fixed roll length on the product). */
+/** Timing belts are ordered / received as MM × PCS (no fixed roll length on the product). */
 const isRoll = (item: OrderItem): boolean => item.skus?.product_type === 'TIMING_BELT';
-/** "3 × 470 mm" — what the line was ordered as. */
+/** "470 mm × 3 pcs" — what the line was ordered as. */
 const orderedLabel = (item: OrderItem): string =>
   item.ordered_pieces && item.ordered_length_mm
-    ? `${item.ordered_pieces} × ${Number(item.ordered_length_mm)} mm${item.ordered_is_cut ? ' cut pcs' : ''}` : '';
+    ? `${fmtMmPcs(Number(item.ordered_length_mm), item.ordered_pieces)}${item.ordered_is_cut ? ' cut pcs' : ''}` : '';
+/**
+ * A line ordered as MM × PCS is received lot by lot: every piece that arrives completes ONE ordered
+ * piece, whatever its real length (485 mm against 500 mm still counts as that piece, the 15 mm is
+ * simply not outstanding). Only whole pieces can be "left".
+ */
+const isLot = (item: OrderItem): boolean => !!item.ordered_pieces && !!item.ordered_length_mm;
+const piecesLeft = (item: OrderItem): number =>
+  Math.max(0, Number(item.ordered_pieces ?? 0) - Number(item.received_pieces ?? 0));
+/** Still waiting for something from the supplier. A closed line is never open. */
+const isOpen = (item: OrderItem): boolean =>
+  item.status !== 'FULFILLED' &&
+  (isLot(item) ? piecesLeft(item) > 0 : Number(item.ordered_qty) - Number(item.received_qty) > 0);
+/** "500 mm × 1 pcs" for a lot line, "30 m" otherwise. */
+const leftLabel = (item: OrderItem): string =>
+  isLot(item)
+    ? fmtMmPcs(Number(item.ordered_length_mm), piecesLeft(item))
+    : fmtQty(Number(item.ordered_qty) - Number(item.received_qty), item.skus?.unit_code);
 /** Received but not yet recorded into stock. */
 const pendingInward = (item: OrderItem): number =>
   Math.max(0, Number(item.received_qty) - Number(item.inwarded_qty ?? 0));
@@ -92,15 +112,10 @@ function SkuPicker({ onSelect, selected }: { onSelect: (s: Sku) => void; selecte
   }, []);
 
   const pool = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const match = makeMatcher(search);
     return skus
       .filter((s) => s.product_type === type && s.is_active)
-      .filter((s) =>
-        !q ||
-        s.exact_size.toLowerCase().includes(q) ||
-        s.brand_name.toLowerCase().includes(q) ||
-        s.sku_code.toLowerCase().includes(q)
-      )
+      .filter((s) => match([s.exact_size, s.brand_name, s.sku_code]))
       .slice(0, 50);
   }, [skus, type, search]);
 
@@ -187,37 +202,49 @@ function SkuPicker({ onSelect, selected }: { onSelect: (s: Sku) => void; selecte
 function ReceiveDialog({
   item, onClose, onDone,
 }: { item: OrderItem; onClose: () => void; onDone: () => void }) {
+  const lot       = isLot(item);
+  const pcsLeft   = piecesLeft(item);
   const remaining = item.ordered_qty - item.received_qty;
   const roll      = isRoll(item);
   const ordLen    = Number(item.ordered_length_mm) || 0;
 
-  // Roll mode: rows of QTY × MM (prefilled from what was ordered), Full sleeve / Cut pcs per row
+  // Roll mode: rows of MM × PCS (prefilled from what is still to come), Full sleeve / Cut pcs per row
   const [rows, setRows] = useState<RollRows>(() => {
+    if (lot && pcsLeft > 0) return [{ qty: String(pcsLeft), mm: String(ordLen), cut: !!item.ordered_is_cut }];
     const n = ordLen > 0 ? Math.floor(remaining / ordLen) : 0;
     return n > 0 ? [{ qty: String(n), mm: String(ordLen), cut: !!item.ordered_is_cut }]
                  : [{ qty: '', mm: '', cut: !!item.ordered_is_cut }];
   });
   // Plain mode (V-belt / conveyor)
-  const [qty, setQty]     = useState(String(remaining));
-  const [notes, setNotes] = useState('');
-  const [busy, setBusy]   = useState(false);
-  const [err, setErr]     = useState<string | null>(null);
+  const [qty, setQty]           = useState(String(remaining));
+  const [notes, setNotes]       = useState('');
+  const [closeShort, setClose]  = useState(false);
+  const [busy, setBusy]         = useState(false);
+  const [err, setErr]           = useState<string | null>(null);
 
   const rollList  = useMemo(() => (roll ? rollsPayload(rows) : []), [roll, rows]);
   const rollTotal = rollsTotal(rollList);
+  const pcsEntered = rollList.reduce((a, r) => a + r.rolls, 0);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     let body: Record<string, unknown>;
     if (roll) {
-      if (rollTotal <= 0)        { setErr('Enter QTY and MM for at least one row.'); return; }
-      if (rollTotal > remaining) { setErr(`That is ${rollTotal} mm but only ${remaining} mm is left on this order.`); return; }
-      body = { action: 'receive', item_id: item.id, rolls: rollList, notes: notes || null };
+      if (rollTotal <= 0) { setErr('Enter MM and PCS for at least one row.'); return; }
+      if (lot) {
+        if (pcsEntered > pcsLeft) {
+          setErr(`That is ${pcsEntered} pieces but only ${pcsLeft} ${pcsLeft === 1 ? 'is' : 'are'} still to come on this order.`);
+          return;
+        }
+      } else if (rollTotal > remaining) {
+        setErr(`That is ${rollTotal} mm but only ${remaining} mm is left on this order.`); return;
+      }
+      body = { action: 'receive', item_id: item.id, rolls: rollList, notes: notes || null, complete: !lot && closeShort };
     } else {
       const n = Number(qty);
       if (!n || n <= 0)  { setErr('Enter a valid quantity.'); return; }
       if (n > remaining) { setErr(`Maximum receivable is ${remaining}.`); return; }
-      body = { action: 'receive', item_id: item.id, qty_received: n, notes: notes || null };
+      body = { action: 'receive', item_id: item.id, qty_received: n, notes: notes || null, complete: closeShort };
     }
     setBusy(true); setErr(null);
     const res  = await fetch('/api/purchase-orders', {
@@ -232,9 +259,13 @@ function ReceiveDialog({
   };
 
   const unit = item.skus?.unit_code;
+  // a plain line short of its total: offer to close it so nothing stays outstanding
+  const enteredPlain = roll ? rollTotal : Number(qty) || 0;
+  const showClose    = !lot && enteredPlain > 0 && enteredPlain < remaining;
+
   return (
     <div className="fixed inset-0 z-[90] grid place-items-center bg-ink/30 backdrop-blur-[2px] p-4">
-      <form onSubmit={submit} className="w-full max-w-[440px] bg-surface border border-line rounded-xl shadow-xl max-h-[92vh] overflow-y-auto">
+      <form onSubmit={submit} className="w-full max-w-[460px] bg-surface border border-line rounded-xl shadow-xl max-h-[92vh] overflow-y-auto">
         <div className="card-head border-b">
           <h2 className="card-title">Receive Stock</h2>
           <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={onClose}><X size={15} /></button>
@@ -246,15 +277,34 @@ function ReceiveDialog({
               {item.skus?.brand_name ?? '—'}
               {item.skus?.product_type ? ` · ${TYPE_LABEL[item.skus.product_type] ?? ''}` : ''}
             </p>
-            <div className="flex gap-4 mt-1.5 flex-wrap">
-              <span className="text-[13px] text-ink-3">Ordered: <strong className="text-ink">{fmtQty(item.ordered_qty, unit)}</strong>{orderedLabel(item) ? ` (${orderedLabel(item)})` : ''}</span>
-              <span className="text-[13px] text-ink-3">Received: <strong className="q-in">{fmtQty(item.received_qty, unit)}</strong></span>
-              <span className="text-[13px] text-ink-3">Left: <strong className="q-left">{fmtQty(remaining, unit)}</strong></span>
-            </div>
+            {lot ? (
+              <div className="flex gap-4 mt-1.5 flex-wrap">
+                <span className="text-[13px] text-ink-3">Ordered: <strong className="text-ink">{orderedLabel(item)}</strong></span>
+                <span className="text-[13px] text-ink-3">
+                  Received: <strong className="q-in">{item.received_pieces ?? 0} of {item.ordered_pieces} pcs</strong>
+                </span>
+                <span className="text-[13px] text-ink-3">Still to come: <strong className="q-left">{leftLabel(item)}</strong></span>
+              </div>
+            ) : (
+              <div className="flex gap-4 mt-1.5 flex-wrap">
+                <span className="text-[13px] text-ink-3">Ordered: <strong className="text-ink">{fmtQty(item.ordered_qty, unit)}</strong>{orderedLabel(item) ? ` (${orderedLabel(item)})` : ''}</span>
+                <span className="text-[13px] text-ink-3">Received: <strong className="q-in">{fmtQty(item.received_qty, unit)}</strong></span>
+                <span className="text-[13px] text-ink-3">Left: <strong className="q-left">{fmtQty(remaining, unit)}</strong></span>
+              </div>
+            )}
           </div>
 
           {roll ? (
-            <RollEntry rows={rows} onChange={setRows} maxTotal={remaining} />
+            <>
+              <RollEntry rows={rows} onChange={setRows} maxTotal={lot ? undefined : remaining} />
+              {lot && (
+                <p className="text-[13px] text-ink-3 bg-brand-soft/40 rounded-lg px-3 py-2">
+                  Type the <strong>real length</strong> that arrived. Each piece completes one ordered piece
+                  {ordLen > 0 ? <> — a {ordLen} mm piece that comes in shorter or longer is counted as received, and the difference is never shown as outstanding</> : null}.
+                  Pieces you do not enter stay on the order for the next delivery.
+                </p>
+              )}
+            </>
           ) : (
             <div>
               <label className="label">Quantity receiving ({unit ?? 'units'}) <span className="text-danger">*</span></label>
@@ -268,6 +318,13 @@ function ReceiveDialog({
             </div>
           )}
 
+          {showClose && (
+            <label className="flex items-start gap-2 text-[14px] text-ink-2 cursor-pointer">
+              <input type="checkbox" className="mt-1" checked={closeShort} onChange={(e) => setClose(e.target.checked)} />
+              <span>This is the last delivery — mark the line complete. The part that did not arrive stops showing as outstanding.</span>
+            </label>
+          )}
+
           <div>
             <label className="label">Notes <span className="text-ink-3 font-normal">(optional)</span></label>
             <textarea rows={2} className="field" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. partial shipment, damaged items" />
@@ -278,10 +335,53 @@ function ReceiveDialog({
         <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
           <button type="submit" className="btn btn-primary" disabled={busy}>
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Confirm receipt</>}
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> {lot ? 'Receive & mark complete' : closeShort ? 'Receive & close line' : 'Confirm receipt'}</>}
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+/* ── Close a line early ───────────────────────────────────────────────────── */
+function CloseLineDialog({
+  item, onClose, onDone,
+}: { item: OrderItem; onClose: () => void; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr]   = useState<string | null>(null);
+  const go = async () => {
+    setBusy(true); setErr(null);
+    const res  = await fetch('/api/purchase-orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'close_item', item_id: item.id }),
+    });
+    const json = await res.json();
+    setBusy(false);
+    if (!res.ok) { setErr(json.error ?? 'Something went wrong.'); return; }
+    onDone();
+  };
+  return (
+    <div className="fixed inset-0 z-[90] grid place-items-center bg-ink/30 backdrop-blur-[2px] p-4">
+      <div className="w-full max-w-[420px] bg-surface border border-line rounded-xl shadow-xl">
+        <div className="card-head border-b">
+          <h2 className="card-title">Close this line?</h2>
+          <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={onClose}><X size={15} /></button>
+        </div>
+        <div className="p-5 space-y-2">
+          <p className="text-[15px] text-ink-2">
+            <strong>{item.skus?.exact_size ?? '—'}</strong> — nothing more is coming. The {leftLabel(item)} that has not arrived
+            stops showing as outstanding. What was already received stays as it is.
+          </p>
+          {err && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{err}</p>}
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl">
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Keep open</button>
+          <button type="button" className="btn btn-primary" disabled={busy} onClick={go}>
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Close line</>}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -316,7 +416,7 @@ function CreateOrderDialog({
   const setCut     = (i: number, cut: boolean) =>
     setLines((prev) => prev.map((l, j) => j === i ? { ...l, cut } : l));
   const isTiming   = (l: { sku: Sku }) => l.sku.product_type === 'TIMING_BELT';
-  // timing belts: total mm = QTY × MM ; others: plain quantity
+  // timing belts: total mm = MM × PCS ; others: plain quantity
   const lineTotal  = (l: { sku: Sku; qty: string; mm: string }) =>
     isTiming(l) ? Math.floor(Number(l.qty) || 0) * (Number(l.mm) || 0) : Number(l.qty) || 0;
 
@@ -408,14 +508,14 @@ function CreateOrderDialog({
                     {isTiming(l) ? (
                       <>
                         <input
-                          className="field num h-11 w-20 text-[16px]" inputMode="numeric"
-                          value={l.qty} onChange={(e) => setQty(i, e.target.value.replace(/[^0-9]/g, ''))}
-                          data-po-qty placeholder="Qty" aria-label="Quantity" />
-                        <span className="text-ink-3 font-semibold">×</span>
-                        <input
                           className="field num h-11 w-24 text-[16px]" inputMode="decimal"
                           value={l.mm} onChange={(e) => setMm(i, e.target.value)}
-                          placeholder="MM" aria-label="Length in mm" />
+                          data-po-qty placeholder="MM" aria-label="Length in mm" />
+                        <span className="text-ink-3 font-semibold">×</span>
+                        <input
+                          className="field num h-11 w-20 text-[16px]" inputMode="numeric"
+                          value={l.qty} onChange={(e) => setQty(i, e.target.value.replace(/[^0-9]/g, ''))}
+                          placeholder="PCS" aria-label="Number of pieces" />
                         <SleeveToggle cut={l.cut} onChange={(c) => setCut(i, c)} />
                         {lineTotal(l) > 0 && (
                           <span className="text-[14px] num q-total font-semibold whitespace-nowrap">= {lineTotal(l)} mm</span>
@@ -512,19 +612,22 @@ function DeleteDialog({
 
 /* ── Order Card ───────────────────────────────────────────────────────────── */
 function OrderCard({
-  order, view, onReceive, onRecordInward, onDelete,
+  order, view, canEdit, onReceive, onCloseLine, onRecordInward, onDelete,
 }: {
   order: Order;
+  /** false = view only: no receive / close / record inward / delete */
+  canEdit: boolean;
   /** progress = what is still to come; received = what has arrived (and can be recorded into stock). */
   view: 'progress' | 'received';
   onReceive: (item: OrderItem) => void;
+  onCloseLine: (item: OrderItem) => void;
   onRecordInward: (order: Order, itemId?: string) => void;
   onDelete: (order: Order) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
 
   const shown        = order.items.filter((i) =>
-    view === 'progress' ? i.ordered_qty - i.received_qty > 0 : Number(i.received_qty) > 0);
+    view === 'progress' ? isOpen(i) : Number(i.received_qty) > 0);
   const anyPending   = view === 'received' && shown.some((i) => pendingInward(i) > 0);
 
   return (
@@ -558,7 +661,7 @@ function OrderCard({
         </button>
 
         <div className="flex items-center gap-1.5 shrink-0">
-          {anyPending && (
+          {anyPending && canEdit && (
             <button
               type="button"
               className="btn btn-primary h-7 px-2.5 text-[14px]"
@@ -567,14 +670,16 @@ function OrderCard({
               <ArrowDownLeft size={12} /> Record Inward
             </button>
           )}
-          <button
-            type="button"
-            className="btn btn-ghost h-7 w-7 p-0 text-ink-3 hover:text-danger"
-            onClick={() => onDelete(order)}
-            title="Delete order"
-          >
-            <Trash2 size={14} />
-          </button>
+          {canEdit && (
+            <button
+              type="button"
+              className="btn btn-ghost h-7 w-7 p-0 text-ink-3 hover:text-danger"
+              onClick={() => onDelete(order)}
+              title="Delete order"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -585,7 +690,8 @@ function OrderCard({
             <p className="px-4 py-4 text-[14px] text-ink-3 text-center">No items — order may still be loading.</p>
           ) : (
             shown.map((item) => {
-              const itemRemaining = item.ordered_qty - item.received_qty;
+              const open          = isOpen(item);
+              const lot           = isLot(item);
               const itemPending   = pendingInward(item);
               const sizeName  = item.skus?.exact_size  ?? '—';
               const brandName = item.skus?.brand_name  ?? '—';
@@ -604,16 +710,30 @@ function OrderCard({
                       <StatusBadge status={item.status} />
                     </div>
                     <div className="flex items-center gap-4 mt-1.5 flex-wrap">
-                      <span className="text-[13px] text-ink-3 num">
-                        Total <strong className="text-ink">{fmtQty(item.ordered_qty, item.skus?.unit_code)}</strong>
-                        {orderedLabel(item) && <span> ({orderedLabel(item)})</span>}
-                      </span>
-                      <span className="text-[13px] text-ink-3 num">
-                        Received <strong className="q-in">{fmtQty(item.received_qty, item.skus?.unit_code)}</strong>
-                      </span>
-                      {itemRemaining > 0 && (
+                      {lot ? (
+                        <>
+                          <span className="text-[13px] text-ink-3 num">
+                            Ordered <strong className="text-ink">{orderedLabel(item)}</strong>
+                          </span>
+                          <span className="text-[13px] text-ink-3 num">
+                            Received <strong className="q-in">{item.received_pieces ?? 0} of {item.ordered_pieces} pcs</strong>
+                            {Number(item.received_qty) > 0 && <span> · {fmtQty(item.received_qty, 'MM')}</span>}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-[13px] text-ink-3 num">
+                            Total <strong className="text-ink">{fmtQty(item.ordered_qty, item.skus?.unit_code)}</strong>
+                            {orderedLabel(item) && <span> ({orderedLabel(item)})</span>}
+                          </span>
+                          <span className="text-[13px] text-ink-3 num">
+                            Received <strong className="q-in">{fmtQty(item.received_qty, item.skus?.unit_code)}</strong>
+                          </span>
+                        </>
+                      )}
+                      {open && (
                         <span className="text-[13px] text-warn num font-medium">
-                          Left {fmtQty(itemRemaining, item.skus?.unit_code)}
+                          Left {leftLabel(item)}
                         </span>
                       )}
                       {view === 'received' && (itemPending > 0 ? (
@@ -628,7 +748,7 @@ function OrderCard({
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {view === 'received' && itemPending > 0 && (
+                    {canEdit && view === 'received' && itemPending > 0 && (
                       <button
                         type="button"
                         className="btn btn-primary h-8 px-3 text-[14px]"
@@ -643,14 +763,24 @@ function OrderCard({
                         <Check size={12} /> Recorded
                       </span>
                     )}
-                    {view === 'progress' && (
+                    {canEdit && view === 'progress' && Number(item.received_qty) > 0 && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost h-8 px-2.5 text-[14px] text-ink-3"
+                        title="Nothing more is coming — stop showing the rest as outstanding"
+                        onClick={() => onCloseLine(item)}
+                      >
+                        Close line
+                      </button>
+                    )}
+                    {canEdit && view === 'progress' && (
                       <button
                         type="button"
                         className="btn btn-secondary h-8 px-3 text-[14px]"
                         data-kt="H" data-kt-label="Receive (first open line)"
                         onClick={() => onReceive(item)}
                       >
-                        <ArrowDownLeft size={12} /> Receive
+                        <ArrowDownLeft size={12} /> {lot ? 'Receive lot' : 'Receive'}
                       </button>
                     )}
                   </div>
@@ -659,7 +789,7 @@ function OrderCard({
             })
           )}
 
-          {anyPending && (
+          {anyPending && canEdit && (
             <div className="px-4 py-3 bg-ok-soft/20 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-ok">
                 <ClipboardCheck size={14} />
@@ -676,7 +806,7 @@ function OrderCard({
 }
 
 /* ── Main ─────────────────────────────────────────────────────────────────── */
-export default function PurchaseOrdersView() {
+export default function PurchaseOrdersView({ canEdit = true }: { canEdit?: boolean }) {
   const { allSkus: catalogSkus } = useCatalog();                    // ← catalog as SKU fallback
 
   const [orders, setOrders]         = useState<Order[]>([]);
@@ -684,6 +814,7 @@ export default function PurchaseOrdersView() {
   const [tab, setTab]               = useState<'in_progress' | 'fulfilled'>('in_progress');
   const [showCreate, setShowCreate] = useState(false);
   const [receiveItem, setReceiveItem]   = useState<OrderItem | null>(null);
+  const [closeItem, setCloseItem]       = useState<OrderItem | null>(null);
   const [recordTarget, setRecordTarget] = useState<Order | null>(null);
   const [recordItemId, setRecordItemId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Order | null>(null);
@@ -743,11 +874,11 @@ export default function PurchaseOrdersView() {
   useEffect(() => onDataChanged(() => { load(); }), [load]);
 
   // opened here from another page by Alt+M → OR
-  useEffect(() => { if (takeAction(['new-order'])) setShowCreate(true); }, []);
+  useEffect(() => { if (canEdit && takeAction(['new-order'])) setShowCreate(true); }, [canEdit]);
 
   // keyboard: "n" starts a new purchase order
   useEffect(() => {
-    const h = (e: Event) => { if ((e as CustomEvent).detail === 'new-order') setShowCreate(true); };
+    const h = (e: Event) => { if (canEdit && (e as CustomEvent).detail === 'new-order') setShowCreate(true); };
     window.addEventListener('bb:action', h);
     return () => window.removeEventListener('bb:action', h);
   }, []);
@@ -773,7 +904,7 @@ export default function PurchaseOrdersView() {
   };
 
   // A partly received order shows in both: what is left (In Progress) and what has arrived (Received).
-  const inProgress = orders.filter((o) => o.items.some((i) => i.ordered_qty - i.received_qty > 0));
+  const inProgress = orders.filter((o) => o.items.some(isOpen));
   const fulfilled  = orders.filter((o) => o.items.some((i) => Number(i.received_qty) > 0));
   const displayed  = tab === 'in_progress' ? inProgress : fulfilled;
 
@@ -790,9 +921,11 @@ export default function PurchaseOrdersView() {
           <h1 className="text-[21px] font-semibold">Purchase Orders</h1>
           <p className="text-[15px] text-ink-3 mt-0.5">Track ordered stock and receive against items</p>
         </div>
-        <button className="btn btn-primary" data-kt="N" data-kt-label="New purchase order" onClick={() => setShowCreate(true)}>
-          <Plus size={14} /> New Order
-        </button>
+        {canEdit && (
+          <button className="btn btn-primary" data-kt="N" data-kt-label="New purchase order" onClick={() => setShowCreate(true)}>
+            <Plus size={14} /> New Order
+          </button>
+        )}
       </div>
 
       {/* Tabs */}
@@ -840,8 +973,10 @@ export default function PurchaseOrdersView() {
             <OrderCard
               key={o.id}
               view={tab === 'in_progress' ? 'progress' : 'received'}
+              canEdit={canEdit}
               order={o}
               onReceive={(item) => setReceiveItem(item)}
+              onCloseLine={(item) => setCloseItem(item)}
               onRecordInward={(order, itemId) => { setRecordItemId(itemId ?? null); setRecordTarget(order); }}
               onDelete={(order) => setDeleteTarget(order)}
             />
@@ -861,6 +996,14 @@ export default function PurchaseOrdersView() {
           item={receiveItem}
           onClose={() => setReceiveItem(null)}
           onDone={() => { setReceiveItem(null); load(); showToast('Stock received.'); }}
+        />
+      )}
+
+      {closeItem && (
+        <CloseLineDialog
+          item={closeItem}
+          onClose={() => setCloseItem(null)}
+          onDone={() => { setCloseItem(null); load(); showToast('Line closed.'); }}
         />
       )}
 
@@ -887,7 +1030,7 @@ export default function PurchaseOrdersView() {
             </div>
             <div className="p-5 space-y-3">
               <p className="text-[15px] text-ink-2">
-                This adds what has been received so far (not yet recorded) from <strong>{recordTarget.order_no}</strong> to stock — book and physical. Timing belts go in as lots of the QTY × MM that was received.
+                This adds what has been received so far (not yet recorded) from <strong>{recordTarget.order_no}</strong> to stock — book and physical. Timing belts go in as lots of the MM × PCS that was received.
               </p>
               <div className="bg-subtle rounded-lg p-3 space-y-2">
                 {lines.map((item) => {

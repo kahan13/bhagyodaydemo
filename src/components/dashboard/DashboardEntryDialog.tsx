@@ -6,8 +6,9 @@ import { useCatalog } from '@/components/catalog/CatalogProvider';
 import { fmtQty } from '@/lib/format';
 import type { ProductType, Sku } from '@/lib/types';
 import LotBreakdown, { groupsInline } from '@/components/inventory/LotBreakdown';
-import OutwardPlan from '@/components/inventory/OutwardPlan';
+import { OutwardRowsPlan, planRowsOutward } from '@/components/inventory/OutwardPlan';
 import { useListNav } from '@/lib/useListNav';
+import { makeMatcher } from '@/lib/search';
 import RollEntry, { emptyRolls, rollsPayload, rollsTotal, type RollRows } from '@/components/inventory/RollEntry';
 
 interface User { id: string; full_name: string; }
@@ -50,16 +51,10 @@ export default function DashboardEntryDialog({
   }, []);
 
   const pool = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const match = makeMatcher(search);
     return skus
       .filter((s) => s.product_type === productType && s.is_active)
-      .filter((s) =>
-        !q ||
-        s.exact_size.toLowerCase().includes(q) ||
-        s.brand_name.toLowerCase().includes(q) ||
-        s.hier_l1.toLowerCase().includes(q) ||
-        s.sku_code.toLowerCase().includes(q)
-      )
+      .filter((s) => match([s.exact_size, s.brand_name, s.hier_l1, s.sku_code]))
       .slice(0, 40);
   }, [skus, productType, search]);
 
@@ -69,7 +64,7 @@ export default function DashboardEntryDialog({
     setSearch(`${s.exact_size} — ${s.brand_name}`);
     setDropOpen(false);
     // keyboard flow: straight on to the quantity / roll box
-    setTimeout(() => (document.getElementById('d-qty') ?? document.getElementById('roll-count'))?.focus(), 60);
+    setTimeout(() => (document.getElementById('d-qty') ?? document.getElementById('roll-first'))?.focus(), 60);
   };
 
   const nav = useListNav({
@@ -86,15 +81,19 @@ export default function DashboardEntryDialog({
     setTimeout(() => searchRef.current?.focus(), 50);
   };
 
-  const inRolls = action === 'inward' && sku?.product_type === 'TIMING_BELT';
+  // timing belts: typed as MM × PCS; outward also says whether each row comes from Full Sleeve or Cut Pcs
+  const inRolls = sku?.product_type === 'TIMING_BELT';
   const rollList = inRolls ? rollsPayload(rolls) : [];
+  const rollProblems = action === 'outward' && inRolls && sku?.lot_groups && sku.lot_groups.length > 0
+    ? planRowsOutward(sku.lot_groups, rollList).problems : [];
   const amount = inRolls ? rollsTotal(rollList) : Number(qty || 0);
   const projected = action === 'inward' ? (sku?.current_stock ?? 0) + amount
     : (sku?.current_stock ?? 0) - amount;
 
   const invalid =
     !sku || (!inRolls && !qty) || amount <= 0 ||
-    (action === 'outward' && sku && amount > sku.current_stock);
+    (action === 'outward' && sku && amount > sku.current_stock) ||
+    rollProblems.length > 0;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -240,7 +239,7 @@ export default function DashboardEntryDialog({
           {/* Quantity */}
           {inRolls ? (
             <div>
-              <RollEntry rows={rolls} onChange={setRolls} />
+              <RollEntry rows={rolls} onChange={setRolls} mode={action === 'outward' ? 'out' : 'in'} />
               {amount > 0 && sku && (
                 <p className="text-[14px] text-ink-3 mt-1 num">
                   After: <span className="font-medium">{fmtQty(projected, sku.unit_code)}</span>
@@ -271,8 +270,8 @@ export default function DashboardEntryDialog({
             )}
           </div>
           )}
-          {action === 'outward' && sku && !inRolls && (
-            <OutwardPlan groups={sku.lot_groups} amount={amount} unit={sku.unit_code} />
+          {action === 'outward' && sku && inRolls && (
+            <OutwardRowsPlan groups={sku.lot_groups} rows={rollList} unit={sku.unit_code} />
           )}
 
           {/* Reference */}

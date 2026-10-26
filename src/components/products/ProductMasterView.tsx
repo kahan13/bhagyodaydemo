@@ -5,6 +5,8 @@ import { Search, Plus, Pencil, ToggleLeft, ToggleRight, X } from 'lucide-react';
 import { PRODUCT_TYPE_LABEL, type Permission, type ProductType } from '@/lib/types';
 import { PRODUCT_TYPES, TYPE_META, UNSPECIFIED, buildIdentity, isIdentityError } from '@/lib/sheet-config';
 import { fmtMsl } from '@/lib/format';
+import { makeMatcher } from '@/lib/search';
+import RollEntry, { emptyRolls, rollsPayload, rollsTotal, type RollRows } from '@/components/inventory/RollEntry';
 
 interface Product {
   id: string; sku_code: string; product_type: ProductType;
@@ -62,6 +64,10 @@ export default function ProductMasterView({
   const [editing, setEditing] = useState<Product | null>(null);
   const [form, setForm] = useState<Form>(EMPTY);
   const [saving, setSaving] = useState(false);
+  // optional existing inventory when adding: timing belts as MM × PCS rows, others as a quantity
+  const [hasStock, setHasStock] = useState(false);
+  const [openRolls, setOpenRolls] = useState<RollRows>(emptyRolls());
+  const [openQty, setOpenQty] = useState('');
   const [err, setErr] = useState('');
 
   const load = async () => {
@@ -73,15 +79,13 @@ export default function ProductMasterView({
   useEffect(() => { void load(); }, []);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const match = makeMatcher(query);
     return products.filter((p) => {
       if (!showInactive && !p.is_active) return false;
       if (typeFilter !== 'ALL' && p.product_type !== typeFilter) return false;
       if (onlyFix && !(p.missing_fields?.length)) return false;
       if (onlyNoMsl && Number(p.min_stock_level) > 0) return false;
-      if (!q) return true;
-      return [p.sku_code, p.exact_size, p.brand_name, p.hier_l1, p.hier_l2, p.remarks ?? '']
-        .some((v) => v.toLowerCase().includes(q));
+      return match([p.sku_code, p.exact_size, p.brand_name, p.hier_l1, p.hier_l2, p.remarks]);
     });
   }, [products, query, typeFilter, showInactive, onlyFix, onlyNoMsl]);
 
@@ -91,7 +95,11 @@ export default function ProductMasterView({
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }));
 
-  const openAdd = () => { setForm({ ...EMPTY, product_type: typeFilter === 'ALL' ? 'TIMING_BELT' : typeFilter }); setEditing(null); setErr(''); setDialog('add'); };
+  const openAdd = () => {
+    setForm({ ...EMPTY, product_type: typeFilter === 'ALL' ? 'TIMING_BELT' : typeFilter });
+    setHasStock(false); setOpenRolls(emptyRolls()); setOpenQty('');
+    setEditing(null); setErr(''); setDialog('add');
+  };
   const openEdit = (p: Product) => {
     setEditing(p);
     const blank = (v: string) => (v === UNSPECIFIED ? '' : v);
@@ -120,8 +128,18 @@ export default function ProductMasterView({
   const save = async () => {
     setSaving(true); setErr('');
     const adding = dialog === 'add';
+    const rollList = rollsPayload(openRolls);
+    const opening = !adding || !hasStock ? undefined
+      : form.product_type === 'TIMING_BELT' ? { rows: rollList } : { qty: Number(openQty) || 0 };
+    if (adding && hasStock && ((form.product_type === 'TIMING_BELT' && rollList.length === 0) || (form.product_type !== 'TIMING_BELT' && !(Number(openQty) > 0)))) {
+      setSaving(false);
+      setErr(form.product_type === 'TIMING_BELT'
+        ? 'Enter MM and PCS for at least one row, or switch "existing inventory" off.'
+        : 'Enter the quantity in stock, or switch "existing inventory" off.');
+      return;
+    }
     const payload = adding
-      ? { ...form }
+      ? { ...form, ...(opening ? { opening } : {}) }
       : {
         id: editing!.id, display_name: form.display_name, min_stock_level: form.min_stock_level,
         rack_location: form.rack_location, remarks: form.remarks,
@@ -367,9 +385,45 @@ export default function ProductMasterView({
               </div>
 
               {dialog === 'add' && (
-                <p className="col-span-2 text-[13px] text-ink-3">
-                  Stock is not entered here. After adding, receive it through Inward, or load it with Import Data → 2 · Inventory.
-                </p>
+                <div className="col-span-2 rounded-lg border border-line">
+                  <button
+                    type="button" onClick={() => setHasStock((v) => !v)} aria-expanded={hasStock}
+                    className="w-full flex items-center justify-between gap-3 px-3.5 py-2.5 text-left"
+                  >
+                    <span>
+                      <span className="block text-[15px] font-medium">{hasStock ? 'Existing inventory' : '+ Add existing inventory'}</span>
+                      <span className="block text-[13px] text-ink-3">
+                        {hasStock ? 'Stock already on the shelf for this product — optional.'
+                          : 'Optional. Skip it to add the product with no stock, then receive stock through Inward.'}
+                      </span>
+                    </span>
+                    <span className="text-[13px] text-brand font-medium shrink-0">{hasStock ? 'Remove' : 'Add'}</span>
+                  </button>
+                  {hasStock && (
+                    <div className="px-3.5 pb-3.5 pt-1 space-y-2 border-t border-line">
+                      {form.product_type === 'TIMING_BELT' ? (
+                        <>
+                          <p className="text-[13px] text-ink-3 pt-2">
+                            Type each length as <strong>MM × PCS</strong> and pick <strong>Full sleeve</strong> or <strong>Cut pcs</strong> for the row.
+                            Add a row for every different length.
+                          </p>
+                          <RollEntry rows={openRolls} onChange={setOpenRolls} />
+                          {rollsTotal(rollsPayload(openRolls)) > 0 && (
+                            <p className="text-[13px] text-ink-3">
+                              Stock will start at <strong className="text-ink num">{rollsTotal(rollsPayload(openRolls))} mm</strong>.
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <div className="pt-2">
+                          <label className="label">Quantity in stock ({TYPE_META[form.product_type].unit.toLowerCase()})</label>
+                          <input className="field num w-40" inputMode="decimal" value={openQty} placeholder="0"
+                            onChange={(e) => setOpenQty(e.target.value.replace(/[^0-9.]/g, ''))} />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 

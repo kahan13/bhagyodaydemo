@@ -75,7 +75,7 @@ export async function GET() {
     problems,
     verdict: problems.length === 0
       ? checks.is_super_admin
-        ? 'All good — you are Super Admin.'
+        ? 'All good — you are an Admin.'
         : 'Configuration looks correct. Sign out and back in to apply it.'
       : 'Setup incomplete — see problems.',
   });

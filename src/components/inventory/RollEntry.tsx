@@ -1,12 +1,14 @@
 'use client';
 
 import { X } from 'lucide-react';
+import { fmtMmPcs } from '@/lib/format';
 
 /**
- * Inward entry for roll-tracked timing belts: rows of  QTY × MM.
- * There is no fixed roll length on the product — every row says how many pieces and how long
- * each one is. Each row is either Full Sleeve (default) or Cut Pcs. Every piece becomes its own lot.
- * Total = QTY × MM, summed over the rows.
+ * Entry for roll-tracked timing belts: rows of  MM × PCS  (length first, then how many pieces).
+ * There is no fixed roll length on the product — every row says how long each piece is and how
+ * many there are. Each row is either Full Sleeve (default) or Cut Pcs. Every piece becomes its own lot.
+ * Total = MM × PCS, summed over the rows.
+ * (Internally a row keeps `qty` = pieces and `mm` = length, which is what the database expects.)
  */
 export interface RollRow { qty: string; mm: string; cut: boolean }
 export type RollRows = RollRow[];
@@ -47,11 +49,11 @@ export function SleeveToggle({ cut, onChange, idPrefix }: { cut: boolean; onChan
 }
 
 export const groupLabel = (g: { rolls: number; roll_length: number; cut?: boolean }) =>
-  `${g.rolls}×${g.roll_length}${g.cut ? ' cut' : ''}`;
+  `${fmtMmPcs(g.roll_length, g.rolls)}${g.cut ? ' cut' : ''}`;
 
 export default function RollEntry({
-  rows, onChange, maxTotal,
-}: { rows: RollRows; onChange: (r: RollRows) => void; maxTotal?: number }) {
+  rows, onChange, maxTotal, mode = 'in',
+}: { rows: RollRows; onChange: (r: RollRows) => void; maxTotal?: number; mode?: 'in' | 'out' }) {
   const payload = rollsPayload(rows);
   const total = rollsTotal(payload);
   const pieces = payload.reduce((a, r) => a + r.rolls, 0);
@@ -67,24 +69,25 @@ export default function RollEntry({
         const n = Math.floor(Number(r.qty) || 0), l = Number(r.mm) || 0;
         return (
           <div key={i} className="flex flex-wrap items-end gap-2">
-            <div className="w-24">
-              <label className="label">Qty <span className="text-danger">*</span></label>
-              <input
-                id={i === 0 ? 'roll-count' : undefined}
-                className="field num text-[18px] h-11" inputMode="numeric" placeholder="0"
-                value={r.qty} onChange={(e) => set(i, { qty: digits(e.target.value) })} />
-            </div>
-            <span className="pb-2.5 text-[18px] text-ink-3 font-semibold">×</span>
             <div className="w-32">
               <label className="label">MM <span className="text-danger">*</span></label>
               <input
+                id={i === 0 ? 'roll-first' : undefined}
                 className="field num text-[18px] h-11" inputMode="decimal" placeholder="e.g. 470"
-                value={r.mm} onChange={(e) => set(i, { mm: dec(e.target.value) })}
+                value={r.mm} onChange={(e) => set(i, { mm: dec(e.target.value) })} />
+            </div>
+            <span className="pb-2.5 text-[18px] text-ink-3 font-semibold">×</span>
+            <div className="w-24">
+              <label className="label">PCS <span className="text-danger">*</span></label>
+              <input
+                className="field num text-[18px] h-11" inputMode="numeric" placeholder="0"
+                value={r.qty} onChange={(e) => set(i, { qty: digits(e.target.value) })}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && i === rows.length - 1 && n > 0 && l > 0) { e.preventDefault(); addRow(); }
                 }} />
             </div>
             <div className="pb-0.5">
+              {mode === 'out' && <label className="label">Take from</label>}
               <SleeveToggle cut={r.cut} onChange={(cut) => set(i, { cut })} />
             </div>
             {n > 0 && l > 0 && (
@@ -101,12 +104,12 @@ export default function RollEntry({
       })}
 
       <button type="button" className="text-[14px] text-brand font-medium" onClick={addRow}>
-        + Add another length
+        + Add another MM × PCS row
       </button>
 
       {total > 0 && (
         <div className="bg-ok-soft/30 rounded-lg px-3 py-2 text-[14px]">
-          Adding {pieces} piece{pieces === 1 ? '' : 's'}
+          {mode === 'out' ? 'Taking' : 'Adding'} {pieces} piece{pieces === 1 ? '' : 's'}
           <span className="text-ink-3"> = {payload.map(groupLabel).join(' + ')}</span>
           <span className="num font-semibold"> · total {total} mm</span>
           {maxTotal !== undefined && total > maxTotal && (

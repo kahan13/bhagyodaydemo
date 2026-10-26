@@ -62,11 +62,11 @@ export const CHANNEL_LABEL: Record<string, string> = {
   SYSTEM: 'System',
 };
 
+/** Three roles. (The codes on the left are what the database stores; people only see the names.) */
 export const ROLE_LABEL: Record<string, string> = {
-  SUPER_ADMIN: 'Super Admin',
-  MANAGER: 'Manager',
-  INVENTORY_OPERATOR: 'Operator',
-  VIEWER: 'Viewer',
+  SUPER_ADMIN: 'Admin',
+  MANAGER: 'Accounts',
+  VIEWER: 'Workshop',
 };
 
 export const TYPE_LABEL: Record<string, string> = {
@@ -77,4 +77,29 @@ export const TYPE_LABEL: Record<string, string> = {
 
 export function initials(name: string): string {
   return name.split(' ').filter(Boolean).map((p) => p[0]).slice(0, 2).join('').toUpperCase();
+}
+
+/** Strip a trailing ".00" so 470 shows as "470" and 470.5 as "470.5". */
+const plain = (n: number): string => (Number.isInteger(n) ? String(n) : String(+n.toFixed(2)));
+
+/**
+ * Timing belts are always written MM first, then PCS — "470 mm × 2 pcs".
+ * This is the ONE place that wording lives; every screen, message and receipt calls it.
+ */
+export function fmtMmPcs(mm: number | string | null | undefined, pcs: number | string | null | undefined): string {
+  return `${plain(Number(mm ?? 0))} mm × ${plain(Number(pcs ?? 0))} pcs`;
+}
+
+/**
+ * A production-order / PO line quantity in plain words:
+ *   timing belt typed as MM × PCS → "470 mm × 2 pcs"   (older lines: just the total, "940 mm")
+ *   anything else                 → "5 pcs", "12 m"
+ */
+export function fmtLineQty(
+  line: { quantity: number | string; unit_code?: string | null; pieces?: number | null; length_mm?: number | null },
+): string {
+  const q = Number(line.quantity ?? 0);
+  const p = Number(line.pieces ?? 0), l = Number(line.length_mm ?? 0);
+  if (p > 0 && l > 0 && p * l === q) return fmtMmPcs(l, p);
+  return fmtQty(q, line.unit_code);
 }

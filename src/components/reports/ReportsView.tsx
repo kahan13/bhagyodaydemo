@@ -3,15 +3,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { FileSpreadsheet, FileText, RefreshCw } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
-import { fmtDate, fmtQty, fmtMsl, fmtDateTime } from '@/lib/format';
+import { fmtDate, fmtQty, fmtMsl, fmtDateTime, fmtMmPcs } from '@/lib/format';
 
 type ReportKind =
-  | 'current_stock' | 'low_stock' | 'movements' | 'inward' | 'outward'
+  | 'current_stock' | 'needs_ordering' | 'movements' | 'inward' | 'outward'
   | 'waste' | 'brand_summary' | 'family_summary';
 
 const REPORTS: { id: ReportKind; label: string; note: string; dated: boolean }[] = [
   { id: 'current_stock', label: 'Current stock', note: 'Every active SKU with its stock and reorder settings', dated: false },
-  { id: 'low_stock', label: 'Low stock', note: 'SKUs below minimum, with suggested purchase quantity', dated: false },
+  { id: 'needs_ordering', label: 'Needs reordering', note: 'Products below their minimum stock level (MSL), with the suggested order quantity', dated: false },
   { id: 'movements', label: 'All movements', note: 'Complete transaction register for the period', dated: true },
   { id: 'inward', label: 'Inward register', note: 'Goods received in the period', dated: true },
   { id: 'outward', label: 'Outward register', note: 'Goods issued in the period', dated: true },
@@ -53,14 +53,19 @@ function bounds(range: string, from: string, to: string) {
 }
 
 export default function ReportsView({
-  canExport, brands, families, company,
+  canExport, brands, families, company, initialKind,
 }: {
+  /** Opens on this report — from the dashboard link `/reports?report=needs_ordering`. */
+  initialKind?: string;
   canExport: boolean;
   brands: string[];
   families: string[];
   company: Record<string, string>;
 }) {
-  const [kind, setKind] = useState<ReportKind>('current_stock');
+  const [kind, setKind] = useState<ReportKind>(() => {
+    const wanted = initialKind === 'low_stock' ? 'needs_ordering' : initialKind;   // old link name
+    return REPORTS.find((r) => r.id === wanted)?.id ?? 'current_stock';
+  });
   const [range, setRange] = useState('month');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -80,11 +85,11 @@ export default function ReportsView({
     const { start, end } = bounds(range, from, to);
 
     try {
-      if (kind === 'current_stock' || kind === 'low_stock') {
+      if (kind === 'current_stock' || kind === 'needs_ordering') {
         let q = db.from('v_sku_status')
           .select('sku_code,product_type,exact_size,brand_name,family_code,unit_code,current_stock,min_stock_level,supplier_moq,suggested_purchase_qty,rack_location,stock_status')
           .eq('is_active', true);
-        if (kind === 'low_stock') q = q.in('stock_status', ['LOW_STOCK', 'OUT_OF_STOCK']);
+        if (kind === 'needs_ordering') q = q.gt('min_stock_level', 0).in('stock_status', ['LOW_STOCK', 'OUT_OF_STOCK']);
         if (brand) q = q.eq('brand_name', brand);
         if (family) q = q.eq('family_code', family);
 
@@ -99,7 +104,7 @@ export default function ReportsView({
           { key: 'current_stock', label: 'Stock', numeric: true },
           { key: 'unit_code', label: 'Unit' },
           { key: 'min_stock_level', label: 'Minimum', numeric: true },
-          ...(kind === 'low_stock'
+          ...(kind === 'needs_ordering'
             ? [{ key: 'suggested_purchase_qty', label: 'Order', numeric: true }]
             : [{ key: 'rack_location', label: 'Rack' }]),
           { key: 'stock_status', label: 'Status' },
@@ -173,7 +178,7 @@ export default function ReportsView({
           { key: 'brand_name',       label: 'Brand' },
           { key: 'family_code',      label: 'Family' },
           { key: 'quantity',         label: 'Qty',    numeric: true },
-          { key: 'qty_mm',           label: 'Qty × MM' },
+          { key: 'qty_mm',           label: 'MM × Pcs' },
           { key: 'unit_code',        label: 'Unit' },
           { key: 'previous_stock',   label: 'Before', numeric: true },
           { key: 'new_stock',        label: 'After',  numeric: true },
@@ -194,7 +199,7 @@ export default function ReportsView({
 
   useEffect(() => { void run(); }, [run]);
 
-  /** "3 × 470 Full Sleeve + 1 × 445 Cut Pcs" from the lots this movement touched (timing belts). */
+  /** "470 mm × 3 pcs Full Sleeve + 445 mm × 1 pcs Cut Pcs" from the lots this movement touched (timing belts). */
   function qtyMm(row: Record<string, unknown>): string {
     const b = row.lot_breakdown as { status?: string; qty?: number }[] | null | undefined;
     if (row.product_type !== 'TIMING_BELT' || !Array.isArray(b) || b.length === 0) return '—';
@@ -209,7 +214,7 @@ export default function ReportsView({
       cur.n += 1;
       by.set(k, cur);
     }
-    const parts = [...by.values()].map((v) => `${v.n} × ${fmtQty(v.qty)}${v.st ? ` ${v.st}` : ''}`);
+    const parts = [...by.values()].map((v) => `${fmtMmPcs(v.qty, v.n)}${v.st ? ` ${v.st}` : ''}`);
     return parts.length ? parts.join(' + ') : '—';
   }
 

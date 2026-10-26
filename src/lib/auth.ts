@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { supabaseServer, supabaseService } from '@/lib/supabase-server';
-import type { Permission, Session } from '@/lib/types';
+import type { PageAccess, PageKey, Permission, Session } from '@/lib/types';
+import { PAGES, firstPageHref, pageLevel } from '@/lib/pages';
 
 /**
  * The one account guaranteed Super Admin, read from the environment so it is
@@ -75,9 +76,17 @@ export async function getAuthState(): Promise<AuthState> {
 
   if (!data) return { status: 'no-profile', email: auth.user.email ?? null };
 
-  const resolved = data as Session['user'] & { permissions: Permission[] };
-  const { permissions, ...user } = resolved;
-  return { status: 'ok', session: { user, permissions: permissions ?? [] } };
+  const resolved = data as Session['user'] & { permissions: Permission[]; pages?: PageAccess[] };
+  const { permissions, pages, ...user } = resolved;
+  return { status: 'ok', session: { user, permissions: permissions ?? [], pages: pages ?? legacyPages(user.role_code) } };
+}
+
+/**
+ * Until migration 036 has been run the database does not send a page list.
+ * Everyone but a Viewer then gets every page, as before; a Viewer gets none until it is run.
+ */
+function legacyPages(role: string): PageAccess[] {
+  return role === 'VIEWER' ? [] : PAGES.map((p) => ({ page: p.key, can_edit: true }));
 }
 
 export async function getSession(): Promise<Session | null> {
@@ -94,6 +103,16 @@ export async function requireSession(): Promise<Session> {
 export async function requirePermission(permission: Permission): Promise<Session> {
   const session = await requireSession();
   if (!session.permissions.includes(permission)) redirect(`/?denied=${permission}`);
+  return session;
+}
+
+/**
+ * Guards a page of the daily menu. Someone without it is sent to the first page they do have,
+ * or to a short "no pages yet" notice — never back to a page they cannot open (which would loop).
+ */
+export async function requirePage(key: PageKey): Promise<Session> {
+  const session = await requireSession();
+  if (!pageLevel(session.pages, key)) redirect(firstPageHref(session));
   return session;
 }
 

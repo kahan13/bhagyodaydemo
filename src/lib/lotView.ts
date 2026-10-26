@@ -1,4 +1,4 @@
-import { fmtQty } from '@/lib/format';
+import { fmtQty, fmtMmPcs } from '@/lib/format';
 
 export type LotEntry = { lot_no?: string; status: string; qty: number; new_lot?: boolean; was?: string; restored?: boolean };
 export type SnapGroup = { status: 'CUT_PCS' | 'FULL_SLEEVE'; each: number; count: number };
@@ -25,7 +25,7 @@ export function qtySplit(entries: LotEntry[] | null | undefined, unit: string, i
     for (const e of entries) by.set(Number(e.qty), (by.get(Number(e.qty)) ?? 0) + 1);
     return [...by.entries()].map(([len, n]) => ({
       key: `r${len}`, status: 'FULL_SLEEVE',
-      text: `${n} × ${fmtQty(len, unit)} Full Sleeve`,
+      text: `${fmtMmPcs(len, n)} Full Sleeve`,
     }));
   }
   const by = new Map<string, number>();

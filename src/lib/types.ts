@@ -3,7 +3,15 @@ export type TxnType = 'INWARD' | 'OUTWARD' | 'ADJUSTMENT';
 export type TxnMode = 'NORMAL' | 'REVERSAL';
 export type Channel = 'WEB' | 'MOBILE_PWA' | 'MOBILE_VOICE' | 'IMPORT' | 'SYSTEM';
 export type StockStatus = 'OK' | 'LOW_STOCK' | 'OUT_OF_STOCK';
-export type RoleCode = 'SUPER_ADMIN' | 'MANAGER' | 'INVENTORY_OPERATOR' | 'VIEWER';
+/** Shown as Admin / Accounts / Workshop (see ROLE_LABEL). The codes are historical and never shown. */
+export type RoleCode = 'SUPER_ADMIN' | 'MANAGER' | 'VIEWER';
+
+/** The pages an Admin can switch on for a Workshop person. */
+export type PageKey =
+  | 'dashboard' | 'production_orders' | 'production_in_progress'
+  | 'inventory' | 'purchase_orders' | 'transactions' | 'reports';
+
+export interface PageAccess { page: PageKey; can_edit: boolean }
 
 export type Permission =
   | 'inventory.view' | 'inventory.create' | 'inventory.edit' | 'inventory.adjust'
@@ -12,11 +20,12 @@ export type Permission =
   | 'products.view' | 'products.create' | 'products.edit'
   | 'users.view' | 'users.create' | 'users.edit' | 'users.disable'
   | 'settings.view' | 'settings.edit' | 'settings.import' | 'settings.backup'
-  | 'audit.view';
+  | 'audit.view'
+  | 'production.view' | 'production.update';
 
 export type PurchaseOrderStatus = 'PLACED' | 'PARTIAL' | 'FULFILLED';
 export type PurchaseOrderItemStatus = 'PENDING' | 'PARTIAL' | 'FULFILLED';
-export type ProductionOrderStatus = 'CREATED' | 'SENT' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+export type ProductionOrderStatus = 'CREATED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 
 export type TimeTag = '15-20 min' | '30-40 min' | '1 hour' | '2 hours';
 export type DeliveryMode = 'Hand' | 'Porter' | 'Courier' | 'Transportation';
@@ -35,6 +44,8 @@ export interface AppUser {
 export interface Session {
   user: AppUser;
   permissions: Permission[];
+  /** Pages in the menu. Admin and Accounts: all of them, editable. Workshop: the ones switched on. */
+  pages: PageAccess[];
 }
 
 /** One classification of a SKU's stock: e.g. 4 Full Sleeve pieces of 50 mm. */
@@ -206,6 +217,9 @@ export interface MismatchOrderItem {
   order_status: ProductionOrderStatus;
   quantity: number;
   unit_code: string;
+  /** MM × PCS as entered (timing belts); null on older orders */
+  pieces?: number | null;
+  length_mm?: number | null;
   created_at: string;
 }
 
@@ -221,6 +235,8 @@ export interface SkuMismatch {
   is_mismatched: boolean;
   open_order_items: MismatchOrderItem[];
   pending_net?: number;
+  /** Items whose outward is not recorded yet (completed orders included) */
+  open_item_count?: number;
 }
 
 /** Book-only movement (waste / adjustment) awaiting reconciliation with physical stock */

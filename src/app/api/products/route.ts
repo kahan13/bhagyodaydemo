@@ -42,6 +42,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `This product already exists as ${twin.sku_code}.` }, { status: 409 });
   }
 
+  // Optional existing inventory. Timing belts: MM × PCS rows, each Full Sleeve (cut:false) or Cut Pcs (cut:true).
+  // Other products: a plain quantity.
+  const opening = body.opening as { rows?: { rolls?: unknown; roll_length?: unknown; cut?: unknown }[]; qty?: unknown } | undefined;
+  const openRows = type === 'TIMING_BELT' && Array.isArray(opening?.rows)
+    ? opening!.rows!
+        .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length), cut: r.cut === true }))
+        .filter((r) => r.rolls > 0 && r.roll_length > 0)
+    : [];
+  const openQty = type !== 'TIMING_BELT' ? Math.max(0, Number(opening?.qty) || 0) : 0;
+  const totalPieces = openRows.reduce((a, r) => a + r.rolls, 0);
+  if (totalPieces > 500)
+    return NextResponse.json({ error: 'That is more than 500 pieces in one go. Add the product, then use Import Data → 2 · Inventory for large loads.' }, { status: 400 });
+
   const code = uniqueSkuCode(built, new Set(all.map((s) => s.sku_code)));
   try {
     const { brandId, familyId } = await ensureBrandsAndFamilies(svc, type, [built]);
@@ -51,12 +64,41 @@ export async function POST(req: Request) {
       rack_location: body.rack_location || null,
       remarks: body.remarks || null,
     };
-    const { error } = await svc.from('skus').insert(row);
-    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    const { data: created, error } = await svc.from('skus').insert(row).select('id').single();
+    if (error || !created) return NextResponse.json({ error: error?.message ?? 'Could not add the product.' }, { status: 400 });
+
+    // Load the existing inventory the same way the inventory import does: one lot per piece,
+    // then book and physical stock set to the same total.
+    let added = 0;
+    if (openRows.length > 0 || openQty > 0) {
+      const undo = async (message: string) => {
+        await svc.from('sku_lots').delete().eq('sku_id', created.id);
+        await svc.from('skus').delete().eq('id', created.id);
+        return NextResponse.json({ error: `${message} The product was not added — nothing was saved.` }, { status: 400 });
+      };
+      for (const r of openRows) {
+        for (let n = 0; n < r.rolls; n++) {
+          const { error: lotErr } = await svc.rpc('create_opening_lot', {
+            p_sku_id: created.id,
+            p_qty: r.roll_length,
+            p_status: r.cut ? 'CUT_PCS' : 'FULL_SLEEVE',
+            p_roll_length: r.roll_length,
+            p_notes: 'Opening stock (added in Product Master)',
+          });
+          if (lotErr) return undo(`Existing inventory failed: ${lotErr.message}.`);
+          added += r.roll_length;
+        }
+      }
+      added += openQty;
+      const { error: stockErr } = await svc.from('skus')
+        .update({ current_stock: added, physical_prod_stock: added, opening_stock: added, updated_at: new Date().toISOString() })
+        .eq('id', created.id);
+      if (stockErr) return undo(`Existing inventory failed: ${stockErr.message}.`);
+    }
+    return NextResponse.json({ sku_code: code, opening_stock: added });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
-  return NextResponse.json({ sku_code: code });
 }
 
 /** Edit the non-identity fields of a product. Only the fields you send are changed. */
