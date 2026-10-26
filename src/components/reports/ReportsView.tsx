@@ -356,7 +356,7 @@ export default function ReportsView({
             <label className="label" htmlFor="family">Family</label>
             <select id="family" className="field w-[118px]" value={family} onChange={(e) => setFamily(e.target.value)}>
               <option value="">All</option>
-              {families.map((f) => <option key={f} value={f}>{f}</option>)}
+              {[...new Set(families)].map((f) => <option key={f} value={f}>{f}</option>)}
             </select>
           </div>
 

@@ -70,7 +70,8 @@ export default function InProgressView({
   const [deleting, setDeleting] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptModel | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [closedOpen, setClosedOpen] = useState(false);
+  // Active orders tab: which group is on show
+  const [orderView, setOrderView] = useState<'pending' | 'completed' | 'cancelled'>('pending');
 
   // ── Loading ────────────────────────────────────────────────────────────────
 
@@ -249,7 +250,8 @@ export default function InProgressView({
   const regular = orders.filter((o) => !o.is_direct);
   const direct = orders.filter((o) => o.is_direct);
   const activeAll = regular.filter((o) => o.status === 'CREATED' || o.status === 'IN_PROGRESS');
-  const closedAll = regular.filter((o) => o.status === 'COMPLETED' || o.status === 'CANCELLED');
+  const completedAll = regular.filter((o) => o.status === 'COMPLETED');
+  const cancelledAll = regular.filter((o) => o.status === 'CANCELLED');
   const pendingDirect = direct.filter((o) => o.status !== 'CANCELLED' && !(o.direct_inward_at && o.direct_outward_at)).length;
   const awaitingOutward = regular
     .filter((o) => o.status === 'COMPLETED')
@@ -264,7 +266,19 @@ export default function InProgressView({
     ]);
   };
   const active = activeAll.filter(orderMatch(search.active));
-  const closed = closedAll.filter(orderMatch(search.active));
+  const completed = completedAll.filter(orderMatch(search.active));
+  const cancelled = cancelledAll.filter(orderMatch(search.active));
+  const shownOrders = orderView === 'pending' ? active : orderView === 'completed' ? completed : cancelled;
+  const orderViews = [
+    { key: 'pending' as const,   label: 'Pending',   count: activeAll.length },
+    { key: 'completed' as const, label: 'Completed', count: completedAll.length },
+    { key: 'cancelled' as const, label: 'Cancelled', count: cancelledAll.length },
+  ];
+  const emptyText = search.active
+    ? `No ${orderViews.find((v) => v.key === orderView)!.label.toLowerCase()} order matches your search.`
+    : orderView === 'pending'   ? 'No pending production orders. Create one from Production Order.'
+    : orderView === 'completed' ? 'No completed production orders yet.'
+    :                             'No cancelled production orders.';
   const directShown = direct.filter(orderMatch(search.direct));
 
   const moveMatch = makeMatcher(search.movements);
@@ -413,36 +427,33 @@ export default function InProgressView({
       {/* ── Active orders ── */}
       {tab === 'active' && (
         <div className="space-y-3">
-          {active.length === 0 && (
-            <div className="card p-10 text-center text-[15px] text-ink-3">
-              {search.active ? 'No active order matches your search.' : 'No active production orders. Create one from Production Order.'}
-            </div>
+          {/* Pending / Completed / Cancelled */}
+          <div role="tablist" aria-label="Order group" className="inline-flex rounded-lg border border-line bg-subtle p-0.5">
+            {orderViews.map((v) => {
+              const on = orderView === v.key;
+              return (
+                <button key={v.key} type="button" role="tab" aria-selected={on} onClick={() => setOrderView(v.key)}
+                  className={`px-4 py-1.5 rounded-md text-[15px] font-medium transition-colors flex items-center gap-2 ${
+                    on ? 'bg-surface shadow-sm text-ink' : 'text-ink-3 hover:text-ink'
+                  }`}>
+                  {v.label}
+                  <span className={`rounded-full px-2 py-0.5 text-[12px] font-semibold ${
+                    on ? 'bg-primary/10 text-primary' : 'bg-surface text-ink-3 border border-line'
+                  }`}>{v.count}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {shownOrders.length === 0 && (
+            <div className="card p-10 text-center text-[15px] text-ink-3">{emptyText}</div>
           )}
-          {active.map((o) => (
+          {shownOrders.map((o) => (
             <OrderCard key={o.id} order={o} allocs={allocMap} canManage={canManage}
               onAdvance={advance} onCancel={cancel} onDelete={setDeleteTarget}
               onWhatsApp={(x) => openWhatsApp(x, defaultWhatsapp)} onPrint={showReceipt} onPdf={pdfReceipt}
               onMarkDirect={markDirect} onOpenMismatch={() => setTab('mismatch')} />
           ))}
-
-          {closedAll.length > 0 && (
-            <div>
-              <button type="button" onClick={() => setClosedOpen((v) => !v)}
-                className="text-[14px] text-ink-3 hover:text-ink py-1">
-                {closedOpen ? 'Hide' : 'Show'} {closed.length} completed &amp; cancelled order{closed.length !== 1 ? 's' : ''}
-              </button>
-              {closedOpen && (
-                <div className="mt-2 space-y-3">
-                  {closed.map((o) => (
-                    <OrderCard key={o.id} order={o} allocs={allocMap} canManage={canManage}
-                      onAdvance={advance} onCancel={cancel} onDelete={setDeleteTarget}
-                      onWhatsApp={(x) => openWhatsApp(x, defaultWhatsapp)} onPrint={showReceipt} onPdf={pdfReceipt}
-                      onMarkDirect={markDirect} onOpenMismatch={() => setTab('mismatch')} />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
         </div>
       )}
 

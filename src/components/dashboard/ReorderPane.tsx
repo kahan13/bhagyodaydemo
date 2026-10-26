@@ -12,6 +12,7 @@ import { fmtMsl, fmtQty } from '@/lib/format';
  */
 
 export interface ReorderRow {
+  id: string;
   sku_code: string;
   product_type: 'TIMING_BELT' | 'V_BELT' | 'CONVEYOR_BELT';
   exact_size: string;
@@ -40,7 +41,9 @@ function stockLabel(r: ReorderRow): string {
   return `${fmtMsl(r.stock_pieces ?? 0, r.unit_code, r.product_type)} (${fmtQty(r.current_stock)} mm)`;
 }
 
-export default function ReorderPane({ rows, capped, anyMsl }: { rows: ReorderRow[]; capped: boolean; anyMsl: boolean }) {
+export default function ReorderPane({ rows, capped, anyMsl, ticked = [] }: { rows: ReorderRow[]; capped: boolean; anyMsl: boolean; ticked?: string[] }) {
+  // products whose purchase order has been raised (ticked in Inventory → Needs reordering)
+  const done = useMemo(() => new Set(ticked), [ticked]);
   const [tab, setTab] = useState<(typeof TABS)[number]['id']>('ALL');
 
   const counts = useMemo(() => {
@@ -52,8 +55,9 @@ export default function ReorderPane({ rows, capped, anyMsl }: { rows: ReorderRow
   const shown = useMemo(() => {
     const list = tab === 'ALL' ? rows : rows.filter((r) => r.product_type === tab);
     return [...list].sort((a, b) =>
+      (Number(done.has(a.id)) - Number(done.has(b.id))) ||        // still-to-order first, ticked last
       (TYPE_ORDER[a.product_type] - TYPE_ORDER[b.product_type]) || (Number(b.shortfall) - Number(a.shortfall)));
-  }, [rows, tab]);
+  }, [rows, tab, done]);
 
   return (
     <section className="card">
@@ -102,7 +106,8 @@ export default function ReorderPane({ rows, capped, anyMsl }: { rows: ReorderRow
             </thead>
             <tbody>
               {shown.map((r) => (
-                <tr key={r.sku_code} className="h-8">
+                <tr key={r.sku_code} className={`h-8 ${done.has(r.id) ? 'opacity-55 line-through' : ''}`}
+                    title={done.has(r.id) ? 'Purchase order raised' : undefined}>
                   <td className="font-medium py-1.5 whitespace-nowrap">{r.exact_size}</td>
                   {tab === 'ALL' && <td className="text-ink-3 py-1.5">{TYPE_SHORT[r.product_type]}</td>}
                   <td className="text-ink-2 py-1.5">{r.brand_name}</td>

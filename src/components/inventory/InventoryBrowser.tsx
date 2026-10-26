@@ -32,7 +32,6 @@ export default function InventoryBrowser({
   const { skus, loading, error, applyStock, refresh } = useCatalog();
   const [type, setType] = useState<ProductType>(initialType);
   const [query, setQuery] = useState('');
-  const [tab, setTab] = useState<'CUT_PCS' | 'FULL_SLEEVE' | 'ALL'>('ALL');
   const [view, setView] = useState<'drill' | 'list'>('drill');
   const [searchOpen, setSearchOpen] = useState(false);
   const [fFamily, setFFamily] = useState('');
@@ -73,20 +72,8 @@ export default function InventoryBrowser({
     if (initialAction) setAction(initialAction);
   }, [initialSku, initialAction, skus]);
 
-  // Cut Pcs / Full Sleeve tab: timing belts only. Keeps just the matching lot groups
-  // and recomputes the stock figure from them, so every pane total follows the tab.
-  const viewSkus = useMemo(() => {
-    if (tab === 'ALL') return skus;
-    return skus.flatMap((s): Sku[] => {
-      if (s.product_type !== 'TIMING_BELT') return [s];
-      const groups = (s.lot_groups ?? []).filter((g) => g.status === tab);
-      if (groups.length === 0) return [];
-      return [{ ...s, lot_groups: groups, current_stock: groups.reduce((a, g) => a + g.total_qty, 0) }];
-    });
-  }, [skus, tab]);
-
-  const tabCount = (t: 'CUT_PCS' | 'FULL_SLEEVE') =>
-    skus.filter((s) => s.product_type === 'TIMING_BELT' && (s.lot_groups ?? []).some((g) => g.status === t)).length;
+  // The list always shows every product; Cut Pcs / Full Sleeve are shown inside each product's details.
+  const viewSkus = skus;
 
   const pool = useMemo(() => {
     const match = makeMatcher(query);
@@ -138,7 +125,6 @@ export default function InventoryBrowser({
 
   function switchView(v: 'drill' | 'list') {
     setView(v);
-    setTab(v === 'list' ? 'CUT_PCS' : 'ALL');   // list opens on Cut Pcs, drill-down on Show all
   }
 
   const origOf = (s: Sku) => skus.find((x) => x.sku_code === s.sku_code) ?? s;
@@ -295,23 +281,6 @@ export default function InventoryBrowser({
     <div className="flex flex-col h-[calc(100vh/var(--z,1)-56px)]">
       {/* toolbar */}
       <div className="px-4 lg:px-6 pt-4 pb-0 border-b border-line bg-surface">
-        <div className="flex flex-wrap items-center gap-1.5 mb-3">
-          {([['CUT_PCS', `Cut Pcs (${tabCount('CUT_PCS')})`], ['FULL_SLEEVE', `Full Sleeve (${tabCount('FULL_SLEEVE')})`], ['ALL', 'Show all']] as const).map(([k, label]) => (
-            <button
-              key={k}
-              type="button"
-              data-kt={k === 'CUT_PCS' ? 'C' : k === 'FULL_SLEEVE' ? 'F' : 'W'}
-              data-kt-label={k === 'CUT_PCS' ? 'Cut Pcs tab' : k === 'FULL_SLEEVE' ? 'Full Sleeve tab' : 'Show all tab'}
-              onClick={() => setTab(k)}
-              className={`px-3 py-1 rounded-full text-[14px] font-medium border transition-colors ${
-                tab === k ? 'bg-brand text-white border-brand' : 'bg-surface border-line text-ink-2 hover:border-brand hover:text-brand'
-              }`}
-            >{label}</button>
-          ))}
-          {tab !== 'ALL' && type !== 'TIMING_BELT' && (
-            <span className="text-[13px] text-ink-3 ml-1">Tabs apply to timing belts only</span>
-          )}
-        </div>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-[19px] font-semibold">Inventory</h1>
           <InventoryTabs current="book" />
@@ -717,7 +686,7 @@ export default function InventoryBrowser({
 
 function ColHeader({ label, right }: { label: string; right: string }) {
   return (
-    <div className="flex items-baseline justify-between px-4 h-10 border-b border-line shrink-0">
+    <div className="flex items-center justify-between px-4 h-10 border-b border-line shrink-0">
       <span className="eyebrow">{label}</span>
       <span className="text-[13px] text-ink-3 num">{right}</span>
     </div>

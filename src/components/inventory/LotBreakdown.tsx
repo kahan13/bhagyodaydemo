@@ -15,14 +15,15 @@ export const groupLabel = (g: LotGroup): string => (g.status === 'FULL_SLEEVE' ?
 
 /**
  * Each classification of a timing belt's stock on its own line:
- *   ● Full Sleeve  50 mm × 4 pcs
  *   ● Cut Pcs      50 mm × 1 pcs
+ *   ● Full Sleeve  50 mm × 4 pcs
+ * (cut pieces first — they are used first)
  */
 export default function LotBreakdown({ groups, className = '' }: { groups?: LotGroup[]; className?: string }) {
   if (!groups || groups.length === 0) return null;
   return (
     <div className={`space-y-0.5 ${className}`}>
-      {groups.map((g) => (
+      {[...groups].sort((a, b) => (a.status === b.status ? 0 : a.status === 'CUT_PCS' ? -1 : 1)).map((g) => (
         <div key={`${g.status}-${g.piece_qty}`} className="flex items-center gap-1.5 text-[13px] leading-tight">
           <span className={`inline-block h-1.5 w-1.5 rounded-full ${g.status === 'FULL_SLEEVE' ? 'bg-ok' : 'bg-warn'}`} />
           <span className="text-ink-2 w-[68px] shrink-0">{groupLabel(g)}</span>

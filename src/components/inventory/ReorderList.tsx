@@ -57,8 +57,6 @@ export default function ReorderList({ canTick }: { canTick: boolean }) {
 
   const load = useCallback(async () => {
     const sb = supabaseBrowser();
-    // forget ticks of products that are no longer low (best effort — the list below is the truth)
-    await sb.rpc('prune_reorder_marks');
     const [list, marks, msl] = await Promise.all([
       sb.from('v_sku_status')
         .select('id,sku_code,product_type,exact_size,brand_name,family_code,unit_code,current_stock,stock_pieces,min_stock_level,shortfall,suggested_purchase_qty,stock_status')
@@ -78,7 +76,11 @@ export default function ReorderList({ canTick }: { canTick: boolean }) {
     setError(null); setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Forget ticks of products that are no longer low — once, when the page opens (best effort).
+  // Not inside load(): load() runs after every save, and this must never re-trigger it.
+  useEffect(() => {
+    void (async () => { await supabaseBrowser().rpc('prune_reorder_marks'); await load(); })();
+  }, [load]);
   useEffect(() => onDataChanged(() => { load(); }), [load]);
 
   async function toggle(r: Row) {

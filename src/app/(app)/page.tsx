@@ -487,7 +487,7 @@ async function LowStock() {
     db.from('v_sku_status').select('sku_code', { count: 'exact', head: true }).eq('is_active', true).gt('min_stock_level', 0),
     ...types.map((t) =>
       db.from('v_sku_status')
-        .select('sku_code,product_type,exact_size,brand_name,unit_code,current_stock,stock_pieces,min_stock_level,shortfall,suggested_purchase_qty,stock_status')
+        .select('id,sku_code,product_type,exact_size,brand_name,unit_code,current_stock,stock_pieces,min_stock_level,shortfall,suggested_purchase_qty,stock_status')
         .eq('is_active', true)
         .eq('product_type', t)
         .gt('min_stock_level', 0)
@@ -499,7 +499,12 @@ async function LowStock() {
   const rows = perType.flatMap((r) => (r.data ?? [])) as unknown as ReorderRow[];
   const capped = perType.some((r) => (r.data?.length ?? 0) >= PER_TYPE);
 
-  return <ReorderPane rows={rows} capped={capped} anyMsl={(anyMslRes.count ?? 0) > 0} />;
+  // Ticks from Inventory → Needs reordering, so both lists agree (nothing to read until 035 is run)
+  await db.rpc('prune_reorder_marks');
+  const marks = await db.from('reorder_marks').select('sku_id');
+  const ticked = ((marks.data ?? []) as { sku_id: string }[]).map((m) => m.sku_id);
+
+  return <ReorderPane rows={rows} capped={capped} anyMsl={(anyMslRes.count ?? 0) > 0} ticked={ticked} />;
 }
 
 /* ── Page ────────────────────────────────────────────────────────────────── */
