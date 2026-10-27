@@ -10,6 +10,7 @@ import MovementDialog from '@/components/inventory/MovementDialog';
 import SkuLotsPanel from '@/components/inventory/SkuLotsPanel';
 import LotBreakdown, { groupsInline, groupText } from '@/components/inventory/LotBreakdown';
 import { TYPE_META } from '@/lib/sheet-config';
+import { isLotType, lotUnitWord } from '@/lib/lotUnit';
 import { useListNav } from '@/lib/useListNav';
 import { makeMatcher, hasQuery } from '@/lib/search';
 import InventoryTabs from '@/components/inventory/InventoryTabs';
@@ -319,7 +320,7 @@ export default function InventoryBrowser({
                     <div className="text-[13px] text-ink-3 truncate">
                       {s.hier_l1} › {sectionOf(s)}
                       {s.lot_groups && s.lot_groups.length > 0
-                        ? <span className="text-ink-2"> · {groupsInline(s.lot_groups)}</span>
+                        ? <span className="text-ink-2"> · {groupsInline(s.lot_groups, lotUnitWord(s.product_type))}</span>
                         : <span className="text-ink-2"> · {fmtQty(s.current_stock, s.unit_code)}</span>}
                     </div>
                   </button>
@@ -446,12 +447,12 @@ export default function InventoryBrowser({
                         <td className="px-2 py-2 font-medium">{s.hier_l3}</td>
                         <td className="px-2 py-2 text-ink-2">{s.brand_name}</td>
                         <td className="px-2 py-2 num">
-                          {s.product_type !== 'TIMING_BELT' ? <span className="text-ink-3">—</span>
-                            : cut.length ? cut.map((g) => <div key={g.piece_qty}>{groupText(g)}</div>) : <span className="text-ink-3">—</span>}
+                          {!isLotType(s.product_type) ?<span className="text-ink-3">—</span>
+                            : cut.length ? cut.map((g) => <div key={g.piece_qty}>{groupText(g, lotUnitWord(s.product_type))}</div>) : <span className="text-ink-3">—</span>}
                         </td>
                         <td className="px-2 py-2 num">
-                          {s.product_type !== 'TIMING_BELT' ? <span className="text-ink-3">—</span>
-                            : full.length ? full.map((g) => <div key={g.piece_qty}>{groupText(g)}</div>) : <span className="text-ink-3">—</span>}
+                          {!isLotType(s.product_type) ?<span className="text-ink-3">—</span>
+                            : full.length ? full.map((g) => <div key={g.piece_qty}>{groupText(g, lotUnitWord(s.product_type))}</div>) : <span className="text-ink-3">—</span>}
                         </td>
                         <td className="px-4 lg:px-6 py-2 text-right">
                           <span className="inline-flex items-center gap-1.5 justify-end">
@@ -608,7 +609,7 @@ export default function InventoryBrowser({
                           </span>
                         </div>
                         {s.lot_groups && s.lot_groups.length > 0 && (
-                          <LotBreakdown groups={s.lot_groups} className="mt-1.5 pb-0.5" />
+                          <LotBreakdown groups={s.lot_groups} unit={lotUnitWord(s.product_type)} className="mt-1.5 pb-0.5" />
                         )}
                       </div>
                     </div>
@@ -790,7 +791,7 @@ function DetailPanel({
             {sku.stock_status === 'OK' && <span className="badge badge-ok mb-1">In range</span>}
           </div>
 
-          <LotBreakdown groups={sku.lot_groups} className="mt-3" />
+          <LotBreakdown groups={sku.lot_groups} unit={lotUnitWord(sku.product_type)} className="mt-3" />
 
           {sku.stock_status !== 'OK' && (
             <p className="text-[14px] text-warn mt-2.5 leading-relaxed">

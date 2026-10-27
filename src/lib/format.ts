@@ -10,7 +10,8 @@ export function fmtQty(value: number | string | null | undefined, unit?: string 
   const n = Number(value ?? 0);
   const text = Number.isInteger(n) ? String(n) : n.toFixed(2);
   if (!unit) return text;
-  return `${text} ${unit.toUpperCase() === 'MTR' ? 'm' : unit.toLowerCase()}`;
+  const u = unit.toUpperCase();
+  return `${text} ${u === 'MTR' ? 'm' : u === 'RIB' ? 'ribs' : unit.toLowerCase()}`;
 }
 
 /**
@@ -18,7 +19,7 @@ export function fmtQty(value: number | string | null | undefined, unit?: string 
  * PIECES, so it is shown as "2 pcs"; every other type keeps its own unit.
  */
 export function fmtMsl(value: number | string | null | undefined, unit: string | null | undefined, productType?: string | null): string {
-  if (productType === 'TIMING_BELT') return `${Number(value ?? 0)} pcs`;
+  if (productType === 'TIMING_BELT' || productType === 'POLY_V_BELT') return `${Number(value ?? 0)} pcs`;
   return fmtQty(value, unit);
 }
 
@@ -86,8 +87,10 @@ const plain = (n: number): string => (Number.isInteger(n) ? String(n) : String(+
  * Timing belts are always written MM first, then PCS — "470 mm × 2 pcs".
  * This is the ONE place that wording lives; every screen, message and receipt calls it.
  */
-export function fmtMmPcs(mm: number | string | null | undefined, pcs: number | string | null | undefined): string {
-  return `${plain(Number(mm ?? 0))} mm × ${plain(Number(pcs ?? 0))} pcs`;
+export function fmtMmPcs(
+  mm: number | string | null | undefined, pcs: number | string | null | undefined, unitWord = 'mm',
+): string {
+  return `${plain(Number(mm ?? 0))} ${unitWord} × ${plain(Number(pcs ?? 0))} pcs`;
 }
 
 /**
@@ -100,6 +103,6 @@ export function fmtLineQty(
 ): string {
   const q = Number(line.quantity ?? 0);
   const p = Number(line.pieces ?? 0), l = Number(line.length_mm ?? 0);
-  if (p > 0 && l > 0 && p * l === q) return fmtMmPcs(l, p);
+  if (p > 0 && l > 0 && p * l === q) return fmtMmPcs(l, p, (line.unit_code ?? '').toUpperCase() === 'RIB' ? 'ribs' : 'mm');
   return fmtQty(q, line.unit_code);
 }

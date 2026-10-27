@@ -4,7 +4,8 @@ import { X } from 'lucide-react';
 import { fmtMmPcs } from '@/lib/format';
 
 /**
- * Entry for roll-tracked timing belts: rows of  MM × PCS  (length first, then how many pieces).
+ * Entry for lot-tracked belts: rows of  MM × PCS  (timing belts) or  RIBS × PCS  (poly V belts) —
+ * length first, then how many pieces.
  * There is no fixed roll length on the product — every row says how long each piece is and how
  * many there are. Each row is either Full Sleeve (default) or Cut Pcs. Every piece becomes its own lot.
  * Total = MM × PCS, summed over the rows.
@@ -48,12 +49,18 @@ export function SleeveToggle({ cut, onChange, idPrefix }: { cut: boolean; onChan
   );
 }
 
-export const groupLabel = (g: { rolls: number; roll_length: number; cut?: boolean }) =>
-  `${fmtMmPcs(g.roll_length, g.rolls)}${g.cut ? ' cut' : ''}`;
+export const groupLabel = (g: { rolls: number; roll_length: number; cut?: boolean }, unit = 'mm') =>
+  `${fmtMmPcs(g.roll_length, g.rolls, unit)}${g.cut ? ' cut' : ''}`;
 
 export default function RollEntry({
-  rows, onChange, maxTotal, mode = 'in',
-}: { rows: RollRows; onChange: (r: RollRows) => void; maxTotal?: number; mode?: 'in' | 'out' }) {
+  rows, onChange, maxTotal, mode = 'in', unit = 'mm',
+}: {
+  rows: RollRows; onChange: (r: RollRows) => void; maxTotal?: number; mode?: 'in' | 'out';
+  /** What one piece is measured in: "mm" (timing belts) or "ribs" (poly V belts). */
+  unit?: string;
+}) {
+  const head = unit.toUpperCase();                       // MM / RIBS
+  const example = unit === 'ribs' ? 'e.g. 330' : 'e.g. 470';
   const payload = rollsPayload(rows);
   const total = rollsTotal(payload);
   const pieces = payload.reduce((a, r) => a + r.rolls, 0);
@@ -70,10 +77,10 @@ export default function RollEntry({
         return (
           <div key={i} className="flex flex-wrap items-end gap-2">
             <div className="w-32">
-              <label className="label">MM <span className="text-danger">*</span></label>
+              <label className="label">{head} <span className="text-danger">*</span></label>
               <input
                 id={i === 0 ? 'roll-first' : undefined}
-                className="field num text-[18px] h-11" inputMode="decimal" placeholder="e.g. 470"
+                className="field num text-[18px] h-11" inputMode="decimal" placeholder={example}
                 value={r.mm} onChange={(e) => set(i, { mm: dec(e.target.value) })} />
             </div>
             <span className="pb-2.5 text-[18px] text-ink-3 font-semibold">×</span>
@@ -91,7 +98,7 @@ export default function RollEntry({
               <SleeveToggle cut={r.cut} onChange={(cut) => set(i, { cut })} />
             </div>
             {n > 0 && l > 0 && (
-              <span className="pb-2.5 num text-[15px] font-semibold">= {n * l} mm</span>
+              <span className="pb-2.5 num text-[15px] font-semibold">= {n * l} {unit}</span>
             )}
             {rows.length > 1 && (
               <button type="button" className="btn btn-ghost h-9 w-9 p-0 mb-1" aria-label="Remove row"
@@ -104,16 +111,16 @@ export default function RollEntry({
       })}
 
       <button type="button" className="text-[14px] text-brand font-medium" onClick={addRow}>
-        + Add another MM × PCS row
+        + Add another {head} × PCS row
       </button>
 
       {total > 0 && (
         <div className="bg-ok-soft/30 rounded-lg px-3 py-2 text-[14px]">
           {mode === 'out' ? 'Taking' : 'Adding'} {pieces} piece{pieces === 1 ? '' : 's'}
-          <span className="text-ink-3"> = {payload.map(groupLabel).join(' + ')}</span>
-          <span className="num font-semibold"> · total {total} mm</span>
+          <span className="text-ink-3"> = {payload.map((g) => groupLabel(g, unit)).join(' + ')}</span>
+          <span className="num font-semibold"> · total {total} {unit}</span>
           {maxTotal !== undefined && total > maxTotal && (
-            <span className="text-danger font-medium"> · only {maxTotal} mm is left on this order</span>
+            <span className="text-danger font-medium"> · only {maxTotal} {unit} is left on this order</span>
           )}
         </div>
       )}

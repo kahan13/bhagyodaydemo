@@ -10,6 +10,7 @@
  *   Timing   : CUT PCS/FULL SLEEVE | PRODUCT FAMILY | SECTION OF TIMING BELT | SIZE | UOM IN MM | QTY | MAKE | LOCATION | REMARKS
  *   V-Belt   : PRODUCT FAMILY | MAKE | SECTION OF V BELT | SIZE | UOM (PCS) | REMARKS | LOCATION
  *   Conveyor : PRODUCT FAMILY | COLOUR | MAKE | L | W | T | QTY | LOCATION | REMARKS
+ *   Poly V   : CUT PCS/ FULL SLEEVE | PRODUCT FAMILY | SECTION OF POLY V BELT | SIZE | NO OF RIB | QTY | MAKE | MSL | LOCATION | REMARKS
  */
 
 import type { ProductType } from '@/lib/types';
@@ -37,9 +38,9 @@ export interface TypeMeta {
   short: string;
   /** SKU code prefix: TB-L-165-OPTI */
   prefix: string;
-  /** Unit stock is counted in. Timing belts are tracked in millimetres. */
-  unit: 'MM' | 'PCS';
-  /** Timing belts have Cut Pcs / Full Sleeve lots; the others are plain stock. */
+  /** Unit stock is counted in. Timing belts are tracked in millimetres, poly V belts in ribs. */
+  unit: 'MM' | 'PCS' | 'RIB';
+  /** Timing belts and poly V belts have Cut Pcs / Full Sleeve lots; the others are plain stock. */
   usesLots: boolean;
   /** Words that identify this type from a sheet/tab name. */
   sheetHints: string[];
@@ -49,7 +50,7 @@ export interface TypeMeta {
   leafColumns: [string, string];
 }
 
-export const PRODUCT_TYPES: ProductType[] = ['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT'];
+export const PRODUCT_TYPES: ProductType[] = ['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT', 'POLY_V_BELT'];
 
 export const TYPE_META: Record<ProductType, TypeMeta> = {
   TIMING_BELT: {
@@ -70,12 +71,20 @@ export const TYPE_META: Record<ProductType, TypeMeta> = {
     levels: ['Product Family', 'Colour', 'Size · Make'],
     leafColumns: ['Size', 'Make'],
   },
+  POLY_V_BELT: {
+    label: 'Poly V Belts', short: 'Poly V', prefix: 'PV', unit: 'RIB', usesLots: true,
+    sheetHints: ['poly v', 'polyv', 'poly-v'],
+    levels: ['Product Family', 'Section', 'Size · Make'],
+    leafColumns: ['Size', 'Make'],
+  },
 };
 
 /** Guess the product type from a sheet/tab name (returns null if unsure). */
 export function detectProductType(sheetName: string): ProductType | null {
   const s = sheetName.toLowerCase();
-  for (const t of PRODUCT_TYPES) {
+  // "Poly V belt" also contains "v belt", so it has to be checked before V-belt
+  const order: ProductType[] = ['POLY_V_BELT', ...PRODUCT_TYPES.filter((t) => t !== 'POLY_V_BELT')];
+  for (const t of order) {
     if (TYPE_META[t].sheetHints.some((h) => s.includes(h))) return t;
   }
   return null;
@@ -115,6 +124,12 @@ const IDENTITY: Record<ProductType, FieldDef[]> = {
     F.brand,
   ],
   CONVEYOR_BELT: [F.family, F.colour, F.brand, F.length, F.width, F.thickness],
+  POLY_V_BELT: [
+    F.family,
+    sectionField('Section of Poly V Belt', ['section of poly v belt']),
+    F.size,
+    F.brand,
+  ],
 };
 
 /** Product (SKU) import: identity only. No stock, no cut/full, no location. */
@@ -122,6 +137,7 @@ export const SKU_FIELDS: Record<ProductType, FieldDef[]> = {
   TIMING_BELT: [...IDENTITY.TIMING_BELT, F.msl],
   V_BELT: [...IDENTITY.V_BELT, F.msl],
   CONVEYOR_BELT: [...IDENTITY.CONVEYOR_BELT, F.msl],
+  POLY_V_BELT: [...IDENTITY.POLY_V_BELT, F.msl],
 };
 
 /** Inventory import: identity (to find the SKU) + what is physically in stock. */
@@ -148,6 +164,19 @@ export const INVENTORY_FIELDS: Record<ProductType, FieldDef[]> = {
     { key: 'qty', label: 'QTY', required: true, aliases: ['qty', 'quantity'], hint: 'Pieces in stock' },
     F.location, F.remarks, F.msl,
   ],
+  // Same layout as timing belts; a piece is measured in ribs instead of millimetres.
+  POLY_V_BELT: [
+    ...IDENTITY.POLY_V_BELT,
+    { key: 'lot_type', label: 'Cut Pcs / Full Sleeve', required: true,
+      aliases: ['cut pcs/ full sleeve', 'cut pcs/full sleeve', 'cut pcs full sleeve', 'cut full'],
+      hint: 'CUT PCS or FULL SLEEVE' },
+    { key: 'uom_mm', label: 'No. of Ribs', required: true,
+      aliases: ['no of rib', 'no of ribs', 'no. of rib', 'no. of ribs', 'number of ribs', 'ribs', 'rib'],
+      hint: 'Ribs in ONE piece / sleeve' },
+    { key: 'qty', label: 'QTY', required: true, aliases: ['qty', 'quantity'],
+      hint: 'How many such pieces / sleeves' },
+    F.location, F.remarks, F.msl,
+  ],
 };
 
 /** MSL-only import: identity columns (to find the product) + the MSL column. Nothing else is read. */
@@ -155,6 +184,7 @@ export const MSL_FIELDS: Record<ProductType, FieldDef[]> = {
   TIMING_BELT: [...IDENTITY.TIMING_BELT, { ...F.msl, required: true }],
   V_BELT: [...IDENTITY.V_BELT, { ...F.msl, required: true }],
   CONVEYOR_BELT: [...IDENTITY.CONVEYOR_BELT, { ...F.msl, required: true }],
+  POLY_V_BELT: [...IDENTITY.POLY_V_BELT, { ...F.msl, required: true }],
 };
 
 export const fieldsFor = (kind: ImportKind, type: ProductType): FieldDef[] =>
@@ -187,6 +217,8 @@ export function autoMap(headers: string[], fields: FieldDef[]): Record<string, s
 /** Work out the product type from a sheet's column headings (more reliable than the tab name). */
 export function detectTypeFromHeaders(headers: string[]): ProductType | null {
   const n = headers.map(normHeader);
+  // Poly V first: its sheet also starts with "CUT PCS / FULL SLEEVE", like the timing sheet
+  if (n.some((h) => h.includes('sectionofpolyvbelt') || h.startsWith('noofrib') || h === 'ribs')) return 'POLY_V_BELT';
   if (n.some((h) => h.includes('sectionoftimingbelt') || h.startsWith('cutpcs') || h === 'uominmm')) return 'TIMING_BELT';
   if (n.some((h) => h.includes('sectionofvbelt'))) return 'V_BELT';
   if ((n.includes('colour') || n.includes('color')) && (n.includes('l') || n.includes('length'))) return 'CONVEYOR_BELT';

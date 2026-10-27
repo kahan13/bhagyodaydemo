@@ -155,7 +155,7 @@ export default function StaffInbox({
                         <span className="flex gap-1 flex-wrap mt-1">
                           {allocs[item.id].map((p, k) => (
                             <span key={k} className={`badge ${p.label === 'Full Sleeve' ? 'badge-ok' : 'badge-warn'}`}>
-                              {p.label} {fmtQty(p.qty, 'MM')}
+                              {p.label} {fmtQty(p.qty, item.unit_code === 'RIB' ? 'RIB' : 'MM')}
                             </span>
                           ))}
                         </span>

@@ -20,6 +20,7 @@ import LotAllocationPicker, { type LotAllocation } from './LotAllocationPicker';
 import type { LotGroup } from '@/lib/types';
 import { groupText, groupLabel } from '@/components/inventory/LotBreakdown';
 import { fmtQty } from '@/lib/format';
+import { isLotType, lotUnitWord } from '@/lib/lotUnit';
 import { makeMatcher, hasQuery } from '@/lib/search';
 import { loadSkus, peekSkus, invalidateSkuCache, getSkuVersion, type SkuWithAtp, type SkuPick } from './skuCache';
 import { buildMessage, openWhatsApp } from './poShared';
@@ -38,7 +39,7 @@ const DELIVERY_MODES: DeliveryMode[] = ['Hand', 'Porter', 'Courier', 'Transporta
 
 
 const CATEGORY_PILLS: [ProductType, string][] = [
-  ['TIMING_BELT', 'Timing Belt'], ['V_BELT', 'V-Belt'], ['CONVEYOR_BELT', 'Conveyor'],
+  ['TIMING_BELT', 'Timing Belt'], ['V_BELT', 'V-Belt'], ['CONVEYOR_BELT', 'Conveyor'], ['POLY_V_BELT', 'Poly V Belt'],
 ];
 
 /** The category last picked on any order line — the next new line starts there. */
@@ -54,7 +55,7 @@ function AtpBadge({ sku, qty, otherQty = 0 }: { sku: SkuWithAtp; qty: string; ot
 
   let colour: string;
   if (effectiveAtp <= 0) colour = 'text-danger font-semibold';
-  else if (sku.product_type !== 'TIMING_BELT' && effectiveAtp < (sku.min_stock_level ?? 0)) colour = 'text-warn font-semibold';
+  else if (!isLotType(sku.product_type) && effectiveAtp < (sku.min_stock_level ?? 0)) colour = 'text-warn font-semibold';
   else colour = 'text-ok';
 
   return (
@@ -149,7 +150,7 @@ function SkuCombobox({
   const cutCount = allOptions.filter((o) => o.group?.status === 'CUT_PCS').length;
   const fullCount = allOptions.filter((o) => o.group?.status === 'FULL_SLEEVE').length;
   const options = allOptions
-    .filter((o) => !o.group || category !== 'TIMING_BELT' || tab === 'ALL' || o.group.status === tab)
+    .filter((o) => !o.group || !isLotType(category) || tab === 'ALL' || o.group.status === tab)
     // Cut pieces always first
     .sort((a, b) => (a.group?.status === 'CUT_PCS' ? 0 : 1) - (b.group?.status === 'CUT_PCS' ? 0 : 1));
 
@@ -188,7 +189,7 @@ function SkuCombobox({
     lastCategory = next;
     // the chosen product belongs to the old category, so start the line afresh
     onChange({ sku: null, query: '' });
-    setTab(next === 'TIMING_BELT' ? 'CUT_PCS' : 'ALL');
+    setTab(isLotType(next) ? 'CUT_PCS' : 'ALL');
     inputRef.current?.focus();
   }
 
@@ -247,7 +248,7 @@ function SkuCombobox({
           ref={(el) => { (dropdownRef as React.MutableRefObject<HTMLDivElement | null>).current = el; (nav.listRef as React.MutableRefObject<HTMLDivElement | null>).current = el; }}
           className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg max-h-72 overflow-y-auto"
         >
-          {category === 'TIMING_BELT' && (
+          {isLotType(category) && (
           <div className="sticky top-0 z-10 flex gap-1 bg-surface border-b border-line px-2 py-1.5">
             {([['CUT_PCS', `Cut Pcs (${cutCount})`], ['FULL_SLEEVE', `Full Sleeve (${fullCount})`], ['ALL', 'Show all']] as const).map(([k, label]) => (
               <button
@@ -273,7 +274,7 @@ function SkuCombobox({
             const atpColour =
               avail <= 0
                 ? 'text-danger'
-                : !group && sku.product_type !== 'TIMING_BELT' && avail < (sku.min_stock_level ?? 0)
+                : !group && !isLotType(sku.product_type) && avail < (sku.min_stock_level ?? 0)
                 ? 'text-warn'
                 : 'text-ok';
             return (
@@ -301,9 +302,9 @@ function SkuCombobox({
                   <div className="text-[13px] text-ink-3 truncate">{sku.brand_name} · {sku.exact_size}</div>
                 </div>
                 <div className="text-right shrink-0">
-                  <div className="text-[13px] text-ink-3">{group ? groupText(group) : sku.unit_code}</div>
+                  <div className="text-[13px] text-ink-3">{group ? groupText(group, lotUnitWord(sku.product_type)) : sku.unit_code}</div>
                   <div className={`text-[13px] font-medium ${atpColour}`}>
-                    {avail} {group ? 'mm ' : ''}avail
+                    {avail} {group ? `${lotUnitWord(sku.product_type)} ` : ''}avail
                   </div>
                 </div>
               </button>
@@ -370,7 +371,7 @@ function lineQM(li: { quantity: string; pieces: string; mm: string }): { pieces:
 }
 /** pieces × mm of a line, only for lines entered as MM × PCS (timing belts / direct MM lines). */
 function qmOf(li: LineItem, isDirect: boolean): { pieces: number; mm: number } | null {
-  const isQm = isDirect ? li.manualUnit === 'MM' : li.skuSearch.sku?.product_type === 'TIMING_BELT';
+  const isQm = isDirect ? li.manualUnit === 'MM' : isLotType(li.skuSearch.sku?.product_type);
   if (!isQm) return null;
   const qm = lineQM(li);
   const pieces = Math.floor(Number(qm.pieces)) || 0, mm = Number(qm.mm) || 0;
@@ -744,7 +745,7 @@ export default function ProductionOrdersView({
       const li = validItems[i];
       const row = rows[i];
       const sku = li.skuSearch.sku;
-      if (!row || sku?.product_type !== 'TIMING_BELT') continue;       // only roll-tracked SKUs have lots
+      if (!row || !sku || !isLotType(sku.product_type)) continue;      // only roll-tracked SKUs have lots
       const qtyNeeded = li.quantity ? Number(li.quantity) : 0;
       const totalAllocated = li.allocations.reduce((sum, a) => sum + a.qty, 0);
 
@@ -1022,7 +1023,8 @@ export default function ProductionOrdersView({
 
                 // Timing belts are lot-tracked (each lot has its own length). Everything else
                 // goes straight to the book ledger, no lot picker shown.
-                const isLotTracked = li.skuSearch.sku?.product_type === 'TIMING_BELT';
+                const isLotTracked = isLotType(li.skuSearch.sku?.product_type);
+                const uWord = lotUnitWord(li.skuSearch.sku?.product_type);       // mm / ribs
                 const qtyNum = parseFloat(li.quantity) || 0;
 
                 return (
@@ -1053,7 +1055,7 @@ export default function ProductionOrdersView({
                             {grp ? (
                               <>
                                 <span className={`badge mr-1.5 ${grp.status === 'FULL_SLEEVE' ? 'badge-ok' : 'badge-warn'}`}>{groupLabel(grp)}</span>
-                                {groupText(grp)}
+                                {groupText(grp, uWord)}
                               </>
                             ) : (
                               <>{li.skuSearch.sku.brand_name} · {li.skuSearch.sku.exact_size}</>
@@ -1073,7 +1075,7 @@ export default function ProductionOrdersView({
                           const cls = `field text-center ${over ? 'border-danger focus:ring-danger/30' : ''}`;
                           return (
                             <div className="flex items-center gap-1.5">
-                              <input className={`${cls} w-24`} inputMode="decimal" placeholder="MM" value={qm.mm}
+                              <input className={`${cls} w-24`} inputMode="decimal" placeholder={uWord.toUpperCase()} value={qm.mm}
                                 onChange={(e) => { const m = e.target.value.replace(/[^0-9.]/g, ''); setLineQty(li.id, qmTotal(qm.pieces, m), { pieces: qm.pieces, mm: m }); }} />
                               <span className="text-ink-3 font-semibold">×</span>
                               <input className={`${cls} w-16`} inputMode="numeric" placeholder="PCS" value={qm.pieces}

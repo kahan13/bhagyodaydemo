@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Search, Plus, Pencil, ToggleLeft, ToggleRight, X } from 'lucide-react';
 import { PRODUCT_TYPE_LABEL, type Permission, type ProductType } from '@/lib/types';
 import { PRODUCT_TYPES, TYPE_META, UNSPECIFIED, buildIdentity, isIdentityError } from '@/lib/sheet-config';
+import { isLotType, lotUnitHead, lotUnitWord } from '@/lib/lotUnit';
 import { fmtMsl } from '@/lib/format';
 import { makeMatcher } from '@/lib/search';
 import RollEntry, { emptyRolls, rollsPayload, rollsTotal, type RollRows } from '@/components/inventory/RollEntry';
@@ -130,11 +131,11 @@ export default function ProductMasterView({
     const adding = dialog === 'add';
     const rollList = rollsPayload(openRolls);
     const opening = !adding || !hasStock ? undefined
-      : form.product_type === 'TIMING_BELT' ? { rows: rollList } : { qty: Number(openQty) || 0 };
-    if (adding && hasStock && ((form.product_type === 'TIMING_BELT' && rollList.length === 0) || (form.product_type !== 'TIMING_BELT' && !(Number(openQty) > 0)))) {
+      : isLotType(form.product_type) ? { rows: rollList } : { qty: Number(openQty) || 0 };
+    if (adding && hasStock && ((isLotType(form.product_type) && rollList.length === 0) || (!isLotType(form.product_type) && !(Number(openQty) > 0)))) {
       setSaving(false);
-      setErr(form.product_type === 'TIMING_BELT'
-        ? 'Enter MM and PCS for at least one row, or switch "existing inventory" off.'
+      setErr(isLotType(form.product_type)
+        ? `Enter ${lotUnitHead(form.product_type)} and PCS for at least one row, or switch "existing inventory" off.`
         : 'Enter the quantity in stock, or switch "existing inventory" off.');
       return;
     }
@@ -172,7 +173,7 @@ export default function ProductMasterView({
   const counts: Record<string, number> = { ALL: products.filter(active).length };
   for (const t of PRODUCT_TYPES) counts[t] = products.filter((p) => active(p) && p.product_type === t).length;
 
-  const unitLabel = (p: Product) => (p.unit_code === 'MM' ? 'mm' : p.unit_code);
+  const unitLabel = (p: Product) => (p.unit_code === 'MM' ? 'mm' : p.unit_code === 'RIB' ? 'ribs' : p.unit_code);
   const lockId = dialog === 'edit';
   const missingSet = new Set(editing?.missing_fields ?? []);
   // In edit mode an identity field is open only if the import left it blank.
@@ -329,8 +330,8 @@ export default function ProductMasterView({
                 </div>
               ) : (
                 <div>
-                  <label className="label">{form.product_type === 'V_BELT' ? 'Section of V Belt' : 'Section of Timing Belt'} <span className="text-danger">*</span></label>
-                  <input className="field w-full" disabled={lockedField('Section')} value={form.section} onChange={(e) => set('section', e.target.value)} placeholder="e.g. L, MXL, A, B" />
+                  <label className="label">{form.product_type === 'V_BELT' ? 'Section of V Belt' : form.product_type === 'POLY_V_BELT' ? 'Section of Poly V Belt' : 'Section of Timing Belt'} <span className="text-danger">*</span></label>
+                  <input className="field w-full" disabled={lockedField('Section')} value={form.section} onChange={(e) => set('section', e.target.value)} placeholder={form.product_type === 'POLY_V_BELT' ? 'e.g. PH, PJ, PK, PL, PM' : 'e.g. L, MXL, A, B'} />
                 </div>
               )}
 
@@ -401,16 +402,16 @@ export default function ProductMasterView({
                   </button>
                   {hasStock && (
                     <div className="px-3.5 pb-3.5 pt-1 space-y-2 border-t border-line">
-                      {form.product_type === 'TIMING_BELT' ? (
+                      {isLotType(form.product_type) ? (
                         <>
                           <p className="text-[13px] text-ink-3 pt-2">
-                            Type each length as <strong>MM × PCS</strong> and pick <strong>Full sleeve</strong> or <strong>Cut pcs</strong> for the row.
+                            Type each length as <strong>{lotUnitHead(form.product_type)} × PCS</strong> and pick <strong>Full sleeve</strong> or <strong>Cut pcs</strong> for the row.
                             Add a row for every different length.
                           </p>
-                          <RollEntry rows={openRolls} onChange={setOpenRolls} />
+                          <RollEntry rows={openRolls} onChange={setOpenRolls} unit={lotUnitWord(form.product_type)} />
                           {rollsTotal(rollsPayload(openRolls)) > 0 && (
                             <p className="text-[13px] text-ink-3">
-                              Stock will start at <strong className="text-ink num">{rollsTotal(rollsPayload(openRolls))} mm</strong>.
+                              Stock will start at <strong className="text-ink num">{rollsTotal(rollsPayload(openRolls))} {lotUnitWord(form.product_type)}</strong>.
                             </p>
                           )}
                         </>

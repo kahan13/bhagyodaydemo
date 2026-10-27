@@ -1,4 +1,4 @@
-export type ProductType = 'TIMING_BELT' | 'V_BELT' | 'CONVEYOR_BELT';
+export type ProductType = 'TIMING_BELT' | 'V_BELT' | 'CONVEYOR_BELT' | 'POLY_V_BELT';
 export type TxnType = 'INWARD' | 'OUTWARD' | 'ADJUSTMENT';
 export type TxnMode = 'NORMAL' | 'REVERSAL';
 export type Channel = 'WEB' | 'MOBILE_PWA' | 'MOBILE_VOICE' | 'IMPORT' | 'SYSTEM';
@@ -295,6 +295,7 @@ export const HIERARCHY: Record<ProductType, { label: string; short: string; leve
   TIMING_BELT:   { label: 'Timing Belts',   short: 'Timing',   levels: ['Product Family', 'Section', 'Size · Make'] },
   V_BELT:        { label: 'V-Belts',        short: 'V-Belt',   levels: ['Product Family', 'Make',    'Section · Size'] },
   CONVEYOR_BELT: { label: 'Conveyor Belts', short: 'Conveyor', levels: ['Product Family', 'Colour',  'Size · Make'] },
+  POLY_V_BELT:   { label: 'Poly V Belts',   short: 'Poly V',   levels: ['Product Family', 'Section', 'Size · Make'] },
 };
 
 /** Display names for a product type, used by filters, badges and reports. */
@@ -302,4 +303,5 @@ export const PRODUCT_TYPE_LABEL: Record<ProductType, string> = {
   TIMING_BELT: 'Timing Belt',
   V_BELT: 'V-Belt',
   CONVEYOR_BELT: 'Conveyor Belt',
+  POLY_V_BELT: 'Poly V Belt',
 };

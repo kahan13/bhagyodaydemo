@@ -148,8 +148,9 @@ async function handle(req: Request) {
         }
         uom = toNumber(cellOf(sh.mapping, row, 'uom_mm'));
         if (uom === null || uom <= 0) {
-          issue('SKIPPED', 'UOM in MM is missing — product kept, no stock loaded from this row');
-          notes.push('UOM in MM missing — no stock loaded'); qty = 0; lot = null; uom = null;
+          const what = meta.unit === 'RIB' ? 'No. of Ribs' : 'UOM in MM';
+          issue('SKIPPED', `${what} is missing — product kept, no stock loaded from this row`);
+          notes.push(`${what} missing — no stock loaded`); qty = 0; lot = null; uom = null;
         } else if (!Number.isInteger(qty)) {
           issue('SKIPPED', 'QTY must be a whole number of pieces — product kept, no stock loaded from this row');
           notes.push('QTY not whole — no stock loaded'); qty = 0; lot = null; uom = null;
@@ -196,7 +197,7 @@ async function handle(req: Request) {
         family: built.family, sectionOrColour: built.section ?? built.colour ?? '',
         size: built.sizeLabel, brand: built.brand,
         lot: lot ? (lot === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs') : '',
-        load: qty === 0 ? 'no stock' : meta.usesLots ? `${uom} mm × ${qty} pcs = ${load} mm` : `+${load} pcs`,
+        load: qty === 0 ? 'no stock' : meta.usesLots ? `${uom} ${meta.unit === 'RIB' ? 'ribs' : 'mm'} × ${qty} pcs = ${load} ${meta.unit === 'RIB' ? 'ribs' : 'mm'}` : `+${load} pcs`,
         msl: msl === null ? '' : String(msl),
         note: notes.join(' · ') || (sku ? 'Matched to existing SKU' : 'SKU not in Product Master — will be created'),
       });
@@ -216,7 +217,7 @@ async function handle(req: Request) {
     skipped,
     filledRows,
     withMsl: mslByKey.size,
-    unit: types.every((t) => TYPE_META[t].unit === 'MM') ? 'mm' : types.every((t) => TYPE_META[t].unit === 'PCS') ? 'pcs' : 'mm / pcs',
+    unit: [...new Set(types.map((t) => (TYPE_META[t].unit === 'RIB' ? 'ribs' : TYPE_META[t].unit.toLowerCase())))].join(' / '),
     errors: skipped,
     mode,
   };

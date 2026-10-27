@@ -97,7 +97,7 @@ export default function OrderCard({
                           className={`badge ${p.label === 'Full Sleeve' ? 'badge-ok' : 'badge-warn'}`}
                           title={p.label === 'Full Sleeve' && p.piece > p.qty ? `${p.qty} of a ${p.piece} sleeve — rest becomes Cut Pcs` : undefined}
                         >
-                          {p.label} {fmtQty(p.qty, 'MM')}
+                          {p.label} {fmtQty(p.qty, item.unit_code === 'RIB' ? 'RIB' : 'MM')}
                         </span>
                       ))}
                     </span>

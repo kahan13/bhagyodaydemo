@@ -17,7 +17,7 @@ export default async function InventoryPage({
   if (view === 'reorder') return <ReorderList canTick={session.permissions.includes('transactions.create')} />;
 
   const initialType: ProductType =
-    type === 'V_BELT' || type === 'CONVEYOR_BELT' ? type : 'TIMING_BELT';
+    type === 'V_BELT' || type === 'CONVEYOR_BELT' || type === 'POLY_V_BELT' ? type : 'TIMING_BELT';
 
   return (
     <InventoryBrowser

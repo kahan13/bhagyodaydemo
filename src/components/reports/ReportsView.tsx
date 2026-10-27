@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { FileSpreadsheet, FileText, RefreshCw } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { fmtDate, fmtQty, fmtMsl, fmtDateTime, fmtMmPcs } from '@/lib/format';
+import { isLotType, lotUnitWord } from '@/lib/lotUnit';
 
 type ReportKind =
   | 'current_stock' | 'needs_ordering' | 'movements' | 'inward' | 'outward'
@@ -111,7 +112,7 @@ export default function ReportsView({
         ]);
         // Timing belts: MSL (and the reorder figure) count pieces, not mm.
         setRows(((data ?? []) as Record<string, unknown>[]).map((r) =>
-          r.product_type === 'TIMING_BELT'
+          isLotType(r.product_type as string)
             ? { ...r,
                 min_stock_level: fmtMsl(r.min_stock_level as number, 'MM', 'TIMING_BELT'),
                 suggested_purchase_qty: fmtMsl(r.suggested_purchase_qty as number, 'MM', 'TIMING_BELT') }
@@ -178,7 +179,7 @@ export default function ReportsView({
           { key: 'brand_name',       label: 'Brand' },
           { key: 'family_code',      label: 'Family' },
           { key: 'quantity',         label: 'Qty',    numeric: true },
-          { key: 'qty_mm',           label: 'MM × Pcs' },
+          { key: 'qty_mm',           label: 'MM / Ribs × Pcs' },
           { key: 'unit_code',        label: 'Unit' },
           { key: 'previous_stock',   label: 'Before', numeric: true },
           { key: 'new_stock',        label: 'After',  numeric: true },
@@ -202,7 +203,8 @@ export default function ReportsView({
   /** "470 mm × 3 pcs Full Sleeve + 445 mm × 1 pcs Cut Pcs" from the lots this movement touched (timing belts). */
   function qtyMm(row: Record<string, unknown>): string {
     const b = row.lot_breakdown as { status?: string; qty?: number }[] | null | undefined;
-    if (row.product_type !== 'TIMING_BELT' || !Array.isArray(b) || b.length === 0) return '—';
+    if (!isLotType(row.product_type as string) || !Array.isArray(b) || b.length === 0) return '—';
+    const word = lotUnitWord(row.product_type as string);
     const label: Record<string, string> = { FULL_SLEEVE: 'Full Sleeve', CUT_PCS: 'Cut Pcs', WASTED: 'Waste' };
     const by = new Map<string, { n: number; qty: number; st: string }>();
     for (const e of b) {
@@ -214,7 +216,7 @@ export default function ReportsView({
       cur.n += 1;
       by.set(k, cur);
     }
-    const parts = [...by.values()].map((v) => `${fmtMmPcs(v.qty, v.n)}${v.st ? ` ${v.st}` : ''}`);
+    const parts = [...by.values()].map((v) => `${fmtMmPcs(v.qty, v.n, word)}${v.st ? ` ${v.st}` : ''}`);
     return parts.length ? parts.join(' + ') : '—';
   }
 
@@ -223,7 +225,7 @@ export default function ReportsView({
     const value = row[key];
     if (value === null || value === undefined || value === '') return '—';
     if (key === 'occurred_at') return fmtDateTime(String(value));
-    if (key === 'product_type') return ({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt' } as Record<string, string>)[String(value)] ?? String(value ?? '—');
+    if (key === 'product_type') return ({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt', POLY_V_BELT: 'Poly V Belt' } as Record<string, string>)[String(value)] ?? String(value ?? '—');
     if (key === 'stock_status') return String(value).replace(/_/g, ' ').toLowerCase();
     if (key === 'quantity' && kind === 'waste' && typeof value === 'number') return fmtQty(Math.abs(value));
     if (typeof value === 'number') return fmtQty(value);

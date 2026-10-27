@@ -6,6 +6,7 @@ import { Search, X } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { onDataChanged } from '@/lib/dataSync';
 import { fmtMsl, fmtQty } from '@/lib/format';
+import { isLotType, lotUnitWord } from '@/lib/lotUnit';
 import { makeMatcher } from '@/lib/search';
 import InventoryTabs from './InventoryTabs';
 
@@ -18,7 +19,7 @@ import InventoryTabs from './InventoryTabs';
 interface Row {
   id: string;
   sku_code: string;
-  product_type: 'TIMING_BELT' | 'V_BELT' | 'CONVEYOR_BELT';
+  product_type: 'TIMING_BELT' | 'V_BELT' | 'CONVEYOR_BELT' | 'POLY_V_BELT';
   exact_size: string;
   brand_name: string;
   family_code: string;
@@ -36,14 +37,15 @@ const TABS = [
   { id: 'TIMING_BELT', label: 'Timing belts' },
   { id: 'V_BELT', label: 'V-belts' },
   { id: 'CONVEYOR_BELT', label: 'Conveyor' },
+  { id: 'POLY_V_BELT', label: 'Poly V' },
 ] as const;
-const TYPE_SHORT: Record<string, string> = { TIMING_BELT: 'Timing', V_BELT: 'V-belt', CONVEYOR_BELT: 'Conveyor' };
-const TYPE_ORDER: Record<string, number> = { TIMING_BELT: 0, V_BELT: 1, CONVEYOR_BELT: 2 };
+const TYPE_SHORT: Record<string, string> = { TIMING_BELT: 'Timing', V_BELT: 'V-belt', CONVEYOR_BELT: 'Conveyor', POLY_V_BELT: 'Poly V' };
+const TYPE_ORDER: Record<string, number> = { TIMING_BELT: 0, V_BELT: 1, CONVEYOR_BELT: 2, POLY_V_BELT: 3 };
 
 const stockLabel = (r: Row): string =>
-  r.product_type !== 'TIMING_BELT'
+  !isLotType(r.product_type)
     ? fmtQty(r.current_stock, r.unit_code)
-    : `${fmtMsl(r.stock_pieces ?? 0, r.unit_code, r.product_type)} (${fmtQty(r.current_stock)} mm)`;
+    : `${fmtMsl(r.stock_pieces ?? 0, r.unit_code, r.product_type)} (${fmtQty(r.current_stock)} ${lotUnitWord(r.product_type)})`;
 
 export default function ReorderList({ canTick }: { canTick: boolean }) {
   const [rows, setRows] = useState<Row[]>([]);

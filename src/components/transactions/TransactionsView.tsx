@@ -120,7 +120,7 @@ export default function TransactionsView({
             <Select label="Entry" value={filters.mode} onChange={(v) => setParam({ mode: v })}
               options={[['NORMAL', 'Normal'], ['REVERSAL', 'Reversal']]} />
             <Select label="Product Type" value={filters.product} onChange={(v) => setParam({ product: v })}
-              options={[['TIMING_BELT', 'Timing Belt'], ['V_BELT', 'V-Belt'], ['CONVEYOR_BELT', 'Conveyor Belt']]} width="w-[140px]" />
+              options={[['TIMING_BELT', 'Timing Belt'], ['V_BELT', 'V-Belt'], ['CONVEYOR_BELT', 'Conveyor Belt'], ['POLY_V_BELT', 'Poly V Belt']]} width="w-[140px]" />
             <Select label="Brand" value={filters.brand} onChange={(v) => setParam({ brand: v })}
               options={facets.brands.map((b) => [b, b])} width="w-[150px]" />
             <Select label="Family" value={filters.family} onChange={(v) => setParam({ family: v })}
@@ -176,7 +176,7 @@ export default function TransactionsView({
                     <p className="text-[13px] text-ink-3 mt-0.5">
                       {m.brand_name}
                       {' · '}
-                      {({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt' } as Record<string, string>)[m.product_type] ?? '—'}
+                      {({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt', POLY_V_BELT: 'Poly V Belt' } as Record<string, string>)[m.product_type] ?? '—'}
                     </p>
                   </td>
                   <td>
@@ -322,7 +322,7 @@ function StateBlock({ m, which }: { m: Movement; which: 'before' | 'after' }) {
           {g.length === 0 && <span className="text-[14px] text-ink-3">no stock in lots</span>}
           {g.map((x) => (
             <span key={x.status + x.each} className={`chip ${lotChip(x.status)}`} title={LOT_NAME[x.status]}>
-              {fmtMmPcs(x.each, x.count)} {SHORT[x.status]}
+              {fmtMmPcs(x.each, x.count, m.unit_code === 'RIB' ? 'ribs' : 'mm')} {SHORT[x.status]}
             </span>
           ))}
         </div>

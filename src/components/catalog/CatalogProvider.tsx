@@ -118,8 +118,8 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
     const row = cache.find((s) => s.sku_code === skuCode);
     if (!row) return;
     row.current_stock = newStock;
-    // Timing belts: MSL counts pieces, which only the server knows — keep its status until refresh().
-    if (row.product_type === 'TIMING_BELT') { setSkus([...cache]); return; }
+    // Timing / poly V belts: MSL counts pieces, which only the server knows — keep its status until refresh().
+    if (row.product_type === 'TIMING_BELT' || row.product_type === 'POLY_V_BELT') { setSkus([...cache]); return; }
     row.stock_status = newStock <= 0 ? 'OUT_OF_STOCK'
       : newStock < row.min_stock_level ? 'LOW_STOCK' : 'OK';
     row.shortfall = Math.max(row.min_stock_level - newStock, 0);

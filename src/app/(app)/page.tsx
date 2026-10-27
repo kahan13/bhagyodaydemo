@@ -10,7 +10,9 @@ import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
-const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor' };
+const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor', POLY_V_BELT: 'Poly V' };
+/** "mm" for timing belts, "ribs" for poly V belts — decided by the unit the product is stocked in. */
+const wordOfUnit = (unit?: string | null): string => ((unit ?? '').toUpperCase() === 'RIB' ? 'ribs' : 'mm');
 
 const PO_STATUS_LABEL: Record<string, string> = {
   CREATED:     'Created',
@@ -42,10 +44,10 @@ function lotSplit(entries: LotEntry[], unit: string): string {
     .map(([st, q]) => `${fmtQty(q, unit)} ${LOT_NAME[st] ?? st}`).join(' + ');
 }
 /** "50 mm × 4 pcs" for an inward's new lots. */
-function rollsText(entries: LotEntry[]): string {
+function rollsText(entries: LotEntry[], unit?: string): string {
   const by = new Map<number, number>();
   for (const e of entries) by.set(Number(e.qty), (by.get(Number(e.qty)) ?? 0) + 1);
-  return [...by.entries()].map(([len, n]) => fmtMmPcs(len, n)).join(' + ');
+  return [...by.entries()].map(([len, n]) => fmtMmPcs(len, n, wordOfUnit(unit))).join(' + ');
 }
 
 /* ── Transactions pane ───────────────────────────────────────────────────── */
@@ -97,7 +99,7 @@ async function Transactions() {
             <span className="shrink-0 text-right">
               {m.lot_tracked && m.lot_breakdown && m.lot_breakdown.length > 0 && (
                 <span className="block text-[13px] text-ink-2 num leading-tight">
-                  {sign === '+' ? rollsText(m.lot_breakdown) : lotSplit(m.lot_breakdown, m.unit_code)}
+                  {sign === '+' ? rollsText(m.lot_breakdown, m.unit_code) : lotSplit(m.lot_breakdown, m.unit_code)}
                 </span>
               )}
               <span className={`num text-[14px] font-semibold ${color}`}>
@@ -211,7 +213,7 @@ async function OrdersPane() {
         brand_name:    skuMap[i.sku_id]?.brand_name        ?? '—',
         unit_code:     skuMap[i.sku_id]?.unit_code         ?? '',
         product_type:  skuMap[i.sku_id]?.product_type      ?? '',
-        ordered_as:    i.ordered_pieces && i.ordered_length_mm ? `${fmtMmPcs(Number(i.ordered_length_mm), i.ordered_pieces)}${i.ordered_is_cut ? ' cut pcs' : ''}` : '',
+        ordered_as:    i.ordered_pieces && i.ordered_length_mm ? `${fmtMmPcs(Number(i.ordered_length_mm), i.ordered_pieces, wordOfUnit(skuMap[i.sku_id]?.unit_code))}${i.ordered_is_cut ? ' cut pcs' : ''}` : '',
       }));
     }
   }
@@ -271,7 +273,7 @@ async function OrdersPane() {
                 </div>
                 {remaining > 0 ? (
                   <div className="text-[12px] text-warn num">
-                    {lotLine ? `${fmtMmPcs(Number(i.ordered_length_mm), pcsLeft)} left` : `${remaining} left`}
+                    {lotLine ? `${fmtMmPcs(Number(i.ordered_length_mm), pcsLeft, wordOfUnit(i.unit_code))} left` : `${remaining} left`}
                   </div>
                 ) : (
                   <div className="text-[12px] text-ok flex items-center justify-end gap-0.5">
@@ -480,7 +482,7 @@ async function ProductionOrdersPane() {
 async function LowStock() {
   const db = await supabaseServer();
   const PER_TYPE = 40;
-  const types = ['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT'] as const;
+  const types = ['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT', 'POLY_V_BELT'] as const;
 
   // One query per category so a long list in one category can never push another one off the pane.
   const [anyMslRes, ...perType] = await Promise.all([

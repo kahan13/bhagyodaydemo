@@ -25,7 +25,7 @@ export function qtySplit(entries: LotEntry[] | null | undefined, unit: string, i
     for (const e of entries) by.set(Number(e.qty), (by.get(Number(e.qty)) ?? 0) + 1);
     return [...by.entries()].map(([len, n]) => ({
       key: `r${len}`, status: 'FULL_SLEEVE',
-      text: `${fmtMmPcs(len, n)} Full Sleeve`,
+      text: `${fmtMmPcs(len, n, unit.toUpperCase() === 'RIB' ? 'ribs' : 'mm')} Full Sleeve`,
     }));
   }
   const by = new Map<string, number>();

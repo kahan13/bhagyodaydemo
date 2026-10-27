@@ -75,7 +75,7 @@ export function buildMessage(fields: {
     .map((i, idx) => {
       const isMmPcs = i.pieces && i.mm && Number(i.pieces) * Number(i.mm) === Number(i.quantity);
       const qty = isMmPcs
-        ? ` — ${fmtMmPcs(i.mm, i.pieces)} (total ${fmtQty(i.quantity, i.unit_code)})`
+        ? ` — ${fmtMmPcs(i.mm, i.pieces, i.unit_code.toUpperCase() === 'RIB' ? 'ribs' : 'mm')} (total ${fmtQty(i.quantity, i.unit_code)})`
         : i.quantity ? ` — ${fmtQty(i.quantity, i.unit_code)}` : '';
       return `  ${idx + 1}. ${i.display_name}${qty}${i.detail ? ` (${i.detail})` : ''}`;
     });

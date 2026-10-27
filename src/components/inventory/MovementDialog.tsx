@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { X, Check } from 'lucide-react';
 import { fmtQty } from '@/lib/format';
+import { isLotType, lotUnitWord } from '@/lib/lotUnit';
 import type { Channel, Sku } from '@/lib/types';
 import LotBreakdown from '@/components/inventory/LotBreakdown';
 import { OutwardRowsPlan, planRowsOutward } from '@/components/inventory/OutwardPlan';
@@ -30,10 +31,12 @@ export default function MovementDialog({
   const [error, setError] = useState<string | null>(null);
 
   // timing belts: inward and outward are typed as MM × PCS (outward also says Full Sleeve or Cut Pcs)
-  const inRolls = (action === 'inward' || action === 'outward') && sku.product_type === 'TIMING_BELT';
+  // (poly V belts work the same way, in RIBS × PCS)
+  const inRolls = (action === 'inward' || action === 'outward') && isLotType(sku.product_type);
+  const unitWord = lotUnitWord(sku.product_type);
   const rollList = inRolls ? rollsPayload(rolls) : [];
   const rollProblems = action === 'outward' && inRolls && sku.lot_groups && sku.lot_groups.length > 0
-    ? planRowsOutward(sku.lot_groups, rollList).problems : [];
+    ? planRowsOutward(sku.lot_groups, rollList, unitWord).problems : [];
   const amount = inRolls ? rollsTotal(rollList) : Number(qty || 0);
   // For an adjustment the worker types the counted physical stock, not a delta.
   const delta = action === 'adjust' ? amount - sku.current_stock : amount;
@@ -98,7 +101,7 @@ export default function MovementDialog({
               {sku.brand_name} · {sku.family_name}
             </p>
             {sku.lot_groups && sku.lot_groups.length > 0 ? (
-              <LotBreakdown groups={sku.lot_groups} className="mt-1.5" />
+              <LotBreakdown groups={sku.lot_groups} unit={unitWord} className="mt-1.5" />
             ) : (
               <p className="num text-[14px] text-ink-2 mt-1.5">
                 In stock {fmtQty(sku.current_stock, sku.unit_code)}
@@ -107,7 +110,7 @@ export default function MovementDialog({
           </div>
 
           {inRolls ? (
-            <RollEntry rows={rolls} onChange={setRolls} mode={action === 'outward' ? 'out' : 'in'} />
+            <RollEntry rows={rolls} onChange={setRolls} mode={action === 'outward' ? 'out' : 'in'} unit={unitWord} />
           ) : (
           <div>
             <label className="label" htmlFor="qty">

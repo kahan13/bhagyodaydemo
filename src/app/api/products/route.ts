@@ -3,6 +3,7 @@ import { supabaseServer, supabaseService } from '@/lib/supabase-server';
 import { requirePermission } from '@/lib/auth';
 import type { ProductType } from '@/lib/types';
 import { PRODUCT_TYPES, UNSPECIFIED, buildIdentity, isIdentityError, uniqueSkuCode } from '@/lib/sheet-config';
+import { isLotType } from '@/lib/lotUnit';
 import { ensureBrandsAndFamilies, loadAllSkus, newSkuRow } from '@/lib/sheet-import-server';
 
 export const dynamic = 'force-dynamic';
@@ -45,12 +46,12 @@ export async function POST(req: Request) {
   // Optional existing inventory. Timing belts: MM × PCS rows, each Full Sleeve (cut:false) or Cut Pcs (cut:true).
   // Other products: a plain quantity.
   const opening = body.opening as { rows?: { rolls?: unknown; roll_length?: unknown; cut?: unknown }[]; qty?: unknown } | undefined;
-  const openRows = type === 'TIMING_BELT' && Array.isArray(opening?.rows)
+  const openRows = isLotType(type) && Array.isArray(opening?.rows)
     ? opening!.rows!
         .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length), cut: r.cut === true }))
         .filter((r) => r.rolls > 0 && r.roll_length > 0)
     : [];
-  const openQty = type !== 'TIMING_BELT' ? Math.max(0, Number(opening?.qty) || 0) : 0;
+  const openQty = !isLotType(type) ? Math.max(0, Number(opening?.qty) || 0) : 0;
   const totalPieces = openRows.reduce((a, r) => a + r.rolls, 0);
   if (totalPieces > 500)
     return NextResponse.json({ error: 'That is more than 500 pieces in one go. Add the product, then use Import Data → 2 · Inventory for large loads.' }, { status: 400 });

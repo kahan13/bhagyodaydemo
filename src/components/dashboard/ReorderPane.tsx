@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { fmtMsl, fmtQty } from '@/lib/format';
+import { isLotType, lotUnitWord } from '@/lib/lotUnit';
 
 /**
  * "Needs reordering" pane for the dashboard — every product category, one tab each.
@@ -14,7 +15,7 @@ import { fmtMsl, fmtQty } from '@/lib/format';
 export interface ReorderRow {
   id: string;
   sku_code: string;
-  product_type: 'TIMING_BELT' | 'V_BELT' | 'CONVEYOR_BELT';
+  product_type: 'TIMING_BELT' | 'V_BELT' | 'CONVEYOR_BELT' | 'POLY_V_BELT';
   exact_size: string;
   brand_name: string;
   unit_code: string;
@@ -31,14 +32,15 @@ const TABS: { id: 'ALL' | ReorderRow['product_type']; label: string }[] = [
   { id: 'TIMING_BELT', label: 'Timing belts' },
   { id: 'V_BELT', label: 'V-belts' },
   { id: 'CONVEYOR_BELT', label: 'Conveyor' },
+  { id: 'POLY_V_BELT', label: 'Poly V' },
 ];
-const TYPE_SHORT: Record<string, string> = { TIMING_BELT: 'Timing', V_BELT: 'V-belt', CONVEYOR_BELT: 'Conveyor' };
-const TYPE_ORDER: Record<string, number> = { TIMING_BELT: 0, V_BELT: 1, CONVEYOR_BELT: 2 };
+const TYPE_SHORT: Record<string, string> = { TIMING_BELT: 'Timing', V_BELT: 'V-belt', CONVEYOR_BELT: 'Conveyor', POLY_V_BELT: 'Poly V' };
+const TYPE_ORDER: Record<string, number> = { TIMING_BELT: 0, V_BELT: 1, CONVEYOR_BELT: 2, POLY_V_BELT: 3 };
 
-/** Timing belts: pieces (what MSL counts), with the length in brackets. Others: their own unit. */
+/** Timing / poly V belts: pieces (what MSL counts), with the length in brackets. Others: their own unit. */
 function stockLabel(r: ReorderRow): string {
-  if (r.product_type !== 'TIMING_BELT') return fmtQty(r.current_stock, r.unit_code);
-  return `${fmtMsl(r.stock_pieces ?? 0, r.unit_code, r.product_type)} (${fmtQty(r.current_stock)} mm)`;
+  if (!isLotType(r.product_type)) return fmtQty(r.current_stock, r.unit_code);
+  return `${fmtMsl(r.stock_pieces ?? 0, r.unit_code, r.product_type)} (${fmtQty(r.current_stock)} ${lotUnitWord(r.product_type)})`;
 }
 
 export default function ReorderPane({ rows, capped, anyMsl, ticked = [] }: { rows: ReorderRow[]; capped: boolean; anyMsl: boolean; ticked?: string[] }) {

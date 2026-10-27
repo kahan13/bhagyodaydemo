@@ -4,6 +4,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { X, Check, Search, ChevronDown } from 'lucide-react';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
 import { fmtQty } from '@/lib/format';
+import { isLotType, lotUnitWord } from '@/lib/lotUnit';
 import type { ProductType, Sku } from '@/lib/types';
 import LotBreakdown, { groupsInline } from '@/components/inventory/LotBreakdown';
 import { OutwardRowsPlan, planRowsOutward } from '@/components/inventory/OutwardPlan';
@@ -82,10 +83,12 @@ export default function DashboardEntryDialog({
   };
 
   // timing belts: typed as MM × PCS; outward also says whether each row comes from Full Sleeve or Cut Pcs
-  const inRolls = sku?.product_type === 'TIMING_BELT';
+  // (poly V belts the same way, as RIBS × PCS)
+  const inRolls = isLotType(sku?.product_type);
+  const unitWord = lotUnitWord(sku?.product_type);
   const rollList = inRolls ? rollsPayload(rolls) : [];
   const rollProblems = action === 'outward' && inRolls && sku?.lot_groups && sku.lot_groups.length > 0
-    ? planRowsOutward(sku.lot_groups, rollList).problems : [];
+    ? planRowsOutward(sku.lot_groups, rollList, unitWord).problems : [];
   const amount = inRolls ? rollsTotal(rollList) : Number(qty || 0);
   const projected = action === 'inward' ? (sku?.current_stock ?? 0) + amount
     : (sku?.current_stock ?? 0) - amount;
@@ -145,7 +148,7 @@ export default function DashboardEntryDialog({
         <div className="p-5 space-y-4">
           {/* Product type */}
           <div className="flex gap-1 p-1 bg-subtle rounded-lg">
-            {(['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT'] as ProductType[]).map((t) => (
+            {(['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT', 'POLY_V_BELT'] as ProductType[]).map((t) => (
               <button
                 key={t} type="button"
                 onClick={() => { setProductType(t); clearSku(); }}
@@ -153,7 +156,7 @@ export default function DashboardEntryDialog({
                   productType === t ? 'bg-surface shadow-sm text-ink' : 'text-ink-3 hover:text-ink'
                 }`}
               >
-                {({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor' } as Record<string, string>)[t]}
+                {({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor', POLY_V_BELT: 'Poly V' } as Record<string, string>)[t]}
               </button>
             ))}
           </div>
@@ -206,7 +209,7 @@ export default function DashboardEntryDialog({
                       s.stock_status === 'OUT_OF_STOCK' ? 'text-danger' :
                       s.stock_status === 'LOW_STOCK' ? 'text-warn' : 'text-ink-2'
                     }`}>
-                      {s.lot_groups && s.lot_groups.length > 0 ? groupsInline(s.lot_groups) : fmtQty(s.current_stock, s.unit_code)}
+                      {s.lot_groups && s.lot_groups.length > 0 ? groupsInline(s.lot_groups, lotUnitWord(s.product_type)) : fmtQty(s.current_stock, s.unit_code)}
                     </span>
                   </button>
                 ))}
@@ -223,7 +226,7 @@ export default function DashboardEntryDialog({
                   <p className="text-[13px] text-ink-3 mt-0.5">{sku.brand_name} · {sku.hier_l1} · {sku.sku_code}</p>
                 </div>
                 {sku.lot_groups && sku.lot_groups.length > 0 ? (
-                  <LotBreakdown groups={sku.lot_groups} />
+                  <LotBreakdown groups={sku.lot_groups} unit={unitWord} />
                 ) : (
                   <span className={`num text-[14px] font-medium ${
                     sku.stock_status === 'OUT_OF_STOCK' ? 'text-danger' :
@@ -239,7 +242,7 @@ export default function DashboardEntryDialog({
           {/* Quantity */}
           {inRolls ? (
             <div>
-              <RollEntry rows={rolls} onChange={setRolls} mode={action === 'outward' ? 'out' : 'in'} />
+              <RollEntry rows={rolls} onChange={setRolls} mode={action === 'outward' ? 'out' : 'in'} unit={unitWord} />
               {amount > 0 && sku && (
                 <p className="text-[14px] text-ink-3 mt-1 num">
                   After: <span className="font-medium">{fmtQty(projected, sku.unit_code)}</span>

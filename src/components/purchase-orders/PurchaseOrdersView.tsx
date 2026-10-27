@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
 import { fmtQty, fmtDate, fmtMmPcs } from '@/lib/format';
+import { isLotType, lotUnitHead, lotUnitWord } from '@/lib/lotUnit';
 import { useListNav } from '@/lib/useListNav';
 import { makeMatcher } from '@/lib/search';
 import { onDataChanged } from '@/lib/dataSync';
@@ -49,11 +50,13 @@ interface Order {
 }
 
 /** Timing belts are ordered / received as MM × PCS (no fixed roll length on the product). */
-const isRoll = (item: OrderItem): boolean => item.skus?.product_type === 'TIMING_BELT';
+const isRoll = (item: OrderItem): boolean => isLotType(item.skus?.product_type);
+/** Poly V belts are the same, measured in ribs instead of mm. */
+const wordOf = (item: OrderItem): string => lotUnitWord(item.skus?.product_type);
 /** "470 mm × 3 pcs" — what the line was ordered as. */
 const orderedLabel = (item: OrderItem): string =>
   item.ordered_pieces && item.ordered_length_mm
-    ? `${fmtMmPcs(Number(item.ordered_length_mm), item.ordered_pieces)}${item.ordered_is_cut ? ' cut pcs' : ''}` : '';
+    ? `${fmtMmPcs(Number(item.ordered_length_mm), item.ordered_pieces, wordOf(item))}${item.ordered_is_cut ? ' cut pcs' : ''}` : '';
 /**
  * A line ordered as MM × PCS is received lot by lot: every piece that arrives completes ONE ordered
  * piece, whatever its real length (485 mm against 500 mm still counts as that piece, the 15 mm is
@@ -69,13 +72,13 @@ const isOpen = (item: OrderItem): boolean =>
 /** "500 mm × 1 pcs" for a lot line, "30 m" otherwise. */
 const leftLabel = (item: OrderItem): string =>
   isLot(item)
-    ? fmtMmPcs(Number(item.ordered_length_mm), piecesLeft(item))
+    ? fmtMmPcs(Number(item.ordered_length_mm), piecesLeft(item), wordOf(item))
     : fmtQty(Number(item.ordered_qty) - Number(item.received_qty), item.skus?.unit_code);
 /** Received but not yet recorded into stock. */
 const pendingInward = (item: OrderItem): number =>
   Math.max(0, Number(item.received_qty) - Number(item.inwarded_qty ?? 0));
 
-const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt' };
+const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt', POLY_V_BELT: 'Poly V Belt' };
 
 function StatusBadge({ status }: { status: OrderStatus | ItemStatus }) {
   const map: Record<string, string> = {
@@ -130,7 +133,7 @@ function SkuPicker({ onSelect, selected }: { onSelect: (s: Sku) => void; selecte
   return (
     <div className="space-y-2">
       <div className="flex gap-1 p-0.5 bg-subtle rounded-md">
-        {(['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT'] as ProductType[]).map((t) => (
+        {(['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT', 'POLY_V_BELT'] as ProductType[]).map((t) => (
           <button
             key={t} type="button"
             onClick={() => { setType(t); setSearch(''); }}
@@ -207,6 +210,8 @@ function ReceiveDialog({
   const remaining = item.ordered_qty - item.received_qty;
   const roll      = isRoll(item);
   const ordLen    = Number(item.ordered_length_mm) || 0;
+  const uWord     = wordOf(item);                       // mm / ribs
+  const uHead     = uWord.toUpperCase();               // MM / RIBS
 
   // Roll mode: rows of MM × PCS (prefilled from what is still to come), Full sleeve / Cut pcs per row
   const [rows, setRows] = useState<RollRows>(() => {
@@ -230,14 +235,14 @@ function ReceiveDialog({
     e.preventDefault();
     let body: Record<string, unknown>;
     if (roll) {
-      if (rollTotal <= 0) { setErr('Enter MM and PCS for at least one row.'); return; }
+      if (rollTotal <= 0) { setErr(`Enter ${uHead} and PCS for at least one row.`); return; }
       if (lot) {
         if (pcsEntered > pcsLeft) {
           setErr(`That is ${pcsEntered} pieces but only ${pcsLeft} ${pcsLeft === 1 ? 'is' : 'are'} still to come on this order.`);
           return;
         }
       } else if (rollTotal > remaining) {
-        setErr(`That is ${rollTotal} mm but only ${remaining} mm is left on this order.`); return;
+        setErr(`That is ${rollTotal} ${uWord} but only ${remaining} ${uWord} is left on this order.`); return;
       }
       body = { action: 'receive', item_id: item.id, rolls: rollList, notes: notes || null, complete: !lot && closeShort };
     } else {
@@ -296,11 +301,11 @@ function ReceiveDialog({
 
           {roll ? (
             <>
-              <RollEntry rows={rows} onChange={setRows} maxTotal={lot ? undefined : remaining} />
+              <RollEntry rows={rows} onChange={setRows} maxTotal={lot ? undefined : remaining} unit={uWord} />
               {lot && (
                 <p className="text-[13px] text-ink-3 bg-brand-soft/40 rounded-lg px-3 py-2">
                   Type the <strong>real length</strong> that arrived. Each piece completes one ordered piece
-                  {ordLen > 0 ? <> — a {ordLen} mm piece that comes in shorter or longer is counted as received, and the difference is never shown as outstanding</> : null}.
+                  {ordLen > 0 ? <> — a {ordLen} {uWord} piece that comes in shorter or longer is counted as received, and the difference is never shown as outstanding</> : null}.
                   Pieces you do not enter stay on the order for the next delivery.
                 </p>
               )}
@@ -415,8 +420,8 @@ function CreateOrderDialog({
     setLines((prev) => prev.map((l, j) => j === i ? { ...l, mm: v.replace(/[^0-9.]/g, '') } : l));
   const setCut     = (i: number, cut: boolean) =>
     setLines((prev) => prev.map((l, j) => j === i ? { ...l, cut } : l));
-  const isTiming   = (l: { sku: Sku }) => l.sku.product_type === 'TIMING_BELT';
-  // timing belts: total mm = MM × PCS ; others: plain quantity
+  const isTiming   = (l: { sku: Sku }) => isLotType(l.sku.product_type);     // timing + poly V belts
+  // timing belts: total mm = MM × PCS (poly V: ribs) ; others: plain quantity
   const lineTotal  = (l: { sku: Sku; qty: string; mm: string }) =>
     isTiming(l) ? Math.floor(Number(l.qty) || 0) * (Number(l.mm) || 0) : Number(l.qty) || 0;
 
@@ -510,7 +515,7 @@ function CreateOrderDialog({
                         <input
                           className="field num h-11 w-24 text-[16px]" inputMode="decimal"
                           value={l.mm} onChange={(e) => setMm(i, e.target.value)}
-                          data-po-qty placeholder="MM" aria-label="Length in mm" />
+                          data-po-qty placeholder={lotUnitHead(l.sku.product_type)} aria-label={`Length in ${lotUnitWord(l.sku.product_type)}`} />
                         <span className="text-ink-3 font-semibold">×</span>
                         <input
                           className="field num h-11 w-20 text-[16px]" inputMode="numeric"
@@ -518,7 +523,7 @@ function CreateOrderDialog({
                           placeholder="PCS" aria-label="Number of pieces" />
                         <SleeveToggle cut={l.cut} onChange={(c) => setCut(i, c)} />
                         {lineTotal(l) > 0 && (
-                          <span className="text-[14px] num q-total font-semibold whitespace-nowrap">= {lineTotal(l)} mm</span>
+                          <span className="text-[14px] num q-total font-semibold whitespace-nowrap">= {lineTotal(l)} {lotUnitWord(l.sku.product_type)}</span>
                         )}
                       </>
                     ) : (
@@ -717,7 +722,7 @@ function OrderCard({
                           </span>
                           <span className="text-[13px] text-ink-3 num">
                             Received <strong className="q-in">{item.received_pieces ?? 0} of {item.ordered_pieces} pcs</strong>
-                            {Number(item.received_qty) > 0 && <span> · {fmtQty(item.received_qty, 'MM')}</span>}
+                            {Number(item.received_qty) > 0 && <span> · {fmtQty(item.received_qty, item.skus?.unit_code ?? 'MM')}</span>}
                           </span>
                         </>
                       ) : (
@@ -1030,7 +1035,7 @@ export default function PurchaseOrdersView({ canEdit = true }: { canEdit?: boole
             </div>
             <div className="p-5 space-y-3">
               <p className="text-[15px] text-ink-2">
-                This adds what has been received so far (not yet recorded) from <strong>{recordTarget.order_no}</strong> to stock — book and physical. Timing belts go in as lots of the MM × PCS that was received.
+                This adds what has been received so far (not yet recorded) from <strong>{recordTarget.order_no}</strong> to stock — book and physical. Timing belts (MM × PCS) and poly V belts (RIBS × PCS) go in as lots of what was received.
               </p>
               <div className="bg-subtle rounded-lg p-3 space-y-2">
                 {lines.map((item) => {
