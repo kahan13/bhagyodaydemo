@@ -52,9 +52,34 @@ export async function GET() {
       }
     }
 
+    // Every delivery received against these lines, and — once recorded into stock — its TXN number.
+    const lineIds = (data ?? []).map((i) => String(i.id));
+    type Rec = { id: string; order_item_id: string; qty_received: number; rolls: unknown; received_at: string; notes: string | null; inwarded_at: string | null; inwarded_movement_id: string | null };
+    const recRes = lineIds.length > 0
+      ? await svc.from('purchase_order_receipts')
+          .select('id,order_item_id,qty_received,rolls,received_at,notes,inwarded_at,inwarded_movement_id')
+          .in('order_item_id', lineIds)
+          .order('received_at')
+      : { data: [] as Rec[] };
+    const recs = ((recRes.data ?? []) as unknown as Rec[]);
+    const movIds = [...new Set(recs.map((r) => r.inwarded_movement_id).filter((x): x is string => !!x))];
+    const txnById: Record<string, string> = {};
+    if (movIds.length > 0) {
+      const { data: movs } = await svc.from('inventory_movements').select('id,txn_no').in('id', movIds);
+      for (const m of (movs ?? []) as { id: string; txn_no: string }[]) txnById[m.id] = m.txn_no;
+    }
+    const recsByItem: Record<string, unknown[]> = {};
+    for (const r of recs) {
+      (recsByItem[r.order_item_id] ??= []).push({
+        id: r.id, qty_received: Number(r.qty_received), rolls: r.rolls, received_at: r.received_at, notes: r.notes,
+        inwarded_at: r.inwarded_at, txn_no: r.inwarded_movement_id ? (txnById[r.inwarded_movement_id] ?? null) : null,
+      });
+    }
+
     items = (data ?? []).map((i: { sku_id: string; [key: string]: unknown }) => ({
       ...i,
       skus: skuMap[i.sku_id] ?? null,
+      receipts: recsByItem[String(i.id)] ?? [],
     }));
   }
 
@@ -76,7 +101,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Your account can view purchase orders but not change them.' }, { status: 403 });
   const svc = await supabaseService();
 
-  /* ── create order: ONE PO per item, no clubbing ── */
+  /* ── create order: everything in the window is ONE purchase order ── */
   if (action === 'create') {
     const supplier = body.supplier ? String(body.supplier).slice(0, 200) : null;
     const notes    = body.notes    ? String(body.notes).slice(0, 500)    : null;
@@ -87,43 +112,49 @@ export async function POST(request: Request) {
     if (rawItems.length === 0)
       return NextResponse.json({ error: 'Add at least one product.' }, { status: 400 });
 
-    // Fetch current PO count once, then increment for each new order
-    const { count: currentCount } = await svc
-      .from('purchase_orders')
-      .select('id', { count: 'exact', head: true });
+    // One database call: one PO number, every line, all or nothing.
+    const userDb = await supabaseServer();
+    const { data, error } = await userDb.rpc('create_purchase_order_full', {
+      p_supplier: supplier,
+      p_notes: notes,
+      p_items: rawItems.map((i) => ({
+        sku_id: i.sku_id,
+        qty: Number(i.qty),
+        pieces: Number(i.pieces) > 0 && Number(i.length_mm) > 0 ? Math.floor(Number(i.pieces)) : null,
+        length_mm: Number(i.pieces) > 0 && Number(i.length_mm) > 0 ? Number(i.length_mm) : null,
+        cut: i.cut === true,
+      })),
+    });
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    const r = data as { order_id: string; order_no: string; lines: number };
+    return NextResponse.json({ order_id: r.order_id, order_no: r.order_no, lines: r.lines, orders: [{ order_id: r.order_id, order_no: r.order_no }] }, { status: 201 });
+  }
 
-    const createdOrders: { order_id: string; order_no: string }[] = [];
+  /* ── receive several lines of one PO in one go ── */
+  if (action === 'receive_items') {
+    const order_id = String(body.order_id ?? '');
+    if (!order_id) return NextResponse.json({ error: 'order_id required.' }, { status: 400 });
+    const rawLines = Array.isArray(body.lines) ? (body.lines as Record<string, unknown>[]) : [];
+    const lines = rawLines.map((l) => {
+      const rolls = Array.isArray(l.rolls)
+        ? (l.rolls as { rolls: number; roll_length: number; cut?: boolean }[])
+            .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length), cut: r.cut === true }))
+            .filter((r) => r.rolls > 0 && r.roll_length > 0)
+        : [];
+      return {
+        item_id: String(l.item_id ?? ''),
+        rolls,
+        qty: rolls.length ? null : Number(l.qty_received),
+        complete: l.complete === true,
+        notes: l.notes ? String(l.notes).slice(0, 500) : null,
+      };
+    }).filter((l) => l.item_id && (l.rolls.length > 0 || (Number.isFinite(l.qty) && (l.qty as number) > 0)));
+    if (lines.length === 0) return NextResponse.json({ error: 'Enter what was received on at least one line.' }, { status: 400 });
 
-    for (let idx = 0; idx < rawItems.length; idx++) {
-      const item   = rawItems[idx];
-      const orderNo = `PO-${String((currentCount ?? 0) + createdOrders.length + 1).padStart(4, '0')}`;
-
-      const { data: order, error: orderErr } = await svc
-        .from('purchase_orders')
-        .insert({ order_no: orderNo, supplier_name: supplier, notes, status: 'PLACED', created_by: session.user.id })
-        .select('id')
-        .single();
-
-      if (orderErr) return NextResponse.json({ error: orderErr.message }, { status: 400 });
-
-      const { error: itemsErr } = await svc.from('purchase_order_items').insert({
-        order_id:     order.id,
-        sku_id:       item.sku_id,
-        ordered_qty:  Number(item.qty),
-        // timing belts: what was ordered as QTY x MM (ordered_qty stays the total in mm)
-        ordered_pieces:    Number(item.pieces) > 0 && Number(item.length_mm) > 0 ? Math.floor(Number(item.pieces)) : null,
-        ordered_length_mm: Number(item.pieces) > 0 && Number(item.length_mm) > 0 ? Number(item.length_mm) : null,
-        ordered_is_cut:    item.cut === true,
-        received_qty: 0,
-        status:       'PENDING',
-      });
-
-      if (itemsErr) return NextResponse.json({ error: itemsErr.message }, { status: 400 });
-
-      createdOrders.push({ order_id: order.id, order_no: orderNo });
-    }
-
-    return NextResponse.json({ orders: createdOrders }, { status: 201 });
+    const userDb = await supabaseServer();
+    const { data, error } = await userDb.rpc('receive_po_items', { p_order_id: order_id, p_lines: lines });
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    return NextResponse.json({ ok: true, lines_received: (data as { lines_received: number }).lines_received });
   }
 
   /* ── receive item (one delivery; timing belts in rolls) ── */
@@ -174,37 +205,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  /* ── record inward: post everything received but not yet in stock (partial is fine) ── */
+  /* ── record inward: post what was received but is not yet in stock (partial is fine) ──
+        Every SKU — and every delivery of it — becomes its own transaction with its own TXN number,
+        carrying the PO number as its reference, so any one of them can be reversed alone. ── */
   if (action === 'record_inward') {
     const order_id = String(body.order_id ?? '');
-    const item_id  = body.item_id ? String(body.item_id) : '';
-    if (!order_id && !item_id) return NextResponse.json({ error: 'order_id or item_id required.' }, { status: 400 });
+    const itemIds  = Array.isArray(body.item_ids) ? (body.item_ids as unknown[]).map(String)
+                   : body.item_id ? [String(body.item_id)] : null;
+    if (!order_id && !(itemIds && itemIds.length)) return NextResponse.json({ error: 'order_id or item_id required.' }, { status: 400 });
 
-    let itemIds: string[] = [];
-    if (item_id) {
-      itemIds = [item_id];
-    } else {
-      const { data: items, error: iErr } = await svc
-        .from('purchase_order_items')
-        .select('id,received_qty,inwarded_qty')
-        .eq('order_id', order_id);
-      if (iErr) return NextResponse.json({ error: iErr.message }, { status: 500 });
-      itemIds = (items ?? [])
-        .filter((i: { received_qty: number; inwarded_qty: number }) => Number(i.received_qty) > Number(i.inwarded_qty))
-        .map((i: { id: string }) => i.id);
+    let orderId = order_id;
+    if (!orderId && itemIds) {
+      const { data: one } = await svc.from('purchase_order_items').select('order_id').eq('id', itemIds[0]).maybeSingle();
+      orderId = (one as { order_id: string } | null)?.order_id ?? '';
+      if (!orderId) return NextResponse.json({ error: 'Purchase order item not found.' }, { status: 404 });
     }
-    if (itemIds.length === 0)
-      return NextResponse.json({ error: 'Nothing received is waiting to be recorded.' }, { status: 400 });
 
     const userDb = await supabaseServer();
-    const errors: string[] = [];
-    let posted = 0;
-    for (const id of itemIds) {
-      const { error } = await userDb.rpc('record_po_item_inward', { p_item_id: id });
-      if (error) errors.push(error.message); else posted += 1;
-    }
-    if (errors.length > 0) return NextResponse.json({ error: errors.join('; '), recorded: posted }, { status: 400 });
-    return NextResponse.json({ ok: true, recorded: posted });
+    const { data, error } = await userDb.rpc('record_po_inward', { p_order_id: orderId, p_item_ids: itemIds });
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    const r = data as { lines: number; transactions: { txn_no: string; sku_code: string; qty: number }[] };
+    return NextResponse.json({ ok: true, recorded: r.transactions?.length ?? r.lines, lines: r.lines, transactions: r.transactions ?? [] });
   }
 
   return NextResponse.json({ error: 'Unknown action.' }, { status: 400 });

@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { PackageX, RefreshCw, AlertTriangle, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { PackageX, RefreshCw, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import Modal from '@/components/ui/Modal';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { fmtQty } from '@/lib/format';
 import type { Permission } from '@/lib/types';
@@ -74,40 +75,15 @@ function WasteModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
-      <div className="bg-surface rounded-xl shadow-xl w-full max-w-md m-4">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-line">
-          <div className="flex items-center gap-2">
-            <AlertTriangle size={16} className="text-danger" />
-            <h3 className="font-semibold text-[16px]">Mark Lot as Waste</h3>
-          </div>
-          <button onClick={onClose} className="icon-btn"><X size={15} /></button>
-        </div>
-
-        <div className="px-5 py-4 space-y-3">
-          <div className="bg-danger-soft border border-danger-line rounded-lg px-3 py-2.5 text-[14px]">
-            <p className="font-medium text-danger">{lot.lot_no} — <StatusBadge status={lot.status} /></p>
-            <p className="text-danger mt-1">
-              {fmtQty(lot.current_qty, lot.unit_code)} remaining of {fmtQty(lot.roll_length_mm, lot.unit_code)} roll will be written off.
-              This action is <strong>permanent</strong> and cannot be undone.
-            </p>
-          </div>
-
-          <div>
-            <label className="label">Reason <span className="text-danger">*</span></label>
-            <textarea
-              className="input w-full resize-none h-20 text-[15px]"
-              placeholder="e.g. Belt damaged beyond use, only 7mm left…"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              autoFocus
-            />
-          </div>
-
-          {err && <p className="text-[14px] text-danger">{err}</p>}
-        </div>
-
-        <div className="px-5 py-4 border-t border-line flex justify-end gap-3">
+    <Modal
+      title="Mark Lot as Waste"
+      icon={<AlertTriangle size={16} className="text-danger" />}
+      onClose={onClose}
+      z={60}
+      width="max-w-md"
+      bodyClassName="px-5 py-4 space-y-3"
+      footer={
+        <>
           <button onClick={onClose} className="btn" disabled={busy}>Cancel</button>
           <button
             onClick={submit}
@@ -116,9 +92,30 @@ function WasteModal({
           >
             {busy ? 'Processing…' : 'Mark as Waste'}
           </button>
-        </div>
+        </>
+      }
+    >
+      <div className="bg-danger-soft border border-danger-line rounded-lg px-3 py-2.5 text-[14px]">
+        <p className="font-medium text-danger">{lot.lot_no} — <StatusBadge status={lot.status} /></p>
+        <p className="text-danger mt-1">
+          {fmtQty(lot.current_qty, lot.unit_code)} remaining of {fmtQty(lot.roll_length_mm, lot.unit_code)} roll will be written off.
+          This action is <strong>permanent</strong> and cannot be undone.
+        </p>
       </div>
-    </div>
+
+      <div>
+        <label className="label">Reason <span className="text-danger">*</span></label>
+        <textarea
+          className="input w-full resize-none h-20 text-[15px]"
+          placeholder="e.g. Belt damaged beyond use, only 7mm left…"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          autoFocus
+        />
+      </div>
+
+      {err && <p className="text-[14px] text-danger">{err}</p>}
+    </Modal>
   );
 }
 

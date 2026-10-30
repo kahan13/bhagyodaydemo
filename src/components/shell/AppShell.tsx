@@ -17,6 +17,7 @@ import KeyTips, { NAV_KEYS } from '@/components/shell/KeyTips';
 import { GO_KEYS } from '@/lib/shortcuts';
 import { DATA_CHANGED, installFetchWatcher, onDataChanged } from '@/lib/dataSync';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
+import { supabaseBrowser } from '@/lib/supabase-browser';
 
 /** `page` = a page of the daily menu (Admin/Accounts always, Workshop when switched on); `needs` = an Administration permission */
 type Item = { href: string; label: string; icon: typeof Boxes; page?: PageKey; needs?: Permission };
@@ -57,22 +58,68 @@ export default function AppShell({
   // Live refresh: after any save, re-read the server pages and the catalogue — no manual reload.
   useEffect(() => {
     installFetchWatcher();
-    const off = onDataChanged(() => { router.refresh(); refreshCatalog(); });
-
-    let last = Date.now();
-    const poke = () => {                       // coming back to the tab, or the minute timer
-      if (document.visibilityState !== 'visible') return;
-      if (Date.now() - last < 15000) return;
-      last = Date.now();
-      window.dispatchEvent(new Event(DATA_CHANGED));
+    // Refresh only when the server can actually be reached. A refresh that hits a dropped connection
+    // makes Next.js show a crash page, so check first, and back off after a failure.
+    let busy = false, failures = 0, retryAt = 0;
+    const refreshNow = async () => {
+      if (busy || Date.now() < retryAt) return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      busy = true;
+      try {
+        const r = await fetch('/api/ping', { cache: 'no-store' });
+        if (!r.ok) throw new Error('unreachable');
+        failures = 0;
+        router.refresh(); refreshCatalog();
+      } catch {
+        failures += 1;
+        retryAt = Date.now() + Math.min(120000, 5000 * 2 ** failures);
+      } finally { busy = false; }
     };
-    const iv = setInterval(poke, 60000);
-    document.addEventListener('visibilitychange', poke);
-    window.addEventListener('focus', poke);
+    const off = onDataChanged(() => { void refreshNow(); });
+
+    // Changes made on ANOTHER PC arrive through Supabase Realtime. Until it is switched on
+    // (supabase/042_realtime.sql) or while it is disconnected, a short poll covers the gap.
+    let live = false;
+    let last = Date.now();
+    const announce = () => { last = Date.now(); window.dispatchEvent(new Event(DATA_CHANGED)); };   // local event only: no echo to other tabs
+    const poke = (gap: number) => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - last < gap) return;
+      announce();
+    };
+
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const onRemote = () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(announce, 600);       // a burst of row changes -> one refresh
+    };
+    const TABLES = [
+      'production_orders', 'production_order_items', 'lot_allocations', 'sku_lots', 'skus',
+      'inventory_movements', 'purchase_orders', 'purchase_order_items', 'purchase_order_receipts',
+      'prod_pending_adjustments',
+    ];
+    let rt: ReturnType<ReturnType<typeof supabaseBrowser>['channel']> | null = null;
+    try {
+      const sb = supabaseBrowser();
+      rt = sb.channel('bb-live');
+      for (const table of TABLES) rt = rt.on('postgres_changes', { event: '*', schema: 'public', table }, onRemote);
+      rt.subscribe((status: string) => {
+        const was = live;
+        live = status === 'SUBSCRIBED';
+        if (live && !was) announce();             // just (re)connected: catch up on anything missed
+      });
+    } catch { live = false; }
+
+    const iv = setInterval(() => poke(live ? 90000 : 30000), 10000);   // ~30s when Realtime is off, ~1.5 min safety net when on
+    const onVis = () => poke(15000);
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onVis);
     return () => {
       off(); clearInterval(iv);
-      document.removeEventListener('visibilitychange', poke);
-      window.removeEventListener('focus', poke);
+      if (debounce) clearTimeout(debounce);
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onVis);
+      try { if (rt) supabaseBrowser().removeChannel(rt); } catch { /* ignore */ }
     };
   }, [router, refreshCatalog]);
   const [zi, setZiState] = useState(1);

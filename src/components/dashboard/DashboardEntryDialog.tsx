@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { X, Check, Search, ChevronDown } from 'lucide-react';
+import Modal from '@/components/ui/Modal';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
 import { fmtQty } from '@/lib/format';
 import { isLotType, lotUnitWord } from '@/lib/lotUnit';
@@ -132,20 +133,23 @@ export default function DashboardEntryDialog({
   const title = action === 'inward' ? 'Record Inward' : 'Record Outward';
 
   return (
-    <div className="fixed inset-0 z-[70] grid place-items-center bg-ink/30 backdrop-blur-[2px] p-4">
-      <form
-        onSubmit={submit}
-        className="w-full max-w-[480px] bg-surface border border-line rounded-xl shadow-xl"
-      >
-        {/* Header */}
-        <div className="card-head border-b">
-          <h2 className="card-title">{title}</h2>
-          <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={onClose}>
-            <X size={15} />
+    <Modal
+      title={title}
+      onClose={onClose}
+      onSubmit={submit}
+      width="max-w-[480px]"
+      z={70}
+      bodyClassName="p-5 space-y-4"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={busy || invalid}>
+            {busy ? 'Saving…' : <><Check size={14} /> Confirm</>}
           </button>
-        </div>
+        </>
+      }
+    >
 
-        <div className="p-5 space-y-4">
           {/* Product type */}
           <div className="flex gap-1 p-1 bg-subtle rounded-lg">
             {(['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT', 'POLY_V_BELT'] as ProductType[]).map((t) => (
@@ -336,15 +340,7 @@ export default function DashboardEntryDialog({
           </div>
 
           {error && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>}
-        </div>
-
-        <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl">
-          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={busy || invalid}>
-            {busy ? 'Saving…' : <><Check size={14} /> Confirm</>}
-          </button>
-        </div>
-      </form>
-    </div>
+        
+    </Modal>
   );
 }

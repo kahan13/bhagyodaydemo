@@ -10,12 +10,22 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ProductionOrder } from '@/lib/types';
+import { loadItemParts, partLine, fromTag, totalLine, type AllocPart } from '@/lib/orderParts';
 
 export const PAPER = { widthMm: 80, marginMm: 4, chars: 42, fontPt: 8 } as const;
 export const SHOP_NAME = 'BHAGYODAY BELTS';
+/** empty lines left after the last line, for a name and signature */
+const SIGN_LINES = 7;
 
-export interface ReceiptPart { label: string; qty: number; note?: string }
-export interface ReceiptItem { name: string; qty: number; unit: string; parts: ReceiptPart[]; direct: boolean; pieces?: number | null; mm?: number | null }
+/** One cut: "25 mm × 9 pcs (225 mm total)" and the roll it comes from: "from Cut Pcs of 230 mm". */
+export interface ReceiptPart { text: string; from: string }
+export interface ReceiptItem {
+  name: string; qty: number; unit: string; direct: boolean; pieces?: number | null; mm?: number | null;
+  /** the whole line ("250 mm") — only given when the line has several cuts */
+  total?: string;
+  /** one per cut */
+  parts: ReceiptPart[];
+}
 export interface ReceiptModel {
   orderNo: string;
   createdAt: string;
@@ -69,15 +79,26 @@ export function receiptLines(m: ReceiptModel, chars: number = PAPER.chars): RLin
   kv('Target', m.target);
   L.push({ t: 'rule', ch: '=' });
   text('ITEMS', { bold: true });
+  // Slim and plain: the cut first (its total in brackets), and under it where it is cut from.
+  //   1. H-480 PIX   (250 mm total)       <- only when there are several cuts
+  //      25 mm x 9 pcs (225 mm total)
+  //        from Cut Pcs of 230 mm
+  const ascii = (t: string) => t.replace(/×/g, 'x');
   m.items.forEach((it, i) => {
-    wrap(`${i + 1}. ${it.name}`, chars).forEach((s) => text(s, { bold: true }));
-    text(it.pieces && it.mm && it.pieces * it.mm === it.qty
-      ? `   ${num(it.mm)} ${it.unit.toUpperCase() === 'RIB' ? 'ribs' : 'mm'} x ${num(it.pieces)} pcs = ${num(it.qty)} ${it.unit.toUpperCase() === 'RIB' ? 'ribs' : 'mm'}`
-      : `   Qty: ${num(it.qty)} ${it.unit.toLowerCase()}`);
-    if (it.direct) text('   (direct - no stock)');
-    for (const p of it.parts) {
-      text(`   > ${p.label}: ${num(p.qty)} ${it.unit.toLowerCase()}${p.note ? ` ${p.note}` : ''}`);
+    const head = `${i + 1}. ${it.name}${it.total ? `  (${it.total} total)` : ''}`;
+    wrap(head, chars).forEach((s) => text(s, { bold: true }));
+    if (it.parts.length > 0) {
+      for (const p of it.parts) {
+        text(`   ${ascii(p.text)}`);
+        text(`     [ ${ascii(p.from)} ]`, { bold: true });
+      }
+    } else {
+      const w = it.unit.toUpperCase() === 'RIB' ? 'ribs' : 'mm';
+      text(it.pieces && it.mm && it.pieces * it.mm === it.qty
+        ? `   ${num(it.mm)} ${w} x ${num(it.pieces)} pcs (${num(it.qty)} ${w} total)`
+        : `   ${num(it.qty)} ${it.unit.toLowerCase()}`);
     }
+    if (it.direct) text('   (direct - no stock)');
     if (i < m.items.length - 1) text('');
   });
   if (m.notes) {
@@ -86,33 +107,16 @@ export function receiptLines(m: ReceiptModel, chars: number = PAPER.chars): RLin
   }
   L.push({ t: 'rule', ch: '=' });
   text(`Printed ${new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })}`, { center: true });
+  // Blank space at the very end for a name and a signature to be written by hand — deliberately no title.
+  for (let i = 0; i < SIGN_LINES; i++) text('');
   return L;
 }
 
 /** Load a plain model for an order, including which lots (Cut Pcs / Full Sleeve) each item uses. */
 export async function loadReceiptModel(db: SupabaseClient, order: ProductionOrder): Promise<ReceiptModel> {
   const items = order.items ?? [];
-  const byItem: Record<string, ReceiptPart[]> = {};
   const ids = items.map((i) => i.id);
-  if (ids.length > 0 && !order.is_direct) {
-    const { data } = await db
-      .from('lot_allocations')
-      .select('item_id,allocated_qty,lot_status,piece_qty,sku_lots(status,current_qty)')
-      .in('item_id', ids);
-    for (const r of (data ?? []) as any[]) {
-      const status: string = r.lot_status ?? r.sku_lots?.status ?? 'CUT_PCS';
-      const piece = Number(r.piece_qty ?? r.sku_lots?.current_qty ?? 0);
-      const qty = Number(r.allocated_qty);
-      (byItem[r.item_id] ??= []).push({
-        label: status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs',
-        qty,
-        note: status === 'FULL_SLEEVE' && piece > qty ? `(of ${num(piece)} sleeve)` : undefined,
-      });
-    }
-    for (const k of Object.keys(byItem)) {
-      byItem[k].sort((a, b) => (a.label === b.label ? 0 : a.label === 'Cut Pcs' ? -1 : 1));
-    }
-  }
+  const byItem: Record<string, AllocPart[]> = (ids.length > 0 && !order.is_direct) ? await loadItemParts(db, ids) : {};
   return {
     orderNo: order.order_no,
     createdAt: order.created_at,
@@ -123,15 +127,19 @@ export async function loadReceiptModel(db: SupabaseClient, order: ProductionOrde
     deliveryNote: order.delivery_note,
     target: order.time_tag,
     notes: order.notes,
-    items: items.map((i) => ({
-      name: i.display_name,
-      qty: Number(i.quantity),
-      unit: i.unit_code,
-      parts: byItem[i.id] ?? [],
-      direct: !!order.is_direct,
-      pieces: i.pieces ?? null,
-      mm: i.length_mm ?? null,
-    })),
+    items: items.map((i) => {
+      const parts = byItem[i.id] ?? [];
+      return {
+        name: i.display_name,
+        qty: Number(i.quantity),
+        unit: i.unit_code,
+        direct: !!order.is_direct,
+        pieces: i.pieces ?? null,
+        mm: i.length_mm ?? null,
+        total: parts.length > 1 ? totalLine(i) : undefined,
+        parts: parts.map((p) => ({ text: partLine(p, i.unit_code), from: fromTag(p, i.unit_code) })),
+      };
+    }),
   };
 }
 
@@ -152,7 +160,7 @@ export function receiptHtml(m: ReceiptModel, standalone = false): string {
   if (!standalone) return `<style>${css}</style><div class="rc">${body}</div>`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(m.orderNo)}</title><style>
     @page{size:${PAPER.widthMm}mm auto;margin:${PAPER.marginMm}mm}
-    html,body{margin:0;padding:0;background:#fff}${css}</style></head><body><div class="rc">${body}</div></body></html>`;
+    html,body{margin:0;padding:0;background:#fff}${css}.rc{padding-bottom:2mm}</style></head><body><div class="rc">${body}</div></body></html>`;
 }
 
 export function printReceipt(m: ReceiptModel) {

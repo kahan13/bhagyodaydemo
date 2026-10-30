@@ -11,6 +11,11 @@ import type {
   PendingAdjustment,
 } from '@/lib/types';
 import { fmtMmPcs, fmtLineQty, fmtQty } from '@/lib/format';
+import Modal from '@/components/ui/Modal';
+import { loadItemParts, partLine, partMain, partTotal, fromTag, totalLine, type AllocPart } from '@/lib/orderParts';
+
+export { loadItemParts, partLine, partMain, partTotal, fromTag, totalLine };
+export type { AllocPart };
 
 /**
  * Pieces shared by the two production-order screens:
@@ -54,30 +59,54 @@ export function formatDateTime(iso: string): string {
   return `${date}, ${time}`;
 }
 
+/** "from Cut Pcs of 230 mm" as a coloured chip — green for a full sleeve, amber for cut pieces. Never confused with a total. */
+export function FromChip({ p, unit }: { p: AllocPart; unit?: string | null }) {
+  return (
+    <span className={`badge ${p.status === 'FULL_SLEEVE' ? 'badge-ok' : 'badge-warn'} !h-[22px] !text-[12.5px] mt-0.5`}>
+      {fromTag(p, unit)}
+    </span>
+  );
+}
+
 // ─── WhatsApp message builder ─────────────────────────────────────────────────
 
 export function buildMessage(fields: {
   order_no?: string;
   direct?: boolean;
   customer_name: string;
-  items: Array<{ display_name: string; quantity: string; unit_code: string; detail?: string; pieces?: string; mm?: string }>;
+  items: Array<{
+    display_name: string; quantity: string; unit_code: string; pieces?: string; mm?: string;
+    /** roll-tracked lines: the whole line ("250 mm") — only given when it has more than one entry */
+    total?: string;
+    /** roll-tracked lines: each entry and where it is cut from: { text: "25 mm × 9 pcs (225 mm total)", from: "from Cut Pcs of 230 mm" } */
+    parts?: { text: string; from: string }[];
+  }>;
   time_tag: string;
   delivery_mode: string;
   delivery_note: string;
   assigned_to: string;
   notes: string;
 }) {
-  // Every line says exactly what is wanted, MM first and PCS second:
-  //   1. H-210 — 470 mm × 2 pcs (total 940 mm)
-  //   2. A-38  — 5 pcs
+  // Entry first, its total small beside it, and under it where it is cut from:
+  //   1. H-480 PIX — 250 mm total            (only when the line has several entries)
+  //      25 mm × 9 pcs (225 mm total)
+  //        from Cut Pcs of 230 mm
+  //      25 mm × 1 pcs (25 mm total)
+  //        from Full Sleeve of 450 mm
   const itemLines = fields.items
     .filter((i) => i.display_name)
-    .map((i, idx) => {
+    .flatMap((i, idx) => {
+      if (i.parts && i.parts.length > 0) {
+        return [
+          `  ${idx + 1}. ${i.display_name}${i.total ? ` — ${i.total} total` : ''}`,
+          ...i.parts.flatMap((p) => [`     ${p.text}`, `       ➜ *${p.from}*`]),
+        ];
+      }
       const isMmPcs = i.pieces && i.mm && Number(i.pieces) * Number(i.mm) === Number(i.quantity);
       const qty = isMmPcs
-        ? ` — ${fmtMmPcs(i.mm, i.pieces, i.unit_code.toUpperCase() === 'RIB' ? 'ribs' : 'mm')} (total ${fmtQty(i.quantity, i.unit_code)})`
-        : i.quantity ? ` — ${fmtQty(i.quantity, i.unit_code)}` : '';
-      return `  ${idx + 1}. ${i.display_name}${qty}${i.detail ? ` (${i.detail})` : ''}`;
+        ? `${fmtMmPcs(i.mm, i.pieces, i.unit_code.toUpperCase() === 'RIB' ? 'ribs' : 'mm')} (${fmtQty(i.quantity, i.unit_code)} total)`
+        : i.quantity ? fmtQty(i.quantity, i.unit_code) : '';
+      return [`  ${idx + 1}. ${i.display_name}${qty ? ` — ${qty}` : ''}`];
     });
 
   const lines = [
@@ -95,6 +124,53 @@ export function buildMessage(fields: {
   return lines.join('\n');
 }
 
+/**
+ * A production-order line, the same slim way everywhere:
+ *   H-480 PIX                         250 mm total   ← only when it has several entries
+ *   25 mm × 9 pcs   225 mm total                     ← the entry first; its total small beside it
+ *     from Cut Pcs of 230 mm                         ← and where it is cut from
+ */
+export function ItemBlock({
+  name, badge, item, parts, big = false,
+}: {
+  name: string;
+  badge?: React.ReactNode;
+  item: { quantity: number | string; unit_code?: string | null; pieces?: number | null; length_mm?: number | null };
+  parts?: AllocPart[];
+  big?: boolean;
+}) {
+  const list = parts ?? [];
+  const sz = big ? 'text-[15px]' : 'text-[14px]';
+  const legacy = Number(item.pieces) > 0 && Number(item.length_mm) > 0 && Number(item.pieces) * Number(item.length_mm) === Number(item.quantity);
+  return (
+    <div>
+      <p className={`${big ? 'text-[16px]' : 'text-[15px]'} font-medium text-ink flex items-baseline gap-x-2 flex-wrap`}>
+        <span>{name}</span>
+        {list.length > 1 && <span className="text-[12px] font-normal text-ink-3">{totalLine(item)} total</span>}
+        {badge}
+      </p>
+      {list.length > 0 ? (
+        <div className="mt-0.5 space-y-1">
+          {list.map((p, k) => (
+            <div key={k}>
+              <p className={`${sz} num text-ink`}>
+                {partMain(p, item.unit_code)}
+                {partTotal(p, item.unit_code) && <span className="text-[12px] text-ink-3 ml-2">{partTotal(p, item.unit_code)}</span>}
+              </p>
+              <div><FromChip p={p} unit={item.unit_code} /></div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className={`${sz} num text-ink mt-0.5`}>
+          {legacy ? fmtMmPcs(item.length_mm, item.pieces, (item.unit_code ?? '').toUpperCase() === 'RIB' ? 'ribs' : 'mm') : fmtQty(Number(item.quantity), item.unit_code)}
+          {legacy && <span className="text-[12px] text-ink-3 ml-2">{fmtQty(Number(item.quantity), item.unit_code)} total</span>}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Modals ───────────────────────────────────────────────────────────────────
 
 export function DeleteConfirmModal({
@@ -103,20 +179,15 @@ export function DeleteConfirmModal({
   orderNo: string; onConfirm: () => void; onCancel: () => void; deleting: boolean;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-surface rounded-xl border border-line shadow-xl p-6 max-w-sm w-full space-y-4">
-        <div className="flex items-start gap-3">
-          <div className="mt-0.5 shrink-0 rounded-full bg-danger-soft p-2">
-            <AlertTriangle size={18} className="text-danger" />
-          </div>
-          <div>
-            <h3 className="text-[17px] font-semibold">Delete Order {orderNo}?</h3>
-            <p className="text-[15px] text-ink-3 mt-1">
-              This will permanently delete the order and all its items. Physical stock will be restored.
-            </p>
-          </div>
-        </div>
-        <div className="flex justify-end gap-2">
+    <Modal
+      title={`Delete Order ${orderNo}?`}
+      icon={<span className="shrink-0 rounded-full bg-danger-soft p-1.5"><AlertTriangle size={16} className="text-danger" /></span>}
+      onClose={onCancel}
+      z={50}
+      width="max-w-sm"
+      bodyClassName="p-5"
+      footer={
+        <>
           <button className="btn btn-secondary" onClick={onCancel} disabled={deleting}>Cancel</button>
           <button
             className="btn bg-danger text-white hover:bg-danger/90 border-danger"
@@ -126,9 +197,13 @@ export function DeleteConfirmModal({
             {deleting ? <Loader size={14} className="animate-spin" /> : <Trash2 size={14} />}
             Delete
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <p className="text-[15px] text-ink-3">
+        This will permanently delete the order and all its items. Physical stock will be restored.
+      </p>
+    </Modal>
   );
 }
 
@@ -137,66 +212,40 @@ export function RecordOutwardModal({
   onConfirm,
   onCancel,
   recording,
+  z = 50,
 }: {
   item: MismatchOrderItem;
   onConfirm: (notes: string, invoiceNo: string, operatedBy: string) => void;
   onCancel: () => void;
   recording: boolean;
+  /** raise it when it opens on top of another dialog */
+  z?: 50 | 60 | 70 | 80 | 90;
 }) {
   const [notes, setNotes] = useState('');
   const [invoiceNo, setInvoiceNo] = useState('');
   const [operatedBy, setOperatedBy] = useState('');
   const [users, setUsers] = useState<{ id: string; full_name: string }[]>([]);
+  const [parts, setParts] = useState<AllocPart[]>([]);
   useEffect(() => {
     let alive = true;
     (async () => {
       const { data } = await supabaseBrowser().from('app_users').select('id,full_name').eq('is_active', true).order('full_name');
       if (alive) setUsers((data ?? []) as { id: string; full_name: string }[]);
+      const p = await loadItemParts(supabaseBrowser(), [item.poi_id]);
+      if (alive) setParts(p[item.poi_id] ?? []);
     })();
     return () => { alive = false; };
-  }, []);
+  }, [item.poi_id]);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-surface rounded-xl border border-line shadow-xl p-6 max-w-sm w-full space-y-4">
-        <div className="flex items-start gap-3">
-          <div className="mt-0.5 shrink-0 rounded-full bg-brand/10 p-2">
-            <ArrowDownCircle size={18} className="text-brand" />
-          </div>
-          <div>
-            <h3 className="text-[17px] font-semibold">Record Outward</h3>
-            <p className="text-[15px] text-ink-3 mt-1">
-              Record an OUTWARD inventory entry for{' '}
-              <span className="font-medium text-ink">
-                {fmtLineQty(item)}
-              </span>{' '}
-              from order <span className="font-mono text-brand">{item.order_no}</span>
-              {item.customer_name ? ` (${item.customer_name})` : ''}.
-              This will update both book stock and physical stock.
-            </p>
-          </div>
-        </div>
-        <div>
-          <label className="eyebrow mb-1 block">Invoice no (optional)</label>
-          <input className="field" placeholder="INV-001" value={invoiceNo}
-            onChange={(e) => setInvoiceNo(e.target.value)} autoFocus />
-        </div>
-        <div>
-          <label className="eyebrow mb-1 block">Operated by</label>
-          <select className="field" value={operatedBy} onChange={(e) => setOperatedBy(e.target.value)}>
-            <option value="">— select team member —</option>
-            {users.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="eyebrow mb-1 block">Notes (optional)</label>
-          <input
-            className="field"
-            placeholder="e.g. Dispatched via courier"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-        </div>
-        <div className="flex justify-end gap-2">
+    <Modal
+      title="Record Outward"
+      icon={<span className="shrink-0 rounded-full bg-brand/10 p-1.5"><ArrowDownCircle size={16} className="text-brand" /></span>}
+      onClose={onCancel}
+      z={z}
+      width="max-w-sm"
+      bodyClassName="p-5 space-y-4"
+      footer={
+        <>
           <button className="btn btn-secondary" onClick={onCancel} disabled={recording}>Cancel</button>
           <button
             className="btn btn-primary"
@@ -206,9 +255,52 @@ export function RecordOutwardModal({
             {recording ? <Loader size={14} className="animate-spin" /> : <CheckSquare size={14} />}
             Confirm Outward
           </button>
+        </>
+      }
+    >
+      <p className="text-[15px] text-ink-3">
+        Record an OUTWARD inventory entry for{' '}
+        <span className="font-medium text-ink">{fmtLineQty(item)}</span>{' '}
+        from order <span className="font-mono text-brand">{item.order_no}</span>
+        {item.customer_name ? ` (${item.customer_name})` : ''}.
+        This will update both book stock and physical stock.
+      </p>
+      {parts.length > 0 && (
+        <div className="rounded-lg border border-line bg-subtle px-3 py-2.5 space-y-1">
+          <p className="eyebrow">Will be taken from</p>
+          {parts.map((p, k) => (
+            <div key={k} className="num">
+              <p className="text-[14px]">
+                <span className="font-semibold">{partMain(p, item.unit_code)}</span>
+                {partTotal(p, item.unit_code) && <span className="text-[12px] text-ink-3 ml-2">{partTotal(p, item.unit_code)}</span>}
+              </p>
+              <div><FromChip p={p} unit={item.unit_code} /></div>
+            </div>
+          ))}
         </div>
+      )}
+      <div>
+        <label className="eyebrow mb-1 block">Invoice no (optional)</label>
+        <input className="field" placeholder="INV-001" value={invoiceNo}
+          onChange={(e) => setInvoiceNo(e.target.value)} autoFocus />
       </div>
-    </div>
+      <div>
+        <label className="eyebrow mb-1 block">Operated by</label>
+        <select className="field" value={operatedBy} onChange={(e) => setOperatedBy(e.target.value)}>
+          <option value="">— select team member —</option>
+          {users.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="eyebrow mb-1 block">Notes (optional)</label>
+        <input
+          className="field"
+          placeholder="e.g. Dispatched via courier"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+        />
+      </div>
+    </Modal>
   );
 }
 
@@ -229,6 +321,17 @@ export function MismatchPane({
   /** true while a search is filtering the lists, so "empty" can say "no match" */
   searching?: boolean;
 }) {
+  // where each waiting item's quantity comes from (rolls), shown under it
+  const [parts, setParts] = useState<Record<string, AllocPart[]>>({});
+  const itemKey = mismatches.flatMap((m) => m.open_order_items.map((i) => i.poi_id)).join(',');
+  useEffect(() => {
+    const ids = itemKey ? itemKey.split(',') : [];
+    if (ids.length === 0) { setParts({}); return; }
+    let alive = true;
+    loadItemParts(supabaseBrowser(), ids).then((p) => { if (alive) setParts(p); });
+    return () => { alive = false; };
+  }, [itemKey]);
+
   if (loadingMismatches) {
     return (
       <div className="p-4 flex items-center gap-2 text-[15px] text-ink-3">
@@ -263,8 +366,10 @@ export function MismatchPane({
                     <span className={`font-semibold ${removed ? 'text-danger' : 'text-ok'}`}>
                       {removed ? '' : '+'}{p.delta} {unit}
                     </span>
-                    {' · '}{p.source === 'WASTE' ? `Lot ${p.lot_no ?? ''} marked as waste` : 'Stock adjustment'}
-                    {p.reason && p.source !== 'WASTE' ? ` — ${p.reason}` : ''}
+                    {' · '}{p.source === 'WASTE'
+                      ? (p.lot_no ? 'Roll marked as waste' : 'Marked as waste')
+                      : 'Stock adjustment'}
+                    {p.reason && (p.source !== 'WASTE' || !p.lot_no) ? ` — ${p.reason.replace(/^Marked as waste\s*·\s*/i, '')}` : ''}
                     {' · '}{p.created_by ?? 'system'} · {formatDateTime(p.created_at)}
                   </div>
                 </div>
@@ -317,12 +422,21 @@ export function MismatchPane({
                       <div className="text-[14px] min-w-0">
                         <span className="font-mono text-brand font-medium">{oi.order_no}</span>
                         {oi.customer_name && <span className="text-ink-3 ml-1.5">· {oi.customer_name}</span>}
-                        <span className="text-ink ml-2 font-medium">{fmtLineQty(oi)}</span>
+                        <span className="text-ink ml-2 font-medium">{(parts[oi.poi_id] ?? []).length > 1 ? `${totalLine(oi)} total` : (parts[oi.poi_id]?.length ? '' : fmtLineQty(oi))}</span>
                         <span className={`ml-2 text-[13px] px-1.5 py-0.5 rounded-full ${
                           oi.order_status === 'IN_PROGRESS' ? 'bg-ok/10 text-ok' :
                           oi.order_status === 'COMPLETED'   ? 'bg-brand/10 text-brand' :
                           'bg-warn/10 text-warn'
                         }`}>{oi.order_status === 'COMPLETED' ? 'Completed · outward not posted' : STATUS_LABEL[oi.order_status]}</span>
+                        {(parts[oi.poi_id] ?? []).map((p, k) => (
+                          <div key={k} className="num mt-1">
+                            <p className="text-[14px] text-ink">
+                              {partMain(p, oi.unit_code)}
+                              {partTotal(p, oi.unit_code) && <span className="text-[12px] text-ink-3 ml-2">{partTotal(p, oi.unit_code)}</span>}
+                            </p>
+                            <div><FromChip p={p} unit={oi.unit_code} /></div>
+                          </div>
+                        ))}
                       </div>
                       <button
                         className="btn btn-primary btn-sm shrink-0"

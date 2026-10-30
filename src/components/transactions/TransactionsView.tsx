@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState, useTransition } from 'react';
 import { Undo2, X, SlidersHorizontal, Download, Search } from 'lucide-react';
+import Modal from '@/components/ui/Modal';
 import { fmtDate, fmtTime, fmtQty, fmtMmPcs } from '@/lib/format';
 import type { Movement } from '@/lib/types';
 import { qtySplit, lotChip, snapTotal, LOT_NAME, type SnapGroup } from '@/lib/lotView';
@@ -366,13 +367,23 @@ function ReverseDialog({ movement, onClose, onDone }: {
   }
 
   return (
-    <div className="fixed inset-0 z-[70] grid place-items-center bg-ink/30 backdrop-blur-[2px] p-4">
-      <form onSubmit={submit} className="w-full max-w-[430px] card shadow-lg slide-up">
-        <div className="card-head border-b">
-          <h2 className="card-title">Reverse {movement.txn_no}</h2>
-          <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={onClose}><X size={15} /></button>
-        </div>
-        <div className="p-5 space-y-3.5">
+    <Modal
+      title={`Reverse ${movement.txn_no}`}
+      onClose={onClose}
+      onSubmit={submit}
+      width="max-w-[430px]"
+      z={70}
+      bodyClassName="p-5 space-y-3.5"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={busy || !reason.trim()}>
+            {busy ? 'Reversing…' : 'Create reversal'}
+          </button>
+        </>
+      }
+    >
+
           <p className="text-[15px] text-ink-2 leading-relaxed">
             The original stays in the history untouched. A linked {opposite} of{' '}
             {fmtQty(Math.abs(movement.quantity), movement.unit_code)} is created to cancel it out.
@@ -401,14 +412,7 @@ function ReverseDialog({ movement, onClose, onDone }: {
               onChange={(e) => setReason(e.target.value)} placeholder="Wrong quantity entered" />
           </div>
           {error && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>}
-        </div>
-        <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl">
-          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={busy || !reason.trim()}>
-            {busy ? 'Reversing…' : 'Create reversal'}
-          </button>
-        </div>
-      </form>
-    </div>
+        
+    </Modal>
   );
 }

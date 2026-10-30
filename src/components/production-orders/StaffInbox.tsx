@@ -3,10 +3,10 @@
 import { useMemo, useState } from 'react';
 import { ArrowLeft, CheckCircle, Clock, MailOpen, Printer, Search, X } from 'lucide-react';
 import type { ProductionOrder } from '@/lib/types';
-import { fmtLineQty, fmtQty, fmtRelative } from '@/lib/format';
+import { fmtLineQty, fmtRelative } from '@/lib/format';
 import { makeMatcher } from '@/lib/search';
-import { STATUS_BADGE, STATUS_LABEL, STATUS_NEXT, STATUS_NEXT_LABEL, formatDateTime } from './poShared';
-import type { AllocBadge } from './OrderCard';
+import { STATUS_BADGE, STATUS_LABEL, STATUS_NEXT, STATUS_NEXT_LABEL, formatDateTime, ItemBlock } from './poShared';
+import type { AllocPart } from '@/lib/orderParts';
 
 /**
  * The workshop's view of production orders: an inbox.
@@ -19,7 +19,7 @@ export default function StaffInbox({
   orders: ProductionOrder[];
   /** ids of orders this person has not opened yet */
   unread: Set<string>;
-  allocs: Record<string, AllocBadge[]>;
+  allocs: Record<string, AllocPart[]>;
   /** false = view only: the In Progress / Completed buttons are hidden */
   canAdvance: boolean;
   onOpen: (o: ProductionOrder) => void;
@@ -149,17 +149,7 @@ export default function StaffInbox({
                   <li key={item.id} className="px-3 py-2.5 flex items-start gap-3">
                     <span className="font-mono text-[13px] text-ink-3 w-4 pt-0.5">{idx + 1}</span>
                     <div className="min-w-0 flex-1">
-                      <p className="text-[16px] font-semibold">{item.display_name}</p>
-                      <p className="text-[15px] text-ink-2 num">{fmtLineQty(item)}</p>
-                      {(allocs[item.id] ?? []).length > 0 && (
-                        <span className="flex gap-1 flex-wrap mt-1">
-                          {allocs[item.id].map((p, k) => (
-                            <span key={k} className={`badge ${p.label === 'Full Sleeve' ? 'badge-ok' : 'badge-warn'}`}>
-                              {p.label} {fmtQty(p.qty, item.unit_code === 'RIB' ? 'RIB' : 'MM')}
-                            </span>
-                          ))}
-                        </span>
-                      )}
+                      <ItemBlock name={item.display_name} item={item} parts={allocs[item.id]} big />
                     </div>
                   </li>
                 ))}

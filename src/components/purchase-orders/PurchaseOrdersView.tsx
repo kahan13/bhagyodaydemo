@@ -3,10 +3,12 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   Plus, X, Search, Check, Package,
-  ChevronRight, Loader2, ArrowDownLeft, ClipboardCheck, Trash2,
+  ChevronRight, Loader2, ArrowDownLeft, ClipboardCheck, Trash2, FileSpreadsheet, FileDown,
 } from 'lucide-react';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
-import { fmtQty, fmtDate, fmtMmPcs } from '@/lib/format';
+import { fmtQty, fmtDateTime, fmtMmPcs } from '@/lib/format';
+import Modal from '@/components/ui/Modal';
+import { exportPoExcel, exportPoPdf, type PoExportOrder } from '@/lib/poExport';
 import { isLotType, lotUnitHead, lotUnitWord } from '@/lib/lotUnit';
 import { useListNav } from '@/lib/useListNav';
 import { makeMatcher } from '@/lib/search';
@@ -17,6 +19,17 @@ import RollEntry, { SleeveToggle, rollsPayload, rollsTotal, type RollRows } from
 
 type ItemStatus  = 'PENDING' | 'PARTIAL' | 'FULFILLED';
 type OrderStatus = 'PLACED'  | 'PARTIAL' | 'FULFILLED';
+
+/** One delivery against a line; `txn_no` is filled once it has been recorded into stock. */
+interface Receipt {
+  id: string;
+  qty_received: number;
+  rolls: { rolls: number; roll_length: number; cut?: boolean }[] | null;
+  received_at: string;
+  notes: string | null;
+  inwarded_at: string | null;
+  txn_no: string | null;
+}
 
 interface OrderItem {
   id: string;
@@ -33,6 +46,7 @@ interface OrderItem {
   status: ItemStatus;
   notes: string | null;
   created_at: string;
+  receipts?: Receipt[];
   skus: {
     sku_code: string; exact_size: string; brand_name: string;
     unit_code: string; current_stock: number; product_type: string;
@@ -79,6 +93,38 @@ const pendingInward = (item: OrderItem): number =>
   Math.max(0, Number(item.received_qty) - Number(item.inwarded_qty ?? 0));
 
 const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt', POLY_V_BELT: 'Poly V Belt' };
+
+/** "470 mm × 2 pcs + 500 mm × 1 pcs" for a delivery of rolls, "30 m" for a plain quantity. */
+const receiptLabel = (item: OrderItem, r: Receipt): string =>
+  r.rolls && r.rolls.length > 0
+    ? r.rolls.map((g) => `${fmtMmPcs(g.roll_length, g.rolls, wordOf(item))}${g.cut ? ' cut' : ''}`).join(' + ')
+    : fmtQty(r.qty_received, item.skus?.unit_code);
+
+/** One purchase order as the order sheet for the supplier: what is wanted, nothing about receiving. */
+function toExport(order: Order): PoExportOrder {
+  return {
+    order_no: order.order_no,
+    supplier: order.supplier_name,
+    notes: order.notes,
+    created_at: order.created_at,
+    lines: order.items.map((i) => {
+      const unit = i.skus?.unit_code;
+      const lot = isLot(i);
+      const sleeve = i.ordered_is_cut ? 'Cut pcs' : 'Full sleeve';
+      return {
+        sku_code: i.skus?.sku_code ?? '—',
+        size: i.skus?.exact_size ?? '—',
+        brand: i.skus?.brand_name ?? '—',
+        category: i.skus?.product_type ? (TYPE_LABEL[i.skus.product_type] ?? '') : '',
+        quantity: lot
+          ? `${fmtMmPcs(Number(i.ordered_length_mm), i.ordered_pieces, wordOf(i))} (${sleeve}) — ${fmtQty(i.ordered_qty, unit)} total`
+          : fmtQty(i.ordered_qty, unit),
+        form: lot ? sleeve : '',
+      };
+    }),
+  };
+}
+
 
 function StatusBadge({ status }: { status: OrderStatus | ItemStatus }) {
   const map: Record<string, string> = {
@@ -201,150 +247,212 @@ function SkuPicker({ onSelect, selected }: { onSelect: (s: Sku) => void; selecte
   );
 }
 
-/* ── Receive Dialog ───────────────────────────────────────────────────────── */
-function ReceiveDialog({
-  item, onClose, onDone,
-}: { item: OrderItem; onClose: () => void; onDone: () => void }) {
-  const lot       = isLot(item);
-  const pcsLeft   = piecesLeft(item);
-  const remaining = item.ordered_qty - item.received_qty;
-  const roll      = isRoll(item);
-  const ordLen    = Number(item.ordered_length_mm) || 0;
-  const uWord     = wordOf(item);                       // mm / ribs
-  const uHead     = uWord.toUpperCase();               // MM / RIBS
+/* ── Receive Dialog — every open line of ONE purchase order, in one window ────── */
+type Entry = { rows: RollRows; qty: string; close: boolean; notes: string };
 
-  // Roll mode: rows of MM × PCS (prefilled from what is still to come), Full sleeve / Cut pcs per row
-  const [rows, setRows] = useState<RollRows>(() => {
-    if (lot && pcsLeft > 0) return [{ qty: String(pcsLeft), mm: String(ordLen), cut: !!item.ordered_is_cut }];
-    const n = ordLen > 0 ? Math.floor(remaining / ordLen) : 0;
-    return n > 0 ? [{ qty: String(n), mm: String(ordLen), cut: !!item.ordered_is_cut }]
-                 : [{ qty: '', mm: '', cut: !!item.ordered_is_cut }];
-  });
-  // Plain mode (V-belt / conveyor)
-  const [qty, setQty]           = useState(String(remaining));
-  const [notes, setNotes]       = useState('');
-  const [closeShort, setClose]  = useState(false);
-  const [busy, setBusy]         = useState(false);
-  const [err, setErr]           = useState<string | null>(null);
+/** What a line would be if it all arrived as ordered (the "Fill as ordered" button). */
+function asOrderedEntry(item: OrderItem): Entry {
+  const lot = isLot(item), roll = isRoll(item);
+  const ordLen = Number(item.ordered_length_mm) || 0;
+  const remaining = Number(item.ordered_qty) - Number(item.received_qty);
+  const cut = !!item.ordered_is_cut;
+  let rows: RollRows = [{ qty: '', mm: '', cut }];
+  if (roll) {
+    if (lot && piecesLeft(item) > 0) rows = [{ qty: String(piecesLeft(item)), mm: String(ordLen), cut }];
+    else {
+      const n = ordLen > 0 ? Math.floor(remaining / ordLen) : 0;
+      if (n > 0) rows = [{ qty: String(n), mm: String(ordLen), cut }];
+    }
+  }
+  return { rows, qty: roll ? '' : String(remaining), close: false, notes: '' };
+}
+const blankEntry = (item: OrderItem): Entry => ({
+  rows: [{ qty: '', mm: '', cut: !!item.ordered_is_cut }], qty: '', close: false, notes: '',
+});
 
-  const rollList  = useMemo(() => (roll ? rollsPayload(rows) : []), [roll, rows]);
+/** What was typed for one line, and whether it is allowed. */
+function readEntry(item: OrderItem, e: Entry) {
+  const roll = isRoll(item), lot = isLot(item);
+  const uWord = wordOf(item);
+  const remaining = Number(item.ordered_qty) - Number(item.received_qty);
+  const pcsLeft = piecesLeft(item);
+  const rollList = roll ? rollsPayload(e.rows) : [];
   const rollTotal = rollsTotal(rollList);
   const pcsEntered = rollList.reduce((a, r) => a + r.rolls, 0);
+  const plain = Number(e.qty) || 0;
+  const entered = roll ? rollTotal > 0 : plain > 0;
+  let error = '';
+  if (entered) {
+    if (roll) {
+      if (lot) {
+        if (pcsEntered > pcsLeft) error = `That is ${pcsEntered} pieces but only ${pcsLeft} ${pcsLeft === 1 ? 'is' : 'are'} still to come.`;
+      } else if (rollTotal > remaining) error = `That is ${rollTotal} ${uWord} but only ${remaining} ${uWord} is left.`;
+    } else if (plain > remaining) error = `Maximum receivable is ${remaining}.`;
+  }
+  const total = roll ? rollTotal : plain;
+  const showClose = !lot && entered && total < remaining;
+  return { roll, lot, uWord, remaining, rollList, rollTotal, plain, entered, error, total, showClose };
+}
+
+function ReceiveOrderDialog({
+  order, onlyItemId, onClose, onDone,
+}: { order: Order; onlyItemId?: string; onClose: () => void; onDone: (msg: string) => void }) {
+  const lines = useMemo(
+    () => order.items.filter((i) => isOpen(i) && (!onlyItemId || i.id === onlyItemId)),
+    [order, onlyItemId],
+  );
+  const [entries, setEntries] = useState<Record<string, Entry>>(
+    () => Object.fromEntries(lines.map((i) => [i.id, blankEntry(i)])),
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr]   = useState<string | null>(null);
+
+  const patch = (id: string, p: Partial<Entry>) => setEntries((m) => ({ ...m, [id]: { ...m[id], ...p } }));
+  const read  = (i: OrderItem) => readEntry(i, entries[i.id] ?? blankEntry(i));
+  const filled = lines.filter((i) => read(i).entered);
+  const anyError = filled.some((i) => read(i).error);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    let body: Record<string, unknown>;
-    if (roll) {
-      if (rollTotal <= 0) { setErr(`Enter ${uHead} and PCS for at least one row.`); return; }
-      if (lot) {
-        if (pcsEntered > pcsLeft) {
-          setErr(`That is ${pcsEntered} pieces but only ${pcsLeft} ${pcsLeft === 1 ? 'is' : 'are'} still to come on this order.`);
-          return;
-        }
-      } else if (rollTotal > remaining) {
-        setErr(`That is ${rollTotal} ${uWord} but only ${remaining} ${uWord} is left on this order.`); return;
-      }
-      body = { action: 'receive', item_id: item.id, rolls: rollList, notes: notes || null, complete: !lot && closeShort };
-    } else {
-      const n = Number(qty);
-      if (!n || n <= 0)  { setErr('Enter a valid quantity.'); return; }
-      if (n > remaining) { setErr(`Maximum receivable is ${remaining}.`); return; }
-      body = { action: 'receive', item_id: item.id, qty_received: n, notes: notes || null, complete: closeShort };
-    }
+    if (filled.length === 0) { setErr('Enter what arrived on at least one line.'); return; }
+    if (anyError) { setErr('Fix the lines marked in red first.'); return; }
     setBusy(true); setErr(null);
-    const res  = await fetch('/api/purchase-orders', {
+    const res = await fetch('/api/purchase-orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        action: 'receive_items',
+        order_id: order.id,
+        lines: filled.map((i) => {
+          const r = read(i), en = entries[i.id];
+          return r.roll
+            ? { item_id: i.id, rolls: r.rollList, notes: en.notes || null, complete: !r.lot && en.close }
+            : { item_id: i.id, qty_received: r.plain, notes: en.notes || null, complete: en.close };
+        }),
+      }),
     });
     const json = await res.json();
     setBusy(false);
     if (!res.ok) { setErr(json.error ?? 'Something went wrong.'); return; }
-    onDone();
+    onDone(`${filled.length} line${filled.length === 1 ? '' : 's'} received on ${order.order_no}.`);
   };
 
-  const unit = item.skus?.unit_code;
-  // a plain line short of its total: offer to close it so nothing stays outstanding
-  const enteredPlain = roll ? rollTotal : Number(qty) || 0;
-  const showClose    = !lot && enteredPlain > 0 && enteredPlain < remaining;
-
   return (
-    <div className="fixed inset-0 z-[90] grid place-items-center bg-ink/30 backdrop-blur-[2px] p-4">
-      <form onSubmit={submit} className="w-full max-w-[460px] bg-surface border border-line rounded-xl shadow-xl max-h-[92vh] overflow-y-auto">
-        <div className="card-head border-b">
-          <h2 className="card-title">Receive Stock</h2>
-          <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={onClose}><X size={15} /></button>
+    <Modal
+      z={90}
+      width="max-w-[780px]"
+      title={<>Receive stock · <span className="font-mono">{order.order_no}</span></>}
+      onClose={onClose}
+      onSubmit={submit}
+      bodyClassName="p-5 space-y-4"
+      footer={
+        <div className="flex items-center justify-between gap-3 w-full">
+          <p className="text-[14px] text-ink-3">
+            {filled.length === 0 ? 'Fill in only the lines that arrived.' : `${filled.length} of ${lines.length} line${lines.length === 1 ? '' : 's'} being received`}
+          </p>
+          <div className="flex gap-2">
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={busy || filled.length === 0}>
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Confirm receipt</>}
+            </button>
+          </div>
         </div>
-        <div className="p-5 space-y-4">
-          <div className="bg-subtle rounded-lg px-3.5 py-2.5 space-y-0.5">
-            <p className="text-[15px] font-medium">{item.skus?.exact_size ?? '—'}</p>
-            <p className="text-[13px] text-ink-3">
-              {item.skus?.brand_name ?? '—'}
-              {item.skus?.product_type ? ` · ${TYPE_LABEL[item.skus.product_type] ?? ''}` : ''}
-            </p>
-            {lot ? (
-              <div className="flex gap-4 mt-1.5 flex-wrap">
-                <span className="text-[13px] text-ink-3">Ordered: <strong className="text-ink">{orderedLabel(item)}</strong></span>
-                <span className="text-[13px] text-ink-3">
-                  Received: <strong className="q-in">{item.received_pieces ?? 0} of {item.ordered_pieces} pcs</strong>
-                </span>
-                <span className="text-[13px] text-ink-3">Still to come: <strong className="q-left">{leftLabel(item)}</strong></span>
+      }
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[14px] text-ink-3">
+          Only the lines you fill in are received — the rest stay open for the next delivery. Receiving does not change stock;
+          press “Record Inward” afterwards.
+        </p>
+        {lines.length > 1 && (
+          <button
+            type="button" className="btn btn-secondary btn-sm shrink-0"
+            onClick={() => setEntries(Object.fromEntries(lines.map((i) => [i.id, asOrderedEntry(i)])))}
+          >
+            Fill all as ordered
+          </button>
+        )}
+      </div>
+
+      {lines.map((item, idx) => {
+        const r = read(item);
+        const unit = item.skus?.unit_code;
+        const en = entries[item.id] ?? blankEntry(item);
+        const ordLen = Number(item.ordered_length_mm) || 0;
+        return (
+          <div key={item.id} className={`rounded-lg border p-3.5 space-y-3 ${r.error ? 'border-danger' : r.entered ? 'border-ok/60 bg-ok-soft/10' : 'border-line'}`}>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[15px] font-semibold">
+                  <span className="text-ink-3 font-mono text-[13px] mr-1.5">{idx + 1}.</span>
+                  {item.skus?.exact_size ?? '—'}
+                  <span className="text-[13px] text-ink-3 font-normal ml-1.5">{item.skus?.brand_name ?? '—'}</span>
+                  {item.skus?.product_type && <span className="text-[12px] px-1.5 py-0.5 rounded bg-subtle text-ink-3 font-medium ml-1.5">{TYPE_LABEL[item.skus.product_type]}</span>}
+                </p>
+                <div className="flex gap-x-4 gap-y-0.5 flex-wrap mt-0.5 text-[13px] text-ink-3 num">
+                  {r.lot ? (
+                    <>
+                      <span>Ordered <strong className="text-ink">{orderedLabel(item)}</strong></span>
+                      <span>Received <strong className="q-in">{item.received_pieces ?? 0} of {item.ordered_pieces} pcs</strong></span>
+                      <span>Still to come <strong className="q-left">{leftLabel(item)}</strong></span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Ordered <strong className="text-ink">{fmtQty(item.ordered_qty, unit)}</strong>{orderedLabel(item) ? ` (${orderedLabel(item)})` : ''}</span>
+                      <span>Received <strong className="q-in">{fmtQty(item.received_qty, unit)}</strong></span>
+                      <span>Left <strong className="q-left">{fmtQty(r.remaining, unit)}</strong></span>
+                    </>
+                  )}
+                </div>
               </div>
+              <div className="flex gap-1.5 shrink-0">
+                <button type="button" className="text-[13px] text-brand font-medium hover:underline" onClick={() => patch(item.id, asOrderedEntry(item))}>Fill as ordered</button>
+                {r.entered && <button type="button" className="text-[13px] text-ink-3 hover:text-danger" onClick={() => patch(item.id, blankEntry(item))}>Clear</button>}
+              </div>
+            </div>
+
+            {r.roll ? (
+              <>
+                <RollEntry rows={en.rows} onChange={(rows) => patch(item.id, { rows })} maxTotal={r.lot ? undefined : r.remaining} unit={r.uWord} />
+                {r.lot && ordLen > 0 && (
+                  <p className="text-[12.5px] text-ink-3">
+                    Type the <strong>real length</strong> that arrived — a {ordLen} {r.uWord} piece that comes in shorter or longer still counts as received.
+                  </p>
+                )}
+              </>
             ) : (
-              <div className="flex gap-4 mt-1.5 flex-wrap">
-                <span className="text-[13px] text-ink-3">Ordered: <strong className="text-ink">{fmtQty(item.ordered_qty, unit)}</strong>{orderedLabel(item) ? ` (${orderedLabel(item)})` : ''}</span>
-                <span className="text-[13px] text-ink-3">Received: <strong className="q-in">{fmtQty(item.received_qty, unit)}</strong></span>
-                <span className="text-[13px] text-ink-3">Left: <strong className="q-left">{fmtQty(remaining, unit)}</strong></span>
+              <div className="flex items-center gap-2">
+                <label className="label mb-0 whitespace-nowrap">Quantity receiving ({unit ?? 'units'})</label>
+                <input
+                  className="field num text-[16px] h-10 w-32"
+                  inputMode="decimal" placeholder="0"
+                  value={en.qty}
+                  onChange={(e) => patch(item.id, { qty: e.target.value.replace(/[^0-9.]/g, '') })}
+                />
               </div>
             )}
-          </div>
 
-          {roll ? (
-            <>
-              <RollEntry rows={rows} onChange={setRows} maxTotal={lot ? undefined : remaining} unit={uWord} />
-              {lot && (
-                <p className="text-[13px] text-ink-3 bg-brand-soft/40 rounded-lg px-3 py-2">
-                  Type the <strong>real length</strong> that arrived. Each piece completes one ordered piece
-                  {ordLen > 0 ? <> — a {ordLen} {uWord} piece that comes in shorter or longer is counted as received, and the difference is never shown as outstanding</> : null}.
-                  Pieces you do not enter stay on the order for the next delivery.
-                </p>
-              )}
-            </>
-          ) : (
-            <div>
-              <label className="label">Quantity receiving ({unit ?? 'units'}) <span className="text-danger">*</span></label>
+            {r.error && <p className="text-[13.5px] text-danger font-medium">{r.error}</p>}
+
+            {r.showClose && !r.error && (
+              <label className="flex items-start gap-2 text-[13.5px] text-ink-2 cursor-pointer">
+                <input type="checkbox" className="mt-1" checked={en.close} onChange={(e) => patch(item.id, { close: e.target.checked })} />
+                <span>This is the last delivery — mark the line complete. What did not arrive stops showing as outstanding.</span>
+              </label>
+            )}
+
+            {r.entered && (
               <input
-                className="field num text-[18px] h-11"
-                inputMode="decimal"
-                value={qty}
-                onChange={(e) => setQty(e.target.value.replace(/[^0-9.]/g, ''))}
-                autoFocus
+                className="field text-[14px]" placeholder="Note for this line (optional) — e.g. partial shipment, damaged"
+                value={en.notes} onChange={(e) => patch(item.id, { notes: e.target.value })}
               />
-            </div>
-          )}
-
-          {showClose && (
-            <label className="flex items-start gap-2 text-[14px] text-ink-2 cursor-pointer">
-              <input type="checkbox" className="mt-1" checked={closeShort} onChange={(e) => setClose(e.target.checked)} />
-              <span>This is the last delivery — mark the line complete. The part that did not arrive stops showing as outstanding.</span>
-            </label>
-          )}
-
-          <div>
-            <label className="label">Notes <span className="text-ink-3 font-normal">(optional)</span></label>
-            <textarea rows={2} className="field" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. partial shipment, damaged items" />
+            )}
           </div>
-          <p className="text-[13px] text-ink-3">Receiving does not change stock. Press “Record Inward” afterwards to add it to inventory.</p>
-          {err && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{err}</p>}
-        </div>
-        <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl">
-          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={busy}>
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> {lot ? 'Receive & mark complete' : closeShort ? 'Receive & close line' : 'Confirm receipt'}</>}
-          </button>
-        </div>
-      </form>
-    </div>
+        );
+      })}
+
+      {err && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{err}</p>}
+    </Modal>
   );
 }
 
@@ -367,31 +475,27 @@ function CloseLineDialog({
     onDone();
   };
   return (
-    <div className="fixed inset-0 z-[90] grid place-items-center bg-ink/30 backdrop-blur-[2px] p-4">
-      <div className="w-full max-w-[420px] bg-surface border border-line rounded-xl shadow-xl">
-        <div className="card-head border-b">
-          <h2 className="card-title">Close this line?</h2>
-          <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={onClose}><X size={15} /></button>
-        </div>
-        <div className="p-5 space-y-2">
-          <p className="text-[15px] text-ink-2">
-            <strong>{item.skus?.exact_size ?? '—'}</strong> — nothing more is coming. The {leftLabel(item)} that has not arrived
-            stops showing as outstanding. What was already received stays as it is.
-          </p>
-          {err && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{err}</p>}
-        </div>
-        <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl">
+    <Modal
+      z={90} width="max-w-[420px]" title="Close this line?" onClose={onClose}
+      footer={
+        <>
           <button type="button" className="btn btn-secondary" onClick={onClose}>Keep open</button>
           <button type="button" className="btn btn-primary" disabled={busy} onClick={go}>
             {busy ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Close line</>}
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <p className="text-[15px] text-ink-2">
+        <strong>{item.skus?.exact_size ?? '—'}</strong> — nothing more is coming. The {leftLabel(item)} that has not arrived
+        stops showing as outstanding. What was already received stays as it is.
+      </p>
+      {err && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{err}</p>}
+    </Modal>
   );
 }
 
-/* ── Create Order Dialog ──────────────────────────────────────────────────── */
+/* ── Create Order Dialog — everything added here is ONE purchase order ─────── */
 function CreateOrderDialog({
   onClose,
   onDone,
@@ -404,6 +508,8 @@ function CreateOrderDialog({
   const [lines, setLines]       = useState<{ sku: Sku; qty: string; mm: string; cut: boolean }[]>([]);
   const [busy, setBusy]         = useState(false);
   const [err, setErr]           = useState<string | null>(null);
+  // the date and time this order is being made — the database stamps the real one on saving
+  const [now] = useState(() => new Date().toISOString());
 
   const addSku     = (s: Sku) => {
     setLines((prev) => [...prev, { sku: s, qty: '', mm: '', cut: false }]);
@@ -432,7 +538,7 @@ function CreateOrderDialog({
     if (invalid) return;
     setBusy(true); setErr(null);
 
-    // Send all items — the API will create one PO per item (no clubbing)
+    // All the lines go together: ONE purchase order, one number
     const res = await fetch('/api/purchase-orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -449,120 +555,112 @@ function CreateOrderDialog({
     setBusy(false);
     if (!res.ok) { setErr(json.error ?? 'Something went wrong.'); return; }
 
-    const created: { order_no: string }[] = json.orders ?? [];
-    const msg = created.length === 1
-      ? `Order ${created[0].order_no} placed.`
-      : `${created.length} orders placed: ${created.map((o) => o.order_no).join(', ')}`;
-
-    onDone(msg);
+    onDone(`Purchase order ${json.order_no} placed with ${lines.length} item${lines.length === 1 ? '' : 's'}.`);
   };
 
   const selectedIds = lines.map((l) => l.sku.id);
 
   return (
-    <div className="fixed inset-0 z-[80] grid place-items-center bg-ink/30 backdrop-blur-[2px] p-4">
-      <form
-        onSubmit={submit}
-        className="w-full max-w-[700px] bg-surface border border-line rounded-xl shadow-xl max-h-[92vh] flex flex-col"
-      >
-        <div className="card-head border-b shrink-0">
-          <h2 className="card-title">New Purchase Order</h2>
-          <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={onClose}><X size={15} /></button>
-        </div>
-
-        <div className="p-6 space-y-5 overflow-y-auto flex-1">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">Supplier</label>
-              <input className="field" value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="Optional" />
-            </div>
-            <div>
-              <label className="label">Notes</label>
-              <input className="field" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" />
-            </div>
-          </div>
-
-          <div>
-            <label className="label mb-2">Add products</label>
-            <SkuPicker onSelect={addSku} selected={selectedIds} />
-          </div>
-
-          {lines.length > 0 && (
-            <div className="rounded-lg border border-line overflow-hidden">
-              <div className="px-3 py-2 bg-subtle border-b border-line flex items-center justify-between">
-                <span className="text-[13px] font-semibold text-ink-2 uppercase tracking-wide">
-                  Items — {lines.length} product{lines.length !== 1 ? 's' : ''}
-                </span>
-                <span className="text-[12px] text-ink-3">
-                  Each product will get its own PO number
-                </span>
-              </div>
-              {lines.map((l, i) => (
-                <div key={l.sku.id} className="flex items-center gap-4 px-4 py-3 border-b border-line last:border-0">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[15px] font-medium truncate">{l.sku.exact_size}</p>
-                    <p className="text-[13px] text-ink-3">
-                      {l.sku.brand_name}
-                      <span className="mx-1.5">·</span>
-                      <span className="text-brand">{TYPE_LABEL[l.sku.product_type]}</span>
-                      <span className="mx-1.5">·</span>
-                      in stock: {fmtQty(l.sku.current_stock, l.sku.unit_code)}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-                    {isTiming(l) ? (
-                      <>
-                        <input
-                          className="field num h-11 w-24 text-[16px]" inputMode="decimal"
-                          value={l.mm} onChange={(e) => setMm(i, e.target.value)}
-                          data-po-qty placeholder={lotUnitHead(l.sku.product_type)} aria-label={`Length in ${lotUnitWord(l.sku.product_type)}`} />
-                        <span className="text-ink-3 font-semibold">×</span>
-                        <input
-                          className="field num h-11 w-20 text-[16px]" inputMode="numeric"
-                          value={l.qty} onChange={(e) => setQty(i, e.target.value.replace(/[^0-9]/g, ''))}
-                          placeholder="PCS" aria-label="Number of pieces" />
-                        <SleeveToggle cut={l.cut} onChange={(c) => setCut(i, c)} />
-                        {lineTotal(l) > 0 && (
-                          <span className="text-[14px] num q-total font-semibold whitespace-nowrap">= {lineTotal(l)} {lotUnitWord(l.sku.product_type)}</span>
-                        )}
-                      </>
-                    ) : (
-                      <input
-                        className="field num h-9 w-28 text-[15px]"
-                        inputMode="decimal"
-                        value={l.qty}
-                        onChange={(e) => setQty(i, e.target.value)}
-                        data-po-qty
-                        placeholder={`qty (${l.sku.unit_code})`}
-                      />
-                    )}
-                    <button type="button" onClick={() => removeLine(i)} className="text-ink-3 hover:text-danger p-1">
-                      <X size={14} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {err && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2.5">{err}</p>}
-        </div>
-
-        <div className="flex items-center justify-between px-6 py-4 border-t border-line bg-subtle rounded-b-xl shrink-0">
+    <Modal
+      z={80}
+      width="max-w-[700px]"
+      title="New Purchase Order"
+      onClose={onClose}
+      onSubmit={submit}
+      bodyClassName="p-6 space-y-5"
+      footer={
+        <div className="flex items-center justify-between gap-3 w-full">
           <p className="text-[14px] text-ink-3">
             {lines.length === 0
               ? 'Search and add products above'
-              : `${lines.length} item${lines.length !== 1 ? 's' : ''} → ${lines.length} separate PO${lines.length !== 1 ? 's' : ''} will be created`}
+              : `${lines.length} item${lines.length !== 1 ? 's' : ''} on ONE purchase order`}
           </p>
           <div className="flex gap-2">
             <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={busy || invalid}>
-              {busy ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Place Order{lines.length > 1 ? 's' : ''}</>}
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Place Order</>}
             </button>
           </div>
         </div>
-      </form>
-    </div>
+      }
+    >
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="label">Supplier</label>
+          <input className="field" value={supplier} onChange={(e) => setSupplier(e.target.value)} placeholder="Optional" />
+        </div>
+        <div>
+          <label className="label">Notes</label>
+          <input className="field" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" />
+        </div>
+      </div>
+      <p className="text-[13px] text-ink-3 -mt-2">Date &amp; time: <strong className="text-ink">{fmtDateTime(now)}</strong> — saved automatically with the order.</p>
+
+      <div>
+        <label className="label mb-2">Add products</label>
+        <SkuPicker onSelect={addSku} selected={selectedIds} />
+      </div>
+
+      {lines.length > 0 && (
+        <div className="rounded-lg border border-line overflow-hidden">
+          <div className="px-3 py-2 bg-subtle border-b border-line flex items-center justify-between">
+            <span className="text-[13px] font-semibold text-ink-2 uppercase tracking-wide">
+              Items — {lines.length} product{lines.length !== 1 ? 's' : ''}
+            </span>
+            <span className="text-[12px] text-ink-3">
+              One PO number for all of them
+            </span>
+          </div>
+          {lines.map((l, i) => (
+            <div key={l.sku.id} className="flex items-center gap-4 px-4 py-3 border-b border-line last:border-0">
+              <div className="min-w-0 flex-1">
+                <p className="text-[15px] font-medium truncate">{l.sku.exact_size}</p>
+                <p className="text-[13px] text-ink-3">
+                  {l.sku.brand_name}
+                  <span className="mx-1.5">·</span>
+                  <span className="text-brand">{TYPE_LABEL[l.sku.product_type]}</span>
+                  <span className="mx-1.5">·</span>
+                  in stock: {fmtQty(l.sku.current_stock, l.sku.unit_code)}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                {isTiming(l) ? (
+                  <>
+                    <input
+                      className="field num h-11 w-24 text-[16px]" inputMode="decimal"
+                      value={l.mm} onChange={(e) => setMm(i, e.target.value)}
+                      data-po-qty placeholder={lotUnitHead(l.sku.product_type)} aria-label={`Length in ${lotUnitWord(l.sku.product_type)}`} />
+                    <span className="text-ink-3 font-semibold">×</span>
+                    <input
+                      className="field num h-11 w-20 text-[16px]" inputMode="numeric"
+                      value={l.qty} onChange={(e) => setQty(i, e.target.value.replace(/[^0-9]/g, ''))}
+                      placeholder="PCS" aria-label="Number of pieces" />
+                    <SleeveToggle cut={l.cut} onChange={(c) => setCut(i, c)} />
+                    {lineTotal(l) > 0 && (
+                      <span className="text-[14px] num q-total font-semibold whitespace-nowrap">= {lineTotal(l)} {lotUnitWord(l.sku.product_type)}</span>
+                    )}
+                  </>
+                ) : (
+                  <input
+                    className="field num h-9 w-28 text-[15px]"
+                    inputMode="decimal"
+                    value={l.qty}
+                    onChange={(e) => setQty(i, e.target.value)}
+                    data-po-qty
+                    placeholder={`qty (${l.sku.unit_code})`}
+                  />
+                )}
+                <button type="button" onClick={() => removeLine(i)} className="text-ink-3 hover:text-danger p-1" aria-label="Remove">
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {err && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2.5">{err}</p>}
+    </Modal>
   );
 }
 
@@ -587,58 +685,66 @@ function DeleteDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-[90] grid place-items-center bg-ink/30 backdrop-blur-[2px] p-4">
-      <div className="w-full max-w-[400px] bg-surface border border-line rounded-xl shadow-xl">
-        <div className="card-head border-b">
-          <h2 className="card-title text-danger">Delete Order</h2>
-          <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={onClose}><X size={15} /></button>
-        </div>
-        <div className="p-5">
-          <p className="text-[15px] text-ink-2">
-            Delete <strong>{order.order_no}</strong>? This will permanently remove the order and all its line items. This cannot be undone.
-          </p>
-          {err && <p className="text-[14px] text-danger mt-3 bg-danger-soft rounded px-3 py-2">{err}</p>}
-        </div>
-        <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl">
+    <Modal
+      z={90} width="max-w-[400px]" title={<span className="text-danger">Delete Order</span>} onClose={onClose}
+      footer={
+        <>
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button
-            type="button"
-            className="btn bg-danger text-white hover:bg-danger/90"
-            disabled={busy}
-            onClick={confirm}
-          >
+          <button type="button" className="btn bg-danger text-white hover:bg-danger/90" disabled={busy} onClick={confirm}>
             {busy ? <Loader2 size={14} className="animate-spin" /> : <><Trash2 size={14} /> Delete</>}
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <p className="text-[15px] text-ink-2">
+        Delete <strong>{order.order_no}</strong>? This will permanently remove the order and all its line items. This cannot be undone.
+      </p>
+      {err && <p className="text-[14px] text-danger bg-danger-soft rounded px-3 py-2">{err}</p>}
+    </Modal>
   );
 }
 
 /* ── Order Card ───────────────────────────────────────────────────────────── */
 function OrderCard({
-  order, view, canEdit, onReceive, onCloseLine, onRecordInward, onDelete,
+  order, view, canEdit, company, onReceive, onCloseLine, onRecordInward, onDelete,
 }: {
   order: Order;
   /** false = view only: no receive / close / record inward / delete */
   canEdit: boolean;
   /** progress = what is still to come; received = what has arrived (and can be recorded into stock). */
   view: 'progress' | 'received';
-  onReceive: (item: OrderItem) => void;
+  company: Record<string, string>;
+  onReceive: (order: Order, itemId?: string) => void;
   onCloseLine: (item: OrderItem) => void;
   onRecordInward: (order: Order, itemId?: string) => void;
   onDelete: (order: Order) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
+  const [exporting, setExporting] = useState<'xlsx' | 'pdf' | null>(null);
 
   const shown        = order.items.filter((i) =>
     view === 'progress' ? isOpen(i) : Number(i.received_qty) > 0);
-  const anyPending   = view === 'received' && shown.some((i) => pendingInward(i) > 0);
+  const anyPending   = order.items.some((i) => pendingInward(i) > 0);
+  const anyOpen      = order.items.some(isOpen);
+
+  // Progress of the WHOLE order, whichever tab it is on
+  const total        = order.items.length;
+  const linesReceived = order.items.filter((i) => Number(i.received_qty) > 0).length;
+  const linesRecorded = order.items.filter((i) => Number(i.inwarded_qty ?? 0) > 0).length;
+  const linesWaiting  = order.items.filter((i) => pendingInward(i) > 0).length;
+
+  const doExport = async (kind: 'xlsx' | 'pdf') => {
+    setExporting(kind);
+    try {
+      const data = toExport(order);
+      if (kind === 'xlsx') await exportPoExcel(data, company); else await exportPoPdf(data, company);
+    } finally { setExporting(null); }
+  };
 
   return (
     <div className="border border-line rounded-lg overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 bg-surface">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3 bg-surface">
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
@@ -656,23 +762,47 @@ function OrderCard({
               )}
               <StatusBadge status={order.status} />
             </div>
-            <div className="flex items-center gap-3 mt-0.5">
-              <span className="text-[13px] text-ink-3">{fmtDate(order.created_at)}</span>
-              <span className="text-[13px] text-ink-3">
-                {shown.length} item{shown.length !== 1 ? 's' : ''}
-              </span>
+            <div className="flex items-center gap-x-3 gap-y-0.5 mt-0.5 flex-wrap">
+              <span className="text-[13px] text-ink-3">🕐 {fmtDateTime(order.created_at)}</span>
+              <span className="text-[13px] text-ink-3">{total} item{total !== 1 ? 's' : ''}</span>
+              <span className="text-[13px] text-ink-2 num">Received <strong>{linesReceived}</strong> of {total}</span>
+              {linesRecorded > 0 && (
+                <span className="text-[13px] text-ok num font-medium">Inward recorded on {linesRecorded} item{linesRecorded !== 1 ? 's' : ''}</span>
+              )}
+              {linesWaiting > 0 && (view === 'received' ? (
+                <span className="text-[13px] text-brand num font-medium">{linesWaiting} waiting to be recorded</span>
+              ) : (
+                <span className="text-[13px] text-ink-3">{linesWaiting} received — record inward in the Received tab</span>
+              ))}
             </div>
           </div>
         </button>
 
-        <div className="flex items-center gap-1.5 shrink-0">
-          {anyPending && canEdit && (
+        <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+          <button type="button" className="btn btn-secondary h-7 px-2 text-[13px]" disabled={!!exporting} onClick={() => doExport('xlsx')} title="Download this purchase order as Excel">
+            {exporting === 'xlsx' ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />} Excel
+          </button>
+          <button type="button" className="btn btn-secondary h-7 px-2 text-[13px]" disabled={!!exporting} onClick={() => doExport('pdf')} title="Download this purchase order as PDF">
+            {exporting === 'pdf' ? <Loader2 size={12} className="animate-spin" /> : <FileDown size={12} />} PDF
+          </button>
+          {canEdit && view === 'progress' && anyOpen && (
+            <button
+              type="button"
+              className="btn btn-secondary h-7 px-2.5 text-[14px]"
+              data-kt="H" data-kt-label="Receive (this order)"
+              onClick={() => onReceive(order)}
+            >
+              <ArrowDownLeft size={12} /> Receive
+            </button>
+          )}
+          {view === 'received' && anyPending && canEdit && (
             <button
               type="button"
               className="btn btn-primary h-7 px-2.5 text-[14px]"
+              data-kt="K" data-kt-label="Record Inward (this order)"
               onClick={() => onRecordInward(order)}
             >
-              <ArrowDownLeft size={12} /> Record Inward
+              <ClipboardCheck size={12} /> Record Inward
             </button>
           )}
           {canEdit && (
@@ -692,17 +822,20 @@ function OrderCard({
       {expanded && (
         <div className="border-t border-line divide-y divide-line">
           {shown.length === 0 ? (
-            <p className="px-4 py-4 text-[14px] text-ink-3 text-center">No items — order may still be loading.</p>
+            <p className="px-4 py-4 text-[14px] text-ink-3 text-center">Nothing to show here.</p>
           ) : (
             shown.map((item) => {
               const open          = isOpen(item);
               const lot           = isLot(item);
               const itemPending   = pendingInward(item);
+              const recorded      = Number(item.inwarded_qty ?? 0);
               const sizeName  = item.skus?.exact_size  ?? '—';
               const brandName = item.skus?.brand_name  ?? '—';
               const pType     = item.skus?.product_type;
+              const unit      = item.skus?.unit_code;
+              const receipts  = item.receipts ?? [];
               return (
-                <div key={item.id} className="flex items-center gap-3 px-4 py-3 bg-surface-2/40">
+                <div key={item.id} className="flex items-start gap-3 px-4 py-3 bg-surface-2/40">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-[15px] font-medium">{sizeName}</span>
@@ -714,7 +847,7 @@ function OrderCard({
                       )}
                       <StatusBadge status={item.status} />
                     </div>
-                    <div className="flex items-center gap-4 mt-1.5 flex-wrap">
+                    <div className="flex items-center gap-x-4 gap-y-0.5 mt-1.5 flex-wrap">
                       {lot ? (
                         <>
                           <span className="text-[13px] text-ink-3 num">
@@ -722,17 +855,18 @@ function OrderCard({
                           </span>
                           <span className="text-[13px] text-ink-3 num">
                             Received <strong className="q-in">{item.received_pieces ?? 0} of {item.ordered_pieces} pcs</strong>
-                            {Number(item.received_qty) > 0 && <span> · {fmtQty(item.received_qty, item.skus?.unit_code ?? 'MM')}</span>}
+                            {Number(item.received_qty) > 0 && <span> · {fmtQty(item.received_qty, unit ?? 'MM')}</span>}
                           </span>
                         </>
                       ) : (
                         <>
                           <span className="text-[13px] text-ink-3 num">
-                            Total <strong className="text-ink">{fmtQty(item.ordered_qty, item.skus?.unit_code)}</strong>
+                            Total <strong className="text-ink">{fmtQty(item.ordered_qty, unit)}</strong>
                             {orderedLabel(item) && <span> ({orderedLabel(item)})</span>}
                           </span>
                           <span className="text-[13px] text-ink-3 num">
-                            Received <strong className="q-in">{fmtQty(item.received_qty, item.skus?.unit_code)}</strong>
+                            Received <strong className="q-in">{fmtQty(item.received_qty, unit)}</strong>
+                            <span> of {fmtQty(item.ordered_qty, unit)}</span>
                           </span>
                         </>
                       )}
@@ -741,29 +875,54 @@ function OrderCard({
                           Left {leftLabel(item)}
                         </span>
                       )}
-                      {view === 'received' && (itemPending > 0 ? (
-                        <span className="text-[13px] text-brand num font-medium">
-                          {fmtQty(itemPending, item.skus?.unit_code)} waiting to be recorded
-                        </span>
+                      {Number(item.received_qty) > 0 && (itemPending > 0 ? (
+                        view === 'received' ? (
+                          <span className="text-[13px] text-brand num font-medium">
+                            {fmtQty(itemPending, unit)} waiting to be recorded
+                          </span>
+                        ) : (
+                          <span className="text-[13px] text-ink-3">
+                            {fmtQty(itemPending, unit)} received — record inward in the Received tab
+                          </span>
+                        )
                       ) : (
                         <span className="text-[13px] text-ok num font-medium">
-                          In stock {fmtQty(Number(item.inwarded_qty ?? 0), item.skus?.unit_code)}
+                          Inward recorded · in stock {fmtQty(recorded, unit)}
                         </span>
                       ))}
                     </div>
+
+                    {/* Each delivery on this line, and the TXN it was recorded under */}
+                    {receipts.length > 0 && (
+                      <ul className="mt-1.5 space-y-0.5">
+                        {receipts.map((r) => (
+                          <li key={r.id} className="text-[13px] flex items-center gap-x-2 gap-y-0.5 flex-wrap">
+                            <span className="text-ink-3">{fmtDateTime(r.received_at)}</span>
+                            <span className="num font-medium">{receiptLabel(item, r)}</span>
+                            {r.txn_no ? (
+                              <span className="badge badge-ok font-mono" title={`Recorded into stock under ${r.txn_no} (reference ${order.order_no})`}>{r.txn_no}</span>
+                            ) : (
+                              view === 'received'
+                                ? <span className="text-brand">waiting to be recorded</span>
+                                : <span className="text-ink-3">not in stock yet</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {canEdit && view === 'received' && itemPending > 0 && (
+                  <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                    {view === 'received' && canEdit && itemPending > 0 && (
                       <button
                         type="button"
                         className="btn btn-primary h-8 px-3 text-[14px]"
-                        data-kt="K" data-kt-label="Record Inward (first waiting line)"
                         onClick={() => onRecordInward(order, item.id)}
+                        title="Record only this product into stock — it gets its own TXN number"
                       >
                         <ClipboardCheck size={12} /> Record Inward
                       </button>
                     )}
-                    {view === 'received' && itemPending === 0 && (
+                    {view === 'received' && itemPending === 0 && Number(item.received_qty) > 0 && (
                       <span className="text-[13px] text-ok font-medium flex items-center gap-1">
                         <Check size={12} /> Recorded
                       </span>
@@ -778,12 +937,11 @@ function OrderCard({
                         Close line
                       </button>
                     )}
-                    {canEdit && view === 'progress' && (
+                    {canEdit && view === 'progress' && open && (
                       <button
                         type="button"
                         className="btn btn-secondary h-8 px-3 text-[14px]"
-                        data-kt="H" data-kt-label="Receive (first open line)"
-                        onClick={() => onReceive(item)}
+                        onClick={() => onReceive(order, item.id)}
                       >
                         <ArrowDownLeft size={12} /> {lot ? 'Receive lot' : 'Receive'}
                       </button>
@@ -794,7 +952,7 @@ function OrderCard({
             })
           )}
 
-          {anyPending && canEdit && (
+          {view === 'received' && anyPending && canEdit && (
             <div className="px-4 py-3 bg-ok-soft/20 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-ok">
                 <ClipboardCheck size={14} />
@@ -811,28 +969,30 @@ function OrderCard({
 }
 
 /* ── Main ─────────────────────────────────────────────────────────────────── */
-export default function PurchaseOrdersView({ canEdit = true }: { canEdit?: boolean }) {
+export default function PurchaseOrdersView({
+  canEdit = true, company = {},
+}: { canEdit?: boolean; company?: Record<string, string> }) {
   const { allSkus: catalogSkus } = useCatalog();                    // ← catalog as SKU fallback
 
   const [orders, setOrders]         = useState<Order[]>([]);
   const [loading, setLoading]       = useState(true);
   const [tab, setTab]               = useState<'in_progress' | 'fulfilled'>('in_progress');
   const [showCreate, setShowCreate] = useState(false);
-  const [receiveItem, setReceiveItem]   = useState<OrderItem | null>(null);
+  const [receiveTarget, setReceiveTarget] = useState<{ order: Order; itemId?: string } | null>(null);
   const [closeItem, setCloseItem]       = useState<OrderItem | null>(null);
   const [recordTarget, setRecordTarget] = useState<Order | null>(null);
   const [recordItemId, setRecordItemId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Order | null>(null);
   const [recording, setRecording]       = useState(false);
+  const [recordErr, setRecordErr]       = useState<string | null>(null);
   const [toast, setToast]               = useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToast(msg);
-    setTimeout(() => setToast(null), 3500);
+    setTimeout(() => setToast(null), 5000);
   };
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const res  = await fetch('/api/purchase-orders');
       const json = await res.json();
@@ -886,25 +1046,30 @@ export default function PurchaseOrdersView({ canEdit = true }: { canEdit?: boole
     const h = (e: Event) => { if (canEdit && (e as CustomEvent).detail === 'new-order') setShowCreate(true); };
     window.addEventListener('bb:action', h);
     return () => window.removeEventListener('bb:action', h);
-  }, []);
+  }, [canEdit]);
+
+  const closeRecord = () => { setRecordTarget(null); setRecordItemId(null); setRecordErr(null); };
 
   const handleRecordInward = async (order: Order) => {
-    setRecording(true);
+    setRecording(true); setRecordErr(null);
     const res  = await fetch('/api/purchase-orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(
         recordItemId
-          ? { action: 'record_inward', item_id: recordItemId }
+          ? { action: 'record_inward', order_id: order.id, item_ids: [recordItemId] }
           : { action: 'record_inward', order_id: order.id },
       ),
     });
     const json = await res.json();
     setRecording(false);
-    setRecordTarget(null);
-    setRecordItemId(null);
-    if (!res.ok) { showToast(`Error: ${json.error}`); return; }
-    showToast(`Recorded ${json.recorded} inward transaction${json.recorded !== 1 ? 's' : ''}.`);
+    if (!res.ok) { setRecordErr(json.error ?? 'Could not record.'); return; }
+    closeRecord();
+    const txns = (json.transactions ?? []) as { txn_no: string }[];
+    showToast(
+      `Recorded ${txns.length} transaction${txns.length !== 1 ? 's' : ''}` +
+      (txns.length ? `: ${txns.slice(0, 4).map((t) => t.txn_no).join(', ')}${txns.length > 4 ? ` +${txns.length - 4} more` : ''}` : '') + '.',
+    );
     load();
   };
 
@@ -914,9 +1079,9 @@ export default function PurchaseOrdersView({ canEdit = true }: { canEdit?: boole
   const displayed  = tab === 'in_progress' ? inProgress : fulfilled;
 
   return (
-    <div className="p-4 lg:p-6 max-w-[960px] mx-auto space-y-4">
+    <div className="p-4 lg:p-6 max-w-[1040px] mx-auto space-y-4">
       {toast && (
-        <div className="fixed bottom-4 right-4 z-[100] bg-ink text-white text-[15px] px-4 py-2.5 rounded-lg shadow-lg animate-fade-in">
+        <div className="fixed bottom-4 right-4 z-[100] max-w-[420px] bg-ink text-white text-[15px] px-4 py-2.5 rounded-lg shadow-lg animate-fade-in">
           {toast}
         </div>
       )}
@@ -979,8 +1144,9 @@ export default function PurchaseOrdersView({ canEdit = true }: { canEdit?: boole
               key={o.id}
               view={tab === 'in_progress' ? 'progress' : 'received'}
               canEdit={canEdit}
+              company={company}
               order={o}
-              onReceive={(item) => setReceiveItem(item)}
+              onReceive={(order, itemId) => setReceiveTarget({ order, itemId })}
               onCloseLine={(item) => setCloseItem(item)}
               onRecordInward={(order, itemId) => { setRecordItemId(itemId ?? null); setRecordTarget(order); }}
               onDelete={(order) => setDeleteTarget(order)}
@@ -996,11 +1162,12 @@ export default function PurchaseOrdersView({ canEdit = true }: { canEdit?: boole
         />
       )}
 
-      {receiveItem && (
-        <ReceiveDialog
-          item={receiveItem}
-          onClose={() => setReceiveItem(null)}
-          onDone={() => { setReceiveItem(null); load(); showToast('Stock received.'); }}
+      {receiveTarget && (
+        <ReceiveOrderDialog
+          order={receiveTarget.order}
+          onlyItemId={receiveTarget.itemId}
+          onClose={() => setReceiveTarget(null)}
+          onDone={(msg) => { setReceiveTarget(null); load(); showToast(msg); }}
         />
       )}
 
@@ -1023,50 +1190,44 @@ export default function PurchaseOrdersView({ canEdit = true }: { canEdit?: boole
       {/* Record inward confirm */}
       {recordTarget && (() => {
         const lines = recordTarget.items.filter((i) => pendingInward(i) > 0 && (!recordItemId || i.id === recordItemId));
-        const close = () => { setRecordTarget(null); setRecordItemId(null); };
         return (
-        <div className="fixed inset-0 z-[90] grid place-items-center bg-ink/30 backdrop-blur-[2px] p-4">
-          <div className="w-full max-w-[440px] bg-surface border border-line rounded-xl shadow-xl">
-            <div className="card-head border-b">
-              <h2 className="card-title">Record as Inward?</h2>
-              <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={close}>
-                <X size={15} />
-              </button>
-            </div>
-            <div className="p-5 space-y-3">
-              <p className="text-[15px] text-ink-2">
-                This adds what has been received so far (not yet recorded) from <strong>{recordTarget.order_no}</strong> to stock — book and physical. Timing belts (MM × PCS) and poly V belts (RIBS × PCS) go in as lots of what was received.
-              </p>
-              <div className="bg-subtle rounded-lg p-3 space-y-2">
-                {lines.map((item) => {
-                  return (
-                  <div key={item.id} className="flex items-center justify-between text-[14px] gap-2">
-                    <div className="min-w-0">
-                      <span className="font-medium">{item.skus?.exact_size ?? '—'}</span>
-                      <span className="text-ink-3 ml-1.5">{item.skus?.brand_name ?? '—'}</span>
-                    </div>
-                    <span className="num font-semibold text-ok shrink-0">
-                      +{fmtQty(pendingInward(item), item.skus?.unit_code)}
-                    </span>
+          <Modal
+            z={90} width="max-w-[480px]" title="Record as Inward?" onClose={closeRecord}
+            footer={
+              <>
+                <button type="button" className="btn btn-secondary" onClick={closeRecord}>Cancel</button>
+                <button
+                  type="button" className="btn btn-primary" disabled={recording || lines.length === 0}
+                  onClick={() => handleRecordInward(recordTarget)}
+                >
+                  {recording
+                    ? <Loader2 size={14} className="animate-spin" />
+                    : <><ArrowDownLeft size={14} /> Confirm &amp; Record</>
+                  }
+                </button>
+              </>
+            }
+          >
+            <p className="text-[15px] text-ink-2">
+              This adds what has been received so far (not yet recorded) from <strong>{recordTarget.order_no}</strong> to stock — book and physical.
+              <strong> Every product is recorded as its own transaction</strong> with its own TXN number and <strong>{recordTarget.order_no}</strong> as the reference,
+              so any one of them can be reversed on its own.
+            </p>
+            <div className="bg-subtle rounded-lg p-3 space-y-2">
+              {lines.map((item) => (
+                <div key={item.id} className="flex items-center justify-between text-[14px] gap-2">
+                  <div className="min-w-0">
+                    <span className="font-medium">{item.skus?.exact_size ?? '—'}</span>
+                    <span className="text-ink-3 ml-1.5">{item.skus?.brand_name ?? '—'}</span>
                   </div>
-                  );
-                })}
-              </div>
+                  <span className="num font-semibold text-ok shrink-0">
+                    +{fmtQty(pendingInward(item), item.skus?.unit_code)}
+                  </span>
+                </div>
+              ))}
             </div>
-            <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle rounded-b-xl">
-              <button type="button" className="btn btn-secondary" onClick={close}>Cancel</button>
-              <button
-                type="button" className="btn btn-primary" disabled={recording}
-                onClick={() => handleRecordInward(recordTarget)}
-              >
-                {recording
-                  ? <Loader2 size={14} className="animate-spin" />
-                  : <><ArrowDownLeft size={14} /> Confirm &amp; Record</>
-                }
-              </button>
-            </div>
-          </div>
-        </div>
+            {recordErr && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{recordErr}</p>}
+          </Modal>
         );
       })()}
     </div>

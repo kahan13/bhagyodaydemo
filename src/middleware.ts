@@ -4,6 +4,7 @@ import { createServerClient } from '@supabase/ssr';
 const PUBLIC = ['/login', '/no-access', '/icons', '/offline'];
 
 export async function middleware(request: NextRequest) {
+  if (request.nextUrl.pathname === '/api/ping') return NextResponse.next();
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 

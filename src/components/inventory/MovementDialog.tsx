@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { X, Check } from 'lucide-react';
+import { Check } from 'lucide-react';
+import Modal from '@/components/ui/Modal';
 import { fmtQty } from '@/lib/format';
 import { isLotType, lotUnitWord } from '@/lib/lotUnit';
 import type { Channel, Sku } from '@/lib/types';
@@ -82,19 +83,23 @@ export default function MovementDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-[70] grid place-items-end sm:place-items-center bg-ink/30 backdrop-blur-[2px] p-0 sm:p-4">
-      <form
-        onSubmit={submit}
-        className="w-full sm:max-w-[420px] bg-surface border-t sm:border border-line sm:rounded-xl rounded-t-2xl shadow-lg slide-up"
-      >
-        <div className="card-head border-b">
-          <h2 className="card-title">{title}</h2>
-          <button type="button" className="btn btn-ghost h-7 w-7 p-0" onClick={onClose} aria-label="Close">
-            <X size={15} />
+    <Modal
+      title={title}
+      onClose={onClose}
+      onSubmit={submit}
+      width="sm:max-w-[420px]"
+      align="sheet"
+      bodyClassName="p-5 space-y-3.5"
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={busy || invalid}>
+            {busy ? 'Saving…' : <><Check size={14} /> Confirm</>}
           </button>
-        </div>
+        </>
+      }
+    >
 
-        <div className="p-5 space-y-3.5">
           <div className="bg-subtle rounded-lg px-3.5 py-3">
             <p className="text-[16px] font-medium">{sku.exact_size}</p>
             <p className="text-[13px] text-ink-3 mt-0.5">
@@ -167,15 +172,7 @@ export default function MovementDialog({
           )}
 
           {error && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{error}</p>}
-        </div>
-
-        <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-line bg-subtle sm:rounded-b-xl">
-          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={busy || invalid}>
-            {busy ? 'Saving…' : <><Check size={14} /> Confirm</>}
-          </button>
-        </div>
-      </form>
-    </div>
+        
+    </Modal>
   );
 }

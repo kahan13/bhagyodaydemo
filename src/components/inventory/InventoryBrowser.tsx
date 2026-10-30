@@ -8,6 +8,7 @@ import { fmtQty, fmtMsl, fmtRelative, CHANNEL_LABEL } from '@/lib/format';
 import { HIERARCHY, type Movement, type Permission, type ProductType, type Sku } from '@/lib/types';
 import MovementDialog from '@/components/inventory/MovementDialog';
 import SkuLotsPanel from '@/components/inventory/SkuLotsPanel';
+import StockWastePanel from '@/components/inventory/StockWastePanel';
 import LotBreakdown, { groupsInline, groupText } from '@/components/inventory/LotBreakdown';
 import { TYPE_META } from '@/lib/sheet-config';
 import { isLotType, lotUnitWord } from '@/lib/lotUnit';
@@ -822,17 +823,31 @@ function DetailPanel({
           {specs.filter(([, v]) => v).map(([k, v]) => <Field key={k} label={k} value={v} />)}
         </dl>
 
-        {/* ── Lot breakdown (timing belts with lot tracking) ── */}
-        <div className="px-5 py-4 border-b border-line">
-          <p className="eyebrow mb-3">Stock lots</p>
-          <SkuLotsPanel
-            skuId={sku.id}
-            skuCode={sku.sku_code}
-            unitCode={sku.unit_code}
-            can={can}
-            onStockChange={onStockChange}
-          />
-        </div>
+        {/* ── Roll-tracked products: their rolls, each can be marked as waste ── */}
+        {isLotType(sku.product_type) ? (
+          <div className="px-5 py-4 border-b border-line">
+            <p className="eyebrow mb-3">Stock lots</p>
+            <SkuLotsPanel
+              skuId={sku.id}
+              skuCode={sku.sku_code}
+              unitCode={sku.unit_code}
+              can={can}
+              onStockChange={onStockChange}
+            />
+          </div>
+        ) : (
+          /* ── Everything else (V-belts, conveyor): waste is a quantity ── */
+          <div className="px-5 py-4 border-b border-line">
+            <p className="eyebrow mb-3">Waste</p>
+            <StockWastePanel
+              skuId={sku.id}
+              skuCode={sku.sku_code}
+              unitCode={sku.unit_code}
+              can={can}
+              onStockChange={onStockChange}
+            />
+          </div>
+        )}
 
         <div className="px-5 py-4">
           <p className="eyebrow mb-2.5">Movement history</p>

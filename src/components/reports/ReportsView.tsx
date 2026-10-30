@@ -8,7 +8,7 @@ import { isLotType, lotUnitWord } from '@/lib/lotUnit';
 
 type ReportKind =
   | 'current_stock' | 'needs_ordering' | 'movements' | 'inward' | 'outward'
-  | 'waste' | 'brand_summary' | 'family_summary';
+  | 'waste' | 'sales_analysis';
 
 const REPORTS: { id: ReportKind; label: string; note: string; dated: boolean }[] = [
   { id: 'current_stock', label: 'Current stock', note: 'Every active SKU with its stock and reorder settings', dated: false },
@@ -17,9 +17,25 @@ const REPORTS: { id: ReportKind; label: string; note: string; dated: boolean }[]
   { id: 'inward', label: 'Inward register', note: 'Goods received in the period', dated: true },
   { id: 'outward', label: 'Outward register', note: 'Goods issued in the period', dated: true },
   { id: 'waste', label: 'Marked as waste', note: 'Lots / pieces written off as waste, with the reason and who marked them', dated: true },
-  { id: 'brand_summary', label: 'Brand summary', note: 'SKU count and stock value by brand', dated: false },
-  { id: 'family_summary', label: 'Family summary', note: 'SKU count and stock by family or profile', dated: false },
+  { id: 'sales_analysis', label: 'Sales analysis', note: 'What was sold (outward) in each product category, brand by brand — share, number of SKUs and the highest-selling SKUs', dated: true },
 ];
+
+const CATEGORY_LABEL: Record<string, string> = {
+  TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt', POLY_V_BELT: 'Poly V Belt',
+};
+const CATEGORY_ORDER = ['TIMING_BELT', 'POLY_V_BELT', 'V_BELT', 'CONVEYOR_BELT'];
+
+/** Every row of a query, a page at a time (the database hands out at most 1000 per request). */
+async function fetchAll<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; from < 100000; from += 1000) {
+    const { data, error } = await page(from, from + 999);
+    if (error) throw new Error(error.message);
+    out.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
 
 const RANGES: [string, string][] = [
   ['today', 'Today'], ['week', 'This week'], ['month', 'This month'],
@@ -64,7 +80,9 @@ export default function ReportsView({
   company: Record<string, string>;
 }) {
   const [kind, setKind] = useState<ReportKind>(() => {
-    const wanted = initialKind === 'low_stock' ? 'needs_ordering' : initialKind;   // old link name
+    const wanted = initialKind === 'low_stock' ? 'needs_ordering'                         // old link names
+      : initialKind === 'brand_summary' || initialKind === 'family_summary' ? 'sales_analysis'
+      : initialKind;
     return REPORTS.find((r) => r.id === wanted)?.id ?? 'current_stock';
   });
   const [range, setRange] = useState('month');
@@ -117,34 +135,79 @@ export default function ReportsView({
                 min_stock_level: fmtMsl(r.min_stock_level as number, 'MM', 'TIMING_BELT'),
                 suggested_purchase_qty: fmtMsl(r.suggested_purchase_qty as number, 'MM', 'TIMING_BELT') }
             : r));
-      } else if (kind === 'brand_summary' || kind === 'family_summary') {
-        const { data, error } = await db.from('v_sku_status')
-          .select('brand_name,family_code,current_stock,unit_code,stock_status')
-          .eq('is_active', true).limit(20000);
-        if (error) throw new Error(error.message);
+      } else if (kind === 'sales_analysis') {
+        // Sales = outward posted normally and not reversed afterwards.
+        type Sale = { sku_code: string; product_type: string; brand_name: string; quantity: number | string; unit_code: string };
+        const sales = await fetchAll<Sale>((from, to) => {
+          let q = db.from('v_movements')
+            .select('sku_code,product_type,brand_name,quantity,unit_code')
+            .eq('txn_type', 'OUTWARD').eq('txn_mode', 'NORMAL').eq('is_reversed', false);
+          if (start) q = q.gte('occurred_at', start);
+          if (end) q = q.lte('occurred_at', end);
+          if (brand) q = q.eq('brand_name', brand);
+          if (family) q = q.eq('family_code', family);
+          return q.order('occurred_at', { ascending: false }).order('id').range(from, to) as unknown as PromiseLike<{ data: Sale[] | null; error: { message: string } | null }>;
+        });
 
-        const groupKey = kind === 'brand_summary' ? 'brand_name' : 'family_code';
-        const buckets = new Map<string, { skus: number; low: number; pcs: number; mtr: number }>();
-        for (const r of (data ?? []) as Record<string, string | number>[]) {
-          const key = String(r[groupKey]);
-          const b = buckets.get(key) ?? { skus: 0, low: 0, pcs: 0, mtr: 0 };
-          b.skus += 1;
-          if (r.stock_status !== 'OK') b.low += 1;
-          if (r.unit_code === 'MTR') b.mtr += Number(r.current_stock);
-          else b.pcs += Number(r.current_stock);
-          buckets.set(key, b);
+        // category → brand → sku → { qty, txns }
+        type Tally = { qty: number; txns: number };
+        const tree = new Map<string, { unit: string; brands: Map<string, { total: Tally; skus: Map<string, Tally> }>; skus: Map<string, Tally>; total: Tally }>();
+        for (const r of sales) {
+          const cat = String(r.product_type);
+          const c = tree.get(cat) ?? { unit: String(r.unit_code), brands: new Map(), skus: new Map(), total: { qty: 0, txns: 0 } };
+          const b = c.brands.get(r.brand_name) ?? { total: { qty: 0, txns: 0 }, skus: new Map() };
+          const q = Math.abs(Number(r.quantity)) || 0;
+          const bump = (t: Tally) => { t.qty += q; t.txns += 1; };
+          bump(c.total); bump(b.total);
+          const cs = c.skus.get(r.sku_code) ?? { qty: 0, txns: 0 }; bump(cs); c.skus.set(r.sku_code, cs);
+          const bs = b.skus.get(r.sku_code) ?? { qty: 0, txns: 0 }; bump(bs); b.skus.set(r.sku_code, bs);
+          c.brands.set(r.brand_name, b);
+          tree.set(cat, c);
+        }
+
+        const top = (m: Map<string, Tally>, n: number) =>
+          [...m.entries()].sort((a, b) => b[1].qty - a[1].qty).slice(0, n);
+        const pct = (part: number, whole: number) => (whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : '—');
+        const rowsOut: Record<string, unknown>[] = [];
+        const cats = [...tree.keys()].sort((a, b) => CATEGORY_ORDER.indexOf(a) - CATEGORY_ORDER.indexOf(b));
+        for (const cat of cats) {
+          const c = tree.get(cat)!;
+          const label = CATEGORY_LABEL[cat] ?? cat;
+          const brandsSorted = [...c.brands.entries()].sort((a, b) => b[1].total.qty - a[1].total.qty);
+          brandsSorted.forEach(([bn, b], i) => {
+            const t = top(b.skus, 3);
+            rowsOut.push({
+              category: label, brand: bn, qty: b.total.qty, unit: c.unit, share: pct(b.total.qty, c.total.qty),
+              txns: b.total.txns, skus: b.skus.size,
+              top_sku: t[0]?.[0] ?? '—', top_sku_qty: t[0]?.[1].qty ?? 0,
+              top_skus: t.map(([k, v]) => `${k} (${fmtQty(v.qty)})`).join(', '),
+              rank: i + 1,
+            });
+          });
+          const t5 = top(c.skus, 5);
+          rowsOut.push({
+            category: label, brand: `ALL ${label.toUpperCase()} BRANDS`, qty: c.total.qty, unit: c.unit, share: '100%',
+            txns: c.total.txns, skus: c.skus.size,
+            top_sku: t5[0]?.[0] ?? '—', top_sku_qty: t5[0]?.[1].qty ?? 0,
+            top_skus: t5.map(([k, v]) => `${k} (${fmtQty(v.qty)})`).join(', '),
+            rank: '', is_total: true,
+          });
         }
 
         setColumns([
-          { key: 'name', label: kind === 'brand_summary' ? 'Brand' : 'Family / profile' },
-          { key: 'skus', label: 'SKUs', numeric: true },
-          { key: 'pcs', label: 'Pieces', numeric: true },
-          { key: 'mtr', label: 'Metres', numeric: true },
-          { key: 'low', label: 'Below minimum', numeric: true },
+          { key: 'category', label: 'Product category' },
+          { key: 'brand', label: 'Brand' },
+          { key: 'rank', label: 'Rank in category', numeric: true },
+          { key: 'qty', label: 'Quantity sold', numeric: true },
+          { key: 'unit', label: 'Unit' },
+          { key: 'share', label: 'Share of category', numeric: true },
+          { key: 'txns', label: 'Outward txns', numeric: true },
+          { key: 'skus', label: 'SKUs sold', numeric: true },
+          { key: 'top_sku', label: 'Highest-selling SKU' },
+          { key: 'top_sku_qty', label: 'Its quantity', numeric: true },
+          { key: 'top_skus', label: 'Top SKUs (quantity)' },
         ]);
-        setRows([...buckets.entries()]
-          .map(([name, v]) => ({ name, ...v }))
-          .sort((a, b) => b.skus - a.skus));
+        setRows(rowsOut);
       } else {
         let q = db.from('v_movements')
           .select('txn_no,occurred_at,txn_type,txn_mode,product_type,exact_size,brand_name,family_code,quantity,unit_code,previous_stock,new_stock,user_name,operated_by_name,invoice_no,notes,lot_breakdown');
@@ -388,7 +451,7 @@ export default function ReportsView({
             </thead>
             <tbody>
               {rows.slice(0, 500).map((r, i) => (
-                <tr key={i}>
+                <tr key={i} className={r.is_total ? 'bg-subtle font-semibold' : undefined}>
                   {columns.map((c) => (
                     <td key={c.key} className={c.numeric ? 'num text-right' : undefined}>
                       {cell(r, c.key)}

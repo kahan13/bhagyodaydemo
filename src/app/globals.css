@@ -294,6 +294,12 @@
     border-radius: 6px;
   }
 
+  /* Dialog panels: never taller than the window (vh first, dvh where the browser knows it) */
+  .modal-panel {
+    max-height: calc(100vh - 1.5rem);
+    max-height: calc(100dvh - 1.5rem);
+  }
+
   .fade-in { animation: fade-in 0.18s ease both; }
   .slide-up { animation: slide-up 0.2s cubic-bezier(0.16, 1, 0.3, 1) both; }
 }

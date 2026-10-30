@@ -15,7 +15,8 @@ import {
   DeleteConfirmModal, RecordOutwardModal, MismatchPane, MovementsPane, STATUS_LABEL,
   openWhatsApp, type MovementRow,
 } from './poShared';
-import OrderCard, { type AllocBadge } from './OrderCard';
+import OrderCard from './OrderCard';
+import { loadItemParts, type AllocPart } from '@/lib/orderParts';
 import StaffInbox from './StaffInbox';
 
 type Tab = 'active' | 'direct' | 'movements' | 'mismatch';
@@ -55,7 +56,7 @@ export default function InProgressView({
   const [tab, setTab] = useState<Tab>(TABS.includes(initialTab as Tab) ? (initialTab as Tab) : 'active');
   const [asWorkshop, setAsWorkshop] = useState(false);
   const [search, setSearch] = useState<Record<Tab, string>>({ active: '', direct: '', movements: '', mismatch: '' });
-  const [allocMap, setAllocMap] = useState<Record<string, AllocBadge[]>>({});
+  const [allocMap, setAllocMap] = useState<Record<string, AllocPart[]>>({});
 
   const [mismatches, setMismatches] = useState<SkuMismatch[]>([]);
   const [pending, setPending] = useState<PendingAdjustment[]>([]);
@@ -78,20 +79,7 @@ export default function InProgressView({
   const loadAllocs = useCallback(async (list: ProductionOrder[]) => {
     const ids = list.flatMap((o) => (o.items ?? []).map((i) => i.id));
     if (ids.length === 0) { setAllocMap({}); return; }
-    const { data } = await db
-      .from('lot_allocations')
-      .select('item_id,allocated_qty,lot_status,piece_qty,sku_lots(status,current_qty)')
-      .in('item_id', ids);
-    const m: Record<string, AllocBadge[]> = {};
-    for (const r of (data ?? []) as any[]) {
-      const status = r.lot_status ?? r.sku_lots?.status ?? 'CUT_PCS';
-      (m[r.item_id] ??= []).push({
-        label: status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs',
-        qty: Number(r.allocated_qty),
-        piece: Number(r.piece_qty ?? r.sku_lots?.current_qty ?? 0),
-      });
-    }
-    for (const k of Object.keys(m)) m[k].sort((a, b) => (a.label === b.label ? 0 : a.label === 'Cut Pcs' ? -1 : 1));
+    const m = await loadItemParts(db, ids);
     setAllocMap(m);
   }, [db]);
 

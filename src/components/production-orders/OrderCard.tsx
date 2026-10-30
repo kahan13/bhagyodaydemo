@@ -2,10 +2,10 @@
 
 import { Send, CheckCircle, Clock, Ban, Trash2, Printer, FileDown, ArrowDownCircle } from 'lucide-react';
 import type { ProductionOrder } from '@/lib/types';
-import { fmtLineQty, fmtQty } from '@/lib/format';
-import { STATUS_BADGE, STATUS_LABEL, STATUS_NEXT, STATUS_NEXT_LABEL, formatDateTime } from './poShared';
+import { fmtQty } from '@/lib/format';
+import type { AllocPart } from '@/lib/orderParts';
+import { STATUS_BADGE, STATUS_LABEL, STATUS_NEXT, STATUS_NEXT_LABEL, formatDateTime, ItemBlock } from './poShared';
 
-export type AllocBadge = { label: string; qty: number; piece: number };
 
 /**
  * One production order as a card: what was asked, who has it, and the buttons that move it on.
@@ -16,8 +16,8 @@ export default function OrderCard({
   onAdvance, onCancel, onDelete, onWhatsApp, onPrint, onPdf, onMarkDirect, onOpenMismatch,
 }: {
   order: ProductionOrder;
-  /** lots planned per item id, e.g. "Cut Pcs 230 mm" */
-  allocs: Record<string, AllocBadge[]>;
+  /** the rolls each item is taken FROM, per item id */
+  allocs: Record<string, AllocPart[]>;
   /** may cancel / delete */
   canManage: boolean;
   onAdvance: (o: ProductionOrder) => void;
@@ -78,30 +78,16 @@ export default function OrderCard({
           </div>
 
           {order.items && order.items.length > 0 ? (
-            <ul className="mt-2 space-y-1">
+            <ul className="mt-2 space-y-2">
               {order.items.map((item, idx) => (
-                <li key={item.id} className="flex items-center gap-2 text-[15px]">
-                  <span className="text-ink-3 font-mono text-[13px] w-4 shrink-0">{idx + 1}.</span>
-                  <span className="font-medium text-ink truncate">{item.display_name}</span>
-                  {item.quantity != null && (
-                    <span className="text-ink-3 shrink-0">— {fmtLineQty(item)}</span>
-                  )}
-                  {item.is_fulfilled && (
-                    <span className="text-[12px] bg-ok/10 text-ok px-1.5 rounded-full shrink-0">Outward posted</span>
-                  )}
-                  {(allocs[item.id] ?? []).length > 0 && (
-                    <span className="flex gap-1 flex-wrap">
-                      {allocs[item.id].map((p, k) => (
-                        <span
-                          key={k}
-                          className={`badge ${p.label === 'Full Sleeve' ? 'badge-ok' : 'badge-warn'}`}
-                          title={p.label === 'Full Sleeve' && p.piece > p.qty ? `${p.qty} of a ${p.piece} sleeve — rest becomes Cut Pcs` : undefined}
-                        >
-                          {p.label} {fmtQty(p.qty, item.unit_code === 'RIB' ? 'RIB' : 'MM')}
-                        </span>
-                      ))}
-                    </span>
-                  )}
+                <li key={item.id} className="flex items-start gap-2">
+                  <span className="text-ink-3 font-mono text-[13px] w-4 shrink-0 pt-0.5">{idx + 1}.</span>
+                  <ItemBlock
+                    name={item.display_name}
+                    item={item}
+                    parts={allocs[item.id]}
+                    badge={item.is_fulfilled ? <span className="text-[12px] bg-ok/10 text-ok px-1.5 rounded-full">Outward posted</span> : undefined}
+                  />
                 </li>
               ))}
             </ul>

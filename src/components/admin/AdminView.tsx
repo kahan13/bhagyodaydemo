@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import {
-  Tag, SlidersHorizontal, Upload, Download, Check, ShieldCheck,
+  Tag, SlidersHorizontal, Upload, Download, Check, ShieldCheck, Pencil, Loader2,
 } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { fmtDateTime, ROLE_LABEL } from '@/lib/format';
@@ -42,7 +42,51 @@ export default function AdminView({
   const [saved, setSaved] = useState(false);
 
   const can = (p: Permission) => permissions.includes(p);
-  const company = (settings.company ?? {}) as Record<string, string>;
+  const [company, setCompany] = useState<Record<string, string>>((settings.company ?? {}) as Record<string, string>);
+  const [whatsapp, setWhatsapp] = useState(String((settings.default_whatsapp_number as unknown as string | undefined) ?? ''));
+  // editing the company details / the WhatsApp number
+  const [editing, setEditing] = useState<null | 'company' | 'whatsapp'>(null);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [formErr, setFormErr] = useState<string | null>(null);
+  const [formSaved, setFormSaved] = useState<string | null>(null);
+
+  async function saveSetting(key: string, value: unknown) {
+    const res = await fetch('/api/admin/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, value }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error ?? 'Could not save.');
+    return json.value;
+  }
+  function startEdit(which: 'company' | 'whatsapp') {
+    setFormErr(null); setFormSaved(null);
+    setDraft(which === 'company'
+      ? { name: company.name ?? '', address: company.address ?? '', phone: company.phone ?? '', email: company.email ?? '', gstin: company.gstin ?? '' }
+      : { number: whatsapp });
+    setEditing(which);
+  }
+  async function submitEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editing) return;
+    setBusy(true); setFormErr(null);
+    try {
+      if (editing === 'company') {
+        const v = (await saveSetting('company', draft)) as Record<string, string>;
+        setCompany(v);
+      } else {
+        const v = (await saveSetting('default_whatsapp_number', draft.number ?? '')) as string;
+        setWhatsapp(v);
+      }
+      setFormSaved(editing);
+      setEditing(null);
+      setTimeout(() => setFormSaved(null), 2500);
+    } catch (err) {
+      setFormErr((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   const source = (settings.data_source ?? {}) as Record<string, string>;
   const visible = TABS.filter((t) => !t.needs || can(t.needs));
 
@@ -50,12 +94,14 @@ export default function AdminView({
     setNegative(next);
     setSaving(true);
     setSaved(false);
-    const { error } = await supabaseBrowser()
-      .from('app_settings')
-      .update({ value: { enabled: next }, updated_at: new Date().toISOString() })
-      .eq('key', 'allow_negative_stock');
+    try {
+      await saveSetting('allow_negative_stock', { enabled: next });
+    } catch {
+      setSaving(false);
+      setNegative(!next);
+      return;
+    }
     setSaving(false);
-    if (error) { setNegative(!next); return; }
     setSaved(true);
     setTimeout(() => setSaved(false), 2200);
   }
@@ -172,18 +218,85 @@ export default function AdminView({
       {tab === 'settings' && (
         <div className="grid gap-4 lg:grid-cols-2">
           <section className="card p-5">
-            <h2 className="card-title mb-3">Company</h2>
-            <dl className="space-y-2.5">
-              {[['Name', company.name], ['Address', company.address],
-                ['Phone', company.phone], ['Email', company.email],
-                ['GSTIN', company.gstin || '—']].map(([k, v]) => (
-                <div key={k}>
-                  <dt className="text-[13px] text-ink-3">{k}</dt>
-                  <dd className="text-[15px] mt-0.5">{v || '—'}</dd>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="card-title">Company</h2>
+              {can('settings.edit') && editing !== 'company' && (
+                <button className="btn btn-secondary btn-sm" onClick={() => startEdit('company')}>
+                  <Pencil size={12} /> Edit
+                </button>
+              )}
+            </div>
+            {editing === 'company' ? (
+              <form onSubmit={submitEdit} className="space-y-3">
+                {([['name', 'Name'], ['address', 'Address'], ['phone', 'Phone'], ['email', 'Email'], ['gstin', 'GSTIN']] as const).map(([k, label]) => (
+                  <div key={k}>
+                    <label className="label" htmlFor={`co-${k}`}>{label}{k === 'name' && <span className="text-danger"> *</span>}</label>
+                    {k === 'address' ? (
+                      <textarea id={`co-${k}`} rows={2} className="field resize-none" value={draft[k] ?? ''} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />
+                    ) : (
+                      <input id={`co-${k}`} className="field" value={draft[k] ?? ''} onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />
+                    )}
+                  </div>
+                ))}
+                {formErr && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{formErr}</p>}
+                <div className="flex gap-2">
+                  <button type="submit" className="btn btn-primary" disabled={busy}>
+                    {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save
+                  </button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setEditing(null)}>Cancel</button>
                 </div>
-              ))}
-            </dl>
-            <p className="text-[14px] text-ink-3 mt-4">Printed on every exported report.</p>
+              </form>
+            ) : (
+              <>
+                <dl className="space-y-2.5">
+                  {[['Name', company.name], ['Address', company.address],
+                    ['Phone', company.phone], ['Email', company.email],
+                    ['GSTIN', company.gstin || '—']].map(([k, v]) => (
+                    <div key={k}>
+                      <dt className="text-[13px] text-ink-3">{k}</dt>
+                      <dd className="text-[15px] mt-0.5">{v || '—'}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <p className="text-[14px] text-ink-3 mt-4">Printed on every exported report and purchase order.</p>
+                {formSaved === 'company' && <p className="text-[14px] text-ok mt-2 flex items-center gap-1.5"><Check size={13} /> Saved</p>}
+              </>
+            )}
+          </section>
+
+          <section className="card p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="card-title">Production orders</h2>
+              {can('settings.edit') && editing !== 'whatsapp' && (
+                <button className="btn btn-secondary btn-sm" onClick={() => startEdit('whatsapp')}>
+                  <Pencil size={12} /> Edit
+                </button>
+              )}
+            </div>
+            {editing === 'whatsapp' ? (
+              <form onSubmit={submitEdit} className="space-y-3">
+                <div>
+                  <label className="label" htmlFor="wa-number">Default WhatsApp number</label>
+                  <input id="wa-number" className="field" placeholder="+91 98765 43210" value={draft.number ?? ''} onChange={(e) => setDraft({ number: e.target.value })} autoFocus />
+                </div>
+                {formErr && <p className="text-[14px] text-danger bg-danger-soft rounded-lg px-3 py-2">{formErr}</p>}
+                <div className="flex gap-2">
+                  <button type="submit" className="btn btn-primary" disabled={busy}>
+                    {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save
+                  </button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setEditing(null)}>Cancel</button>
+                </div>
+              </form>
+            ) : (
+              <>
+                <dl>
+                  <dt className="text-[13px] text-ink-3">Default WhatsApp number</dt>
+                  <dd className="text-[15px] mt-0.5">{whatsapp || '—'}</dd>
+                </dl>
+                <p className="text-[14px] text-ink-3 mt-4">New production orders are sent to this number on WhatsApp.</p>
+                {formSaved === 'whatsapp' && <p className="text-[14px] text-ok mt-2 flex items-center gap-1.5"><Check size={13} /> Saved</p>}
+              </>
+            )}
           </section>
 
           <section className="card p-5">

@@ -7,26 +7,14 @@ import { fmtQty, fmtRelative, fmtDate, fmtMmPcs, fmtLineQty } from '@/lib/format
 import DashboardActions from '@/components/dashboard/DashboardActions';
 import ReorderPane, { type ReorderRow } from '@/components/dashboard/ReorderPane';
 import Link from 'next/link';
+import { loadItemParts } from '@/lib/orderParts';
+import { ItemBlock } from '@/components/production-orders/poShared';
 
 export const dynamic = 'force-dynamic';
 
 const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor', POLY_V_BELT: 'Poly V' };
 /** "mm" for timing belts, "ribs" for poly V belts — decided by the unit the product is stocked in. */
 const wordOfUnit = (unit?: string | null): string => ((unit ?? '').toUpperCase() === 'RIB' ? 'ribs' : 'mm');
-
-const PO_STATUS_LABEL: Record<string, string> = {
-  CREATED:     'Created',
-  IN_PROGRESS: 'In Progress',
-  COMPLETED:   'Completed',
-  CANCELLED:   'Cancelled',
-};
-
-const PO_STATUS_STYLE: Record<string, string> = {
-  CREATED:     'bg-warn/10 text-warn',
-  IN_PROGRESS: 'bg-ok/10 text-ok',
-  COMPLETED:   'bg-subtle text-ink-3',
-  CANCELLED:   'bg-danger/10 text-danger',
-};
 
 /* ── Lot wording helpers (timing belts only) ─────────────────────────────── */
 type LotEntry = { lot_no?: string; status: string; qty: number };
@@ -348,132 +336,80 @@ type ProdOrderRow = {
 
 async function ProductionOrdersPane() {
   const db = await supabaseServer();
+  const SELECT = 'id,order_no,customer_name,status,time_tag,delivery_mode,assigned_to,created_at,production_order_items(id,display_name,quantity,unit_code,pieces,length_mm,is_fulfilled)';
 
-  const { data } = await db
-    .from('production_orders')
-    .select('id,order_no,customer_name,status,time_tag,delivery_mode,assigned_to,created_at,production_order_items(id,display_name,quantity,unit_code,pieces,length_mm,is_fulfilled)')
-    .not('status', 'in', '("COMPLETED","CANCELLED")')
-    .order('created_at', { ascending: false })
-    .limit(10);
+  // Three groups, side by side: waiting to start · being made · done (latest ten)
+  const [createdRes, progressRes, doneRes] = await Promise.all([
+    db.from('production_orders').select(SELECT).eq('status', 'CREATED').order('created_at', { ascending: false }).limit(10),
+    db.from('production_orders').select(SELECT).eq('status', 'IN_PROGRESS').order('created_at', { ascending: false }).limit(10),
+    db.from('production_orders').select(SELECT).eq('status', 'COMPLETED').order('updated_at', { ascending: false }).limit(10),
+  ]);
+  const toRows = (d: unknown): ProdOrderRow[] =>
+    ((d ?? []) as any[]).map((o) => ({ ...o, items: o.production_order_items ?? [] })) as ProdOrderRow[];
+  const groups = [
+    { key: 'active',   title: 'Active',      hint: 'Created, not started', dot: 'bg-warn', rows: toRows(createdRes.data),  empty: 'No active orders.' },
+    { key: 'progress', title: 'In Progress', hint: 'Being made',           dot: 'bg-ok',   rows: toRows(progressRes.data), empty: 'Nothing in progress.' },
+    { key: 'done',     title: 'Completed',   hint: 'Latest 10',            dot: 'bg-ink-3', rows: toRows(doneRes.data),    empty: 'No completed orders yet.' },
+  ];
 
-  const orders = ((data ?? []) as any[]).map((o) => ({
-    ...o,
-    items: o.production_order_items ?? [],
-  })) as ProdOrderRow[];
-
-  // Lots planned on each item (timing belts) -> "20 Cut Pcs + 50 Full Sleeve"
-  const itemIds = orders.flatMap((o) => o.items.map((i) => i.id));
-  const splitByItem: Record<string, string> = {};
-  if (itemIds.length > 0) {
-    const { data: allocs } = await db
-      .from('lot_allocations')
-      .select('item_id,allocated_qty,lot_status')
-      .in('item_id', itemIds);
-    const grouped: Record<string, LotEntry[]> = {};
-    for (const a of (allocs ?? []) as { item_id: string; allocated_qty: number; lot_status: string | null }[]) {
-      (grouped[a.item_id] ??= []).push({ status: a.lot_status ?? 'FULL_SLEEVE', qty: Number(a.allocated_qty) });
-    }
-    for (const [k, v] of Object.entries(grouped)) splitByItem[k] = lotSplit(v, 'MM');
-  }
-
-  // Count summary
-  const created    = orders.filter((o) => o.status === 'CREATED').length;
-  const inProgress = orders.filter((o) => o.status === 'IN_PROGRESS').length;
+  // The rolls each item is taken FROM
+  const itemIds = groups.flatMap((g) => g.rows.flatMap((o) => o.items.map((i) => i.id)));
+  const parts = await loadItemParts(db, itemIds);
 
   return (
     <section className="card">
       <div className="card-head">
-        <div className="flex items-center gap-2">
-          <h2 className="card-title">Active Production Orders</h2>
-          {orders.length > 0 && (
-            <span className="text-[12px] font-semibold px-1.5 py-0.5 rounded bg-brand/10 text-brand">
-              {orders.length} active
-            </span>
-          )}
-        </div>
+        <h2 className="card-title">Production Orders</h2>
         <Link href="/production-orders/in-progress" className="text-[14px] text-brand hover:underline">View all</Link>
       </div>
 
-      {/* Mini status summary bar */}
-      {orders.length > 0 && (
-        <div className="flex items-center gap-3 px-4 py-2 border-b border-line bg-subtle text-[13px]">
-          {created > 0 && (
-            <span className="flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-warn inline-block" />
-              <span className="text-ink-3">{created} created</span>
-            </span>
-          )}
-          {inProgress > 0 && (
-            <span className="flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-ok inline-block" />
-              <span className="text-ink-3">{inProgress} in progress</span>
-            </span>
-          )}
-        </div>
-      )}
-
-      {orders.length === 0 ? (
-        <p className="px-5 py-6 text-[14px] text-ink-3 text-center">No active production orders.</p>
-      ) : (
-        <ul className="divide-y divide-line">
-          {orders.map((o) => {
-            const fulfilledCount = o.items.filter((i) => i.is_fulfilled).length;
-            const totalItems     = o.items.length;
-            return (
-              <li key={o.id} className="flex items-start gap-3 px-4 py-2.5">
-                <div className="min-w-0 flex-1">
-                  {/* Order no + status + customer */}
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[13px] font-mono text-ink-3">{o.order_no}</span>
-                    <span className={`text-[12px] font-semibold px-1.5 py-0.5 rounded-full ${PO_STATUS_STYLE[o.status] ?? 'bg-subtle text-ink-3'}`}>
-                      {PO_STATUS_LABEL[o.status] ?? o.status}
-                    </span>
-                    {o.customer_name && (
-                      <span className="text-[14px] font-medium text-ink truncate">{o.customer_name}</span>
-                    )}
-                  </div>
-
-                  {/* Items summary */}
-                  {o.items.length > 0 && (
-                    <p className="text-[13px] text-ink-3 mt-0.5">
-                      {o.items.map((i) => `${i.display_name} — ${fmtLineQty(i)}${splitByItem[i.id] ? ` (${splitByItem[i.id]})` : ''}`).join(' · ')}
-                    </p>
-                  )}
-
-                  {/* Meta row */}
-                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                    {o.time_tag && (
-                      <span className="text-[12px] text-ink-3">⏱ {o.time_tag}</span>
-                    )}
-                    {o.delivery_mode && (
-                      <span className="text-[12px] text-ink-3">· {o.delivery_mode}</span>
-                    )}
-                    {o.assigned_to && (
-                      <span className="text-[12px] text-ink-3">· {o.assigned_to}</span>
-                    )}
-                    <span className="text-[12px] text-ink-3 ml-auto">{fmtRelative(o.created_at)}</span>
-                  </div>
-                </div>
-
-                {/* Fulfilment chip — only show if items exist */}
-                {totalItems > 0 && (
-                  <div className="shrink-0 text-right">
-                    <span className={`text-[13px] font-semibold px-1.5 py-0.5 rounded ${
-                      fulfilledCount === totalItems
-                        ? 'bg-ok/10 text-ok'
-                        : fulfilledCount > 0
-                        ? 'bg-warn/10 text-warn'
-                        : 'bg-subtle text-ink-3'
-                    }`}>
-                      {fulfilledCount}/{totalItems} posted
-                    </span>
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <div className="grid lg:grid-cols-3 divide-y lg:divide-y-0 lg:divide-x divide-line">
+        {groups.map((g) => (
+          <div key={g.key} className="min-w-0">
+            <div className="flex items-center gap-1.5 px-4 py-2 border-b border-line bg-subtle">
+              <span className={`w-2 h-2 rounded-full ${g.dot}`} />
+              <span className="text-[14px] font-semibold">{g.title}</span>
+              <span className="text-[12px] text-ink-3">· {g.hint}</span>
+              <span className="ml-auto text-[13px] text-ink-3">{g.rows.length}</span>
+            </div>
+            {g.rows.length === 0 ? (
+              <p className="px-4 py-5 text-[14px] text-ink-3 text-center">{g.empty}</p>
+            ) : (
+              <ul className="divide-y divide-line">
+                {g.rows.map((o) => {
+                  const posted = o.items.filter((i) => i.is_fulfilled).length;
+                  return (
+                    <li key={o.id} className="px-4 py-2.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[13px] font-mono text-ink-3">{o.order_no}</span>
+                        {o.customer_name && <span className="text-[14px] font-medium text-ink truncate">{o.customer_name}</span>}
+                        {o.items.length > 0 && (
+                          <span className={`ml-auto text-[12px] font-semibold px-1.5 py-0.5 rounded ${
+                            posted === o.items.length ? 'bg-ok/10 text-ok' : posted > 0 ? 'bg-warn/10 text-warn' : 'bg-subtle text-ink-3'
+                          }`}>{posted}/{o.items.length} posted</span>
+                        )}
+                      </div>
+                      <ul className="mt-1.5 space-y-1.5">
+                        {o.items.map((i) => (
+                          <li key={i.id}>
+                            <ItemBlock name={i.display_name} item={i} parts={parts[i.id]} />
+                          </li>
+                        ))}
+                      </ul>
+                      <div className="flex items-center gap-2 mt-1.5 flex-wrap text-[12px] text-ink-3">
+                        {o.time_tag && <span>⏱ {o.time_tag}</span>}
+                        {o.delivery_mode && <span>· {o.delivery_mode}</span>}
+                        {o.assigned_to && <span>· {o.assigned_to}</span>}
+                        <span className="ml-auto">{fmtRelative(o.created_at)}</span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
