@@ -20,7 +20,8 @@ const collator = new Intl.Collator('en', { numeric: true, sensitivity: 'base' })
 
 /** The two descriptive columns of the last pane: V-belt = Section, Size; others = Size, Make. */
 const leafCells = (s: Sku): [string, string] =>
-  s.product_type === 'V_BELT' ? [s.section ?? '', s.hier_l3] : [s.hier_l3, s.brand_name];
+  s.product_type === 'V_BELT' ? [s.section ?? '', s.hier_l3]
+    : s.product_type === 'OPEN_ROLL' ? [s.section ?? '', s.brand_name] : [s.hier_l3, s.brand_name];
 
 export default function InventoryBrowser({
   permissions, initialSku, initialAction, initialType,
@@ -421,17 +422,21 @@ export default function InventoryBrowser({
                   <tr className="text-left border-b border-line">
                     <th className="eyebrow px-4 lg:px-6 py-2 font-medium">Family</th>
                     <th className="eyebrow px-2 py-2 font-medium">{type === 'CONVEYOR_BELT' ? 'Colour' : 'Section'}</th>
-                    <th className="eyebrow px-2 py-2 font-medium">Size</th>
+                    {type !== 'OPEN_ROLL' && <th className="eyebrow px-2 py-2 font-medium">Size</th>}
                     <th className="eyebrow px-2 py-2 font-medium">Make</th>
-                    <th className="eyebrow px-2 py-2 font-medium">Cut Pcs</th>
-                    <th className="eyebrow px-2 py-2 font-medium">Full Sleeve</th>
+                    {type === 'OPEN_ROLL' ? (
+                      <th className="eyebrow px-2 py-2 font-medium">Rolls in stock · width × length</th>
+                    ) : (<>
+                      <th className="eyebrow px-2 py-2 font-medium">Cut Pcs</th>
+                      <th className="eyebrow px-2 py-2 font-medium">Full Sleeve</th>
+                    </>)}
                     <th className="eyebrow px-4 lg:px-6 py-2 font-medium text-right">Stock</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {loading && <tr><td colSpan={7} className="p-6"><Skelly /></td></tr>}
+                  {loading && <tr><td colSpan={type === 'OPEN_ROLL' ? 5 : 7} className="p-6"><Skelly /></td></tr>}
                   {!loading && listRows.length === 0 && (
-                    <tr><td colSpan={7} className="p-6 text-center text-ink-3">Nothing matches.</td></tr>
+                    <tr><td colSpan={type === 'OPEN_ROLL' ? 5 : 7} className="p-6 text-center text-ink-3">Nothing matches.</td></tr>
                   )}
                   {listRows.map((s) => {
                     const cut = (s.lot_groups ?? []).filter((g) => g.status === 'CUT_PCS');
@@ -445,16 +450,24 @@ export default function InventoryBrowser({
                       >
                         <td className="px-4 lg:px-6 py-2 text-ink-2">{s.hier_l1}</td>
                         <td className="px-2 py-2">{sectionOf(s)}</td>
-                        <td className="px-2 py-2 font-medium">{s.hier_l3}</td>
+                        {type !== 'OPEN_ROLL' && <td className="px-2 py-2 font-medium">{s.hier_l3}</td>}
                         <td className="px-2 py-2 text-ink-2">{s.brand_name}</td>
-                        <td className="px-2 py-2 num">
-                          {!isLotType(s.product_type) ?<span className="text-ink-3">—</span>
-                            : cut.length ? cut.map((g) => <div key={g.piece_qty}>{groupText(g, lotUnitWord(s.product_type))}</div>) : <span className="text-ink-3">—</span>}
-                        </td>
-                        <td className="px-2 py-2 num">
-                          {!isLotType(s.product_type) ?<span className="text-ink-3">—</span>
-                            : full.length ? full.map((g) => <div key={g.piece_qty}>{groupText(g, lotUnitWord(s.product_type))}</div>) : <span className="text-ink-3">—</span>}
-                        </td>
+                        {type === 'OPEN_ROLL' ? (
+                          <td className="px-2 py-2 num">
+                            {(s.lot_groups ?? []).length
+                              ? (s.lot_groups ?? []).map((g) => <div key={`${g.width_mm}-${g.piece_qty}`}>{groupText(g)}</div>)
+                              : <span className="text-ink-3">—</span>}
+                          </td>
+                        ) : (<>
+                          <td className="px-2 py-2 num">
+                            {!isLotType(s.product_type) ?<span className="text-ink-3">—</span>
+                              : cut.length ? cut.map((g) => <div key={g.piece_qty}>{groupText(g, lotUnitWord(s.product_type))}</div>) : <span className="text-ink-3">—</span>}
+                          </td>
+                          <td className="px-2 py-2 num">
+                            {!isLotType(s.product_type) ?<span className="text-ink-3">—</span>
+                              : full.length ? full.map((g) => <div key={g.piece_qty}>{groupText(g, lotUnitWord(s.product_type))}</div>) : <span className="text-ink-3">—</span>}
+                          </td>
+                        </>)}
                         <td className="px-4 lg:px-6 py-2 text-right">
                           <span className="inline-flex items-center gap-1.5 justify-end">
                             {s.stock_status === 'OUT_OF_STOCK' && <span className="badge badge-danger">Out</span>}

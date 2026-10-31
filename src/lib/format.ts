@@ -8,11 +8,40 @@ const IST = 'Asia/Kolkata';
 
 export function fmtQty(value: number | string | null | undefined, unit?: string | null): string {
   const n = Number(value ?? 0);
+  if ((unit ?? '').toUpperCase() === 'MM2') return fmtArea(n);
   const text = Number.isInteger(n) ? String(n) : n.toFixed(2);
   if (!unit) return text;
   const u = unit.toUpperCase();
   return `${text} ${u === 'MTR' ? 'm' : u === 'RIB' ? 'ribs' : unit.toLowerCase()}`;
 }
+
+/** Open Roll stock is an area kept in square millimetres: shown as sq m ("0.0625 sq m"). */
+export function fmtArea(mm2: number | string | null | undefined): string {
+  const sqm = Number(mm2 ?? 0) / 1_000_000;
+  return `${+sqm.toFixed(4)} sq m`;
+}
+
+/** Strip a trailing ".00" (also used by the helpers below). */
+const trim = (n: number, d = 3): string => (Number.isInteger(n) ? String(n) : String(+n.toFixed(d)));
+
+/** A length kept in mm, shown in metres: 2500 → "2.5 m". */
+export const fmtLenM = (mm: number | string | null | undefined): string => `${trim(Number(mm ?? 0) / 1000)} m`;
+/** A width kept in mm: 25 → "25 mm". */
+export const fmtWidMm = (mm: number | string | null | undefined): string => `${trim(Number(mm ?? 0), 2)} mm`;
+/** The size of one roll or piece, width first as on the stock sheet: "25 mm × 10 m". */
+export const fmtRollSize = (widthMm: number | string | null | undefined, lenMm: number | string | null | undefined): string =>
+  `${fmtWidMm(widthMm)} × ${fmtLenM(lenMm)}`;
+/** What a customer takes: length first — "2.5 m × 25 mm × 4 pcs". */
+export const fmtLenWidPcs = (
+  lenMm: number | string | null | undefined, widthMm: number | string | null | undefined, pcs: number | string | null | undefined,
+): string => `${fmtLenM(lenMm)} × ${fmtWidMm(widthMm)} × ${trim(Number(pcs ?? 0))} pcs`;
+/** Rolls on a purchase order or at inward: "25 mm × 10 m × 3 rolls". */
+export const fmtRolls = (
+  widthMm: number | string | null | undefined, lenMm: number | string | null | undefined, rolls: number | string | null | undefined,
+): string => {
+  const n = Number(rolls ?? 0);
+  return `${fmtRollSize(widthMm, lenMm)} × ${trim(n)} roll${n === 1 ? '' : 's'}`;
+};
 
 /**
  * A minimum-stock (MSL) or reorder figure. Timing belts are stocked in mm but their MSL counts
@@ -20,6 +49,7 @@ export function fmtQty(value: number | string | null | undefined, unit?: string 
  */
 export function fmtMsl(value: number | string | null | undefined, unit: string | null | undefined, productType?: string | null): string {
   if (productType === 'TIMING_BELT' || productType === 'POLY_V_BELT') return `${Number(value ?? 0)} pcs`;
+  if (productType === 'OPEN_ROLL') { const n = Number(value ?? 0); return `${n} roll${n === 1 ? '' : 's'}`; }
   return fmtQty(value, unit);
 }
 
@@ -99,10 +129,11 @@ export function fmtMmPcs(
  *   anything else                 → "5 pcs", "12 m"
  */
 export function fmtLineQty(
-  line: { quantity: number | string; unit_code?: string | null; pieces?: number | null; length_mm?: number | null },
+  line: { quantity: number | string; unit_code?: string | null; pieces?: number | null; length_mm?: number | null; width_mm?: number | null },
 ): string {
   const q = Number(line.quantity ?? 0);
-  const p = Number(line.pieces ?? 0), l = Number(line.length_mm ?? 0);
+  const p = Number(line.pieces ?? 0), l = Number(line.length_mm ?? 0), w = Number(line.width_mm ?? 0);
+  if (w > 0 && p > 0 && l > 0 && p * l * w === q) return fmtLenWidPcs(l, w, p);
   if (p > 0 && l > 0 && p * l === q) return fmtMmPcs(l, p, (line.unit_code ?? '').toUpperCase() === 'RIB' ? 'ribs' : 'mm');
   return fmtQty(q, line.unit_code);
 }

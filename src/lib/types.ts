@@ -1,4 +1,4 @@
-export type ProductType = 'TIMING_BELT' | 'V_BELT' | 'CONVEYOR_BELT' | 'POLY_V_BELT';
+export type ProductType = 'TIMING_BELT' | 'V_BELT' | 'CONVEYOR_BELT' | 'POLY_V_BELT' | 'OPEN_ROLL';
 export type TxnType = 'INWARD' | 'OUTWARD' | 'ADJUSTMENT';
 export type TxnMode = 'NORMAL' | 'REVERSAL';
 export type Channel = 'WEB' | 'MOBILE_PWA' | 'MOBILE_VOICE' | 'IMPORT' | 'SYSTEM';
@@ -54,6 +54,8 @@ export interface LotGroup {
   piece_qty: number;
   pieces: number;
   total_qty: number;
+  /** Open Roll only: the width (mm) of these rolls */
+  width_mm?: number | null;
 }
 
 export interface Sku {
@@ -134,10 +136,10 @@ export interface Movement {
   brand_name: string;
   family_code: string;
   /** Lots this movement created / used / put back: [{lot_no,status,qty,new_lot?}] */
-  lot_breakdown?: { lot_no: string; status: string; qty: number; new_lot?: boolean; was?: string; restored?: boolean }[] | null;
+  lot_breakdown?: import('./lotView').LotEntry[] | null;
   lot_tracked?: boolean;
   /** Lot groups before / after this movement: [{status,each,count}] */
-  lot_state?: { before: { status: 'CUT_PCS' | 'FULL_SLEEVE'; each: number; count: number }[]; after: { status: 'CUT_PCS' | 'FULL_SLEEVE'; each: number; count: number }[] } | null;
+  lot_state?: { before: { status: 'CUT_PCS' | 'FULL_SLEEVE'; each: number; count: number; width_mm?: number }[]; after: { status: 'CUT_PCS' | 'FULL_SLEEVE'; each: number; count: number; width_mm?: number }[] } | null;
 }
 
 export interface DashboardSummary {
@@ -202,6 +204,8 @@ export interface ProductionOrderItem {
   /** QTY × MM as typed (quantity = pieces × length_mm). NULL on older orders. */
   pieces?: number | null;
   length_mm?: number | null;
+  /** Open Roll lines only: the width of each piece (mm) */
+  width_mm?: number | null;
   reserved_qty: number;
   is_fulfilled: boolean;
   notes: string | null;
@@ -220,6 +224,8 @@ export interface MismatchOrderItem {
   /** MM × PCS as entered (timing belts); null on older orders */
   pieces?: number | null;
   length_mm?: number | null;
+  /** Open Roll / Rubber: width of each piece (mm) */
+  width_mm?: number | null;
   created_at: string;
 }
 
@@ -296,6 +302,7 @@ export const HIERARCHY: Record<ProductType, { label: string; short: string; leve
   V_BELT:        { label: 'V-Belts',        short: 'V-Belt',   levels: ['Product Family', 'Make',    'Section · Size'] },
   CONVEYOR_BELT: { label: 'Conveyor Belts', short: 'Conveyor', levels: ['Product Family', 'Colour',  'Size · Make'] },
   POLY_V_BELT:   { label: 'Poly V Belts',   short: 'Poly V',   levels: ['Product Family', 'Section', 'Size · Make'] },
+  OPEN_ROLL:     { label: 'Open Roll / Rubber', short: 'Open Roll', levels: ['Product Family', 'Section', 'Make'] },
 };
 
 /** Display names for a product type, used by filters, badges and reports. */
@@ -304,4 +311,5 @@ export const PRODUCT_TYPE_LABEL: Record<ProductType, string> = {
   V_BELT: 'V-Belt',
   CONVEYOR_BELT: 'Conveyor Belt',
   POLY_V_BELT: 'Poly V Belt',
+  OPEN_ROLL: 'Open Roll / Rubber',
 };

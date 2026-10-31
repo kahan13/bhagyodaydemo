@@ -53,12 +53,16 @@ export async function POST(request: Request) {
   // Roll breakdown for timing-belt inward: [{ rolls: QTY, roll_length: MM, cut: false|true }].
   // Each roll becomes its own lot (and must add up to the quantity).
   const rolls = Array.isArray(body.rolls)
-    ? (body.rolls as { rolls?: unknown; roll_length?: unknown; cut?: unknown }[])
-        .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length), cut: r.cut === true }))
+    ? (body.rolls as { rolls?: unknown; roll_length?: unknown; cut?: unknown; width?: unknown }[])
+        .map((r) => ({
+          rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length), cut: r.cut === true,
+          // Open Roll / Rubber rows also carry a width (mm); belts leave it out
+          ...(Number(r.width) > 0 ? { width: Number(r.width) } : {}),
+        }))
         .filter((r) => r.rolls > 0 && r.roll_length > 0)
     : [];
   if (txn_type === 'INWARD' && rolls.length > 0) {
-    const total = rolls.reduce((a, r) => a + r.rolls * r.roll_length, 0);
+    const total = rolls.reduce((a, r) => a + r.rolls * r.roll_length * (('width' in r ? r.width : 1) as number), 0);
     if (Math.abs(total - quantity) > 0.001) {
       return NextResponse.json({ error: `Rolls add up to ${total}, but quantity is ${quantity}.` }, { status: 400 });
     }
@@ -81,7 +85,7 @@ export async function POST(request: Request) {
 
   // Timing-belt outward typed as MM × PCS rows, each from Full Sleeve (cut:false) or Cut Pcs (cut:true).
   if (txn_type === 'OUTWARD' && rolls.length > 0) {
-    const total = rolls.reduce((a, r) => a + r.rolls * r.roll_length, 0);
+    const total = rolls.reduce((a, r) => a + r.rolls * r.roll_length * (('width' in r ? r.width : 1) as number), 0);
     if (Math.abs(total - quantity) > 0.001) {
       return NextResponse.json({ error: `Rows add up to ${total}, but quantity is ${quantity}.` }, { status: 400 });
     }

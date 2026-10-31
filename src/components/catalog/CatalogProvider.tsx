@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import type { LotGroup, Sku } from '@/lib/types';
+import { isLotType } from '@/lib/lotUnit';
 import { queryTerms, squash } from '@/lib/search';
 
 /* =============================================================================
@@ -45,7 +46,7 @@ async function load(force = false): Promise<Sku[]> {
           .order('hier_l1')
           .order('hier_l2')
           .order('hier_l3'),
-        sb.from('v_sku_lot_groups').select('sku_id,status,piece_qty,pieces,total_qty'),
+        sb.from('v_sku_lot_groups').select('sku_id,status,piece_qty,pieces,total_qty,width_mm'),
       ]);
 
       if (skuRes.error) throw new Error(skuRes.error.message);
@@ -55,7 +56,7 @@ async function load(force = false): Promise<Sku[]> {
       const bySku = new Map<string, LotGroup[]>();
       for (const g of (groupRes.data ?? []) as unknown as (LotGroup & { sku_id: string })[]) {
         const list = bySku.get(g.sku_id) ?? [];
-        list.push({ status: g.status, piece_qty: Number(g.piece_qty), pieces: Number(g.pieces), total_qty: Number(g.total_qty) });
+        list.push({ status: g.status, piece_qty: Number(g.piece_qty), pieces: Number(g.pieces), total_qty: Number(g.total_qty), width_mm: g.width_mm == null ? null : Number(g.width_mm) });
         bySku.set(g.sku_id, list);
       }
       for (const r of rows) {
@@ -119,7 +120,7 @@ export function CatalogProvider({ children }: { children: React.ReactNode }) {
     if (!row) return;
     row.current_stock = newStock;
     // Timing / poly V belts: MSL counts pieces, which only the server knows — keep its status until refresh().
-    if (row.product_type === 'TIMING_BELT' || row.product_type === 'POLY_V_BELT') { setSkus([...cache]); return; }
+    if (isLotType(row.product_type)) { setSkus([...cache]); return; }
     row.stock_status = newStock <= 0 ? 'OUT_OF_STOCK'
       : newStock < row.min_stock_level ? 'LOW_STOCK' : 'OK';
     row.shortfall = Math.max(row.min_stock_level - newStock, 0);

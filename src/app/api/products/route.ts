@@ -45,11 +45,11 @@ export async function POST(req: Request) {
 
   // Optional existing inventory. Timing belts: MM × PCS rows, each Full Sleeve (cut:false) or Cut Pcs (cut:true).
   // Other products: a plain quantity.
-  const opening = body.opening as { rows?: { rolls?: unknown; roll_length?: unknown; cut?: unknown }[]; qty?: unknown } | undefined;
+  const opening = body.opening as { rows?: { rolls?: unknown; roll_length?: unknown; cut?: unknown; width?: unknown }[]; qty?: unknown } | undefined;
   const openRows = isLotType(type) && Array.isArray(opening?.rows)
     ? opening!.rows!
-        .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length), cut: r.cut === true }))
-        .filter((r) => r.rolls > 0 && r.roll_length > 0)
+        .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length), cut: r.cut === true, width: Number(r.width) || 0 }))
+        .filter((r) => r.rolls > 0 && r.roll_length > 0 && (type !== 'OPEN_ROLL' || r.width > 0))
     : [];
   const openQty = !isLotType(type) ? Math.max(0, Number(opening?.qty) || 0) : 0;
   const totalPieces = openRows.reduce((a, r) => a + r.rolls, 0);
@@ -79,6 +79,15 @@ export async function POST(req: Request) {
       };
       for (const r of openRows) {
         for (let n = 0; n < r.rolls; n++) {
+          if (type === 'OPEN_ROLL') {   // rubber: each roll has its own width and length (mm); stock is the area
+            const { error: rbErr } = await svc.rpc('create_opening_rubber_lot', {
+              p_sku_id: created.id, p_width_mm: r.width, p_length_mm: r.roll_length,
+              p_notes: 'Opening stock (added in Product Master)',
+            });
+            if (rbErr) return undo(`Existing inventory failed: ${rbErr.message}.`);
+            added += r.width * r.roll_length;
+            continue;
+          }
           const { error: lotErr } = await svc.rpc('create_opening_lot', {
             p_sku_id: created.id,
             p_qty: r.roll_length,

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/auth';
 import { supabaseService } from '@/lib/supabase-server';
 import type { ProductType } from '@/lib/types';
+import { fmtRolls, fmtArea } from '@/lib/format';
 import {
   INVENTORY_FIELDS, TYPE_META, cleanText, parseLotType, toNumber,
   type Identity, type LotType,
@@ -79,6 +80,8 @@ async function handle(req: Request) {
     sku: ExistingSku | null;       // null => will be created
     lot: LotType | null;
     uom: number | null;
+    /** Open Roll: width of one roll in mm (uom is then its LENGTH in mm) */
+    wid: number | null;
     qty: number;                   // 0 = no stock to load
     location: string;
     remarks: string;
@@ -130,6 +133,7 @@ async function handle(req: Request) {
       // ── stock on this row ──
       let lot: LotType | null = null;
       let uom: number | null = null;
+      let wid: number | null = null;
       let qty = toNumber(cellOf(sh.mapping, row, 'qty')) ?? 0;
       const rawQty = String(cellOf(sh.mapping, row, 'qty') ?? '').trim();
       if (rawQty !== '' && toNumber(rawQty) === null) {
@@ -139,7 +143,22 @@ async function handle(req: Request) {
       }
       if (qty < 0) { issue('SKIPPED', 'QTY is negative — no stock loaded from this row'); notes.push('Negative QTY — no stock loaded'); qty = 0; }
 
-      if (qty > 0 && meta.usesLots) {
+      if (qty > 0 && sh.type === 'OPEN_ROLL') {
+        // rubber: QTY rolls, each WIDTH mm wide and LENGTH metres long (kept in mm)
+        wid = toNumber(cellOf(sh.mapping, row, 'roll_w'));
+        const lm = toNumber(cellOf(sh.mapping, row, 'roll_l'));
+        uom = lm === null ? null : Math.round(lm * 1000 * 1000) / 1000;
+        if (wid === null || wid <= 0 || uom === null || uom <= 0) {
+          issue('SKIPPED', 'WIDTH mm or Length Mtrs is missing — product kept, no stock loaded from this row');
+          notes.push('Width / length missing — no stock loaded'); qty = 0; uom = null; wid = null;
+        } else if (!Number.isInteger(qty)) {
+          issue('SKIPPED', 'QTY must be a whole number of rolls — product kept, no stock loaded from this row');
+          notes.push('QTY not whole — no stock loaded'); qty = 0; uom = null; wid = null;
+        } else if (qty > MAX_PIECES_PER_ROW) {
+          issue('SKIPPED', `QTY ${qty} is above the ${MAX_PIECES_PER_ROW}-roll limit per row — no stock loaded`);
+          notes.push('QTY too large — no stock loaded'); qty = 0; uom = null; wid = null;
+        }
+      } else if (qty > 0 && meta.usesLots) {
         lot = parseLotType(cellOf(sh.mapping, row, 'lot_type'));
         if (!lot) {
           lot = 'FULL_SLEEVE';
@@ -180,13 +199,13 @@ async function handle(req: Request) {
       const newCode = sku ? null : pendingNew.get(built.key)!.code;
 
       planned.push({
-        sheet: sh.name, rowNum, type: sh.type, id: built, sku, lot, uom, qty,
+        sheet: sh.name, rowNum, type: sh.type, id: built, sku, lot, uom, wid, qty,
         location: cleanText(cellOf(sh.mapping, row, 'location')),
         remarks: cleanText(cellOf(sh.mapping, row, 'remarks')),
         msl,
       });
 
-      const load = qty === 0 ? 0 : meta.usesLots ? qty * (uom as number) : qty;
+      const load = qty === 0 ? 0 : sh.type === 'OPEN_ROLL' ? qty * (uom as number) * (wid as number) : meta.usesLots ? qty * (uom as number) : qty;
       if (meta.usesLots) lotsToCreate += qty;
       totalLoad += load; stat.load += load;
 
@@ -197,7 +216,7 @@ async function handle(req: Request) {
         family: built.family, sectionOrColour: built.section ?? built.colour ?? '',
         size: built.sizeLabel, brand: built.brand,
         lot: lot ? (lot === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs') : '',
-        load: qty === 0 ? 'no stock' : meta.usesLots ? `${uom} ${meta.unit === 'RIB' ? 'ribs' : 'mm'} × ${qty} pcs = ${load} ${meta.unit === 'RIB' ? 'ribs' : 'mm'}` : `+${load} pcs`,
+        load: qty === 0 ? 'no stock' : sh.type === 'OPEN_ROLL' ? `${fmtRolls(wid, uom, qty)} = ${fmtArea(load)}` : meta.usesLots ? `${uom} ${meta.unit === 'RIB' ? 'ribs' : 'mm'} × ${qty} pcs = ${load} ${meta.unit === 'RIB' ? 'ribs' : 'mm'}` : `+${load} pcs`,
         msl: msl === null ? '' : String(msl),
         note: notes.join(' · ') || (sku ? 'Matched to existing SKU' : 'SKU not in Product Master — will be created'),
       });
@@ -293,7 +312,16 @@ async function handle(req: Request) {
     const t = targets.get(p.id.key);
     if (!t || p.qty <= 0) continue;
 
-    if (TYPE_META[p.type].usesLots && p.lot && p.uom) {
+    if (p.type === 'OPEN_ROLL' && p.wid && p.uom) {
+      for (let n = 0; n < p.qty; n++) {
+        const { error } = await svc.rpc('create_opening_rubber_lot', {
+          p_sku_id: t.skuId, p_width_mm: p.wid, p_length_mm: p.uom, p_notes: 'Imported from inventory sheet',
+        });
+        if (error) { errors.push(`${p.sheet} row ${p.rowNum}: roll ${n + 1}/${p.qty} failed — ${error.message}`); break; }
+        lotsCreated++;
+        t.added += p.wid * p.uom;
+      }
+    } else if (TYPE_META[p.type].usesLots && p.lot && p.uom) {
       for (let n = 0; n < p.qty; n++) {
         const { error } = await svc.rpc('create_opening_lot', {
           p_sku_id: t.skuId,

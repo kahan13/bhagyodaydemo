@@ -25,7 +25,13 @@ export async function GET() {
 
   if (orderIds.length > 0) {
     const cols = 'id,order_id,sku_id,ordered_qty,ordered_pieces,ordered_length_mm,ordered_is_cut,received_qty,inwarded_qty,status,notes,created_at';
-    const full = await svc
+    // 043 adds ordered_width_mm (Open Roll / Rubber); try with it first, then without
+    const wide = await svc
+      .from('purchase_order_items')
+      .select(`${cols},received_pieces,variance_qty,ordered_width_mm`)
+      .in('order_id', orderIds)
+      .order('created_at');
+    const full = !wide.error ? wide : await svc
       .from('purchase_order_items')
       .select(`${cols},received_pieces,variance_qty`)
       .in('order_id', orderIds)
@@ -106,7 +112,7 @@ export async function POST(request: Request) {
     const supplier = body.supplier ? String(body.supplier).slice(0, 200) : null;
     const notes    = body.notes    ? String(body.notes).slice(0, 500)    : null;
     const rawItems = Array.isArray(body.items)
-      ? (body.items as { sku_id: string; qty: number; pieces?: number; length_mm?: number; cut?: boolean }[])
+      ? (body.items as { sku_id: string; qty: number; pieces?: number; length_mm?: number; width_mm?: number; cut?: boolean }[])
       : [];
 
     if (rawItems.length === 0)
@@ -122,6 +128,7 @@ export async function POST(request: Request) {
         qty: Number(i.qty),
         pieces: Number(i.pieces) > 0 && Number(i.length_mm) > 0 ? Math.floor(Number(i.pieces)) : null,
         length_mm: Number(i.pieces) > 0 && Number(i.length_mm) > 0 ? Number(i.length_mm) : null,
+        width_mm: Number(i.width_mm) > 0 ? Number(i.width_mm) : null,
         cut: i.cut === true,
       })),
     });
@@ -137,8 +144,9 @@ export async function POST(request: Request) {
     const rawLines = Array.isArray(body.lines) ? (body.lines as Record<string, unknown>[]) : [];
     const lines = rawLines.map((l) => {
       const rolls = Array.isArray(l.rolls)
-        ? (l.rolls as { rolls: number; roll_length: number; cut?: boolean }[])
-            .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length), cut: r.cut === true }))
+        ? (l.rolls as { rolls: number; roll_length: number; width?: number; cut?: boolean }[])
+            .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length), cut: r.cut === true,
+                           ...(Number(r.width) > 0 ? { width: Number(r.width) } : {}) }))
             .filter((r) => r.rolls > 0 && r.roll_length > 0)
         : [];
       return {
@@ -164,8 +172,9 @@ export async function POST(request: Request) {
     if (!item_id) return NextResponse.json({ error: 'item_id required.' }, { status: 400 });
 
     const rolls = Array.isArray(body.rolls)
-      ? (body.rolls as { rolls: number; roll_length: number; cut?: boolean }[])
-          .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length), cut: r.cut === true }))
+      ? (body.rolls as { rolls: number; roll_length: number; width?: number; cut?: boolean }[])
+          .map((r) => ({ rolls: Math.floor(Number(r.rolls)), roll_length: Number(r.roll_length), cut: r.cut === true,
+                         ...(Number(r.width) > 0 ? { width: Number(r.width) } : {}) }))
           .filter((r) => r.rolls > 0 && r.roll_length > 0)
       : [];
     const qty = Number(body.qty_received);

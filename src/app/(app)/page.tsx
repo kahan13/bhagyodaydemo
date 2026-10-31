@@ -4,6 +4,7 @@ import { requirePage, can } from '@/lib/auth';
 import { supabaseServer, supabaseService } from '@/lib/supabase-server';
 
 import { fmtQty, fmtRelative, fmtDate, fmtMmPcs, fmtLineQty } from '@/lib/format';
+import { qtySplit, isAreaUnitCode } from '@/lib/lotView';
 import DashboardActions from '@/components/dashboard/DashboardActions';
 import ReorderPane, { type ReorderRow } from '@/components/dashboard/ReorderPane';
 import Link from 'next/link';
@@ -12,16 +13,17 @@ import { ItemBlock } from '@/components/production-orders/poShared';
 
 export const dynamic = 'force-dynamic';
 
-const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor', POLY_V_BELT: 'Poly V' };
+const TYPE_LABEL: Record<string, string> = { TIMING_BELT: 'Timing', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor', POLY_V_BELT: 'Poly V', OPEN_ROLL: 'Open Roll' };
 /** "mm" for timing belts, "ribs" for poly V belts — decided by the unit the product is stocked in. */
 const wordOfUnit = (unit?: string | null): string => ((unit ?? '').toUpperCase() === 'RIB' ? 'ribs' : 'mm');
 
 /* ── Lot wording helpers (timing belts only) ─────────────────────────────── */
-type LotEntry = { lot_no?: string; status: string; qty: number };
+type LotEntry = import('@/lib/lotView').LotEntry;
 const LOT_NAME: Record<string, string> = { FULL_SLEEVE: 'Full Sleeve', CUT_PCS: 'Cut Pcs' };
 
 /** "30 mm Cut Pcs + 50 mm Full Sleeve" — grouped by classification, unit always shown. */
 function lotSplit(entries: LotEntry[], unit: string): string {
+  if (isAreaUnitCode(unit)) return qtySplit(entries, unit, false).map((p) => p.text).join(' + ');
   const by = new Map<string, number>();
   for (const e of entries) {
     const st = e.status === 'WASTED' ? 'Waste' : e.status;
@@ -33,6 +35,7 @@ function lotSplit(entries: LotEntry[], unit: string): string {
 }
 /** "50 mm × 4 pcs" for an inward's new lots. */
 function rollsText(entries: LotEntry[], unit?: string): string {
+  if (isAreaUnitCode(unit)) return qtySplit(entries, unit ?? '', true).map((p) => p.text).join(' + ');
   const by = new Map<number, number>();
   for (const e of entries) by.set(Number(e.qty), (by.get(Number(e.qty)) ?? 0) + 1);
   return [...by.entries()].map(([len, n]) => fmtMmPcs(len, n, wordOfUnit(unit))).join(' + ');
@@ -330,13 +333,14 @@ type ProdOrderRow = {
     unit_code: string;
     pieces: number | null;
     length_mm: number | null;
+    width_mm: number | null;
     is_fulfilled: boolean;
   }>;
 };
 
 async function ProductionOrdersPane() {
   const db = await supabaseServer();
-  const SELECT = 'id,order_no,customer_name,status,time_tag,delivery_mode,assigned_to,created_at,production_order_items(id,display_name,quantity,unit_code,pieces,length_mm,is_fulfilled)';
+  const SELECT = 'id,order_no,customer_name,status,time_tag,delivery_mode,assigned_to,created_at,production_order_items(id,display_name,quantity,unit_code,pieces,length_mm,width_mm,is_fulfilled)';
 
   // Three groups, side by side: waiting to start · being made · done (latest ten)
   const [createdRes, progressRes, doneRes] = await Promise.all([
@@ -418,7 +422,7 @@ async function ProductionOrdersPane() {
 async function LowStock() {
   const db = await supabaseServer();
   const PER_TYPE = 40;
-  const types = ['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT', 'POLY_V_BELT'] as const;
+  const types = ['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT', 'POLY_V_BELT', 'OPEN_ROLL'] as const;
 
   // One query per category so a long list in one category can never push another one off the pane.
   const [anyMslRes, ...perType] = await Promise.all([

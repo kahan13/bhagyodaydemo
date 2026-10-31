@@ -4,11 +4,12 @@ import { useState } from 'react';
 import { Check } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { fmtQty } from '@/lib/format';
-import { isLotType, lotUnitWord } from '@/lib/lotUnit';
+import { isLotType, isRubber, lotUnitWord } from '@/lib/lotUnit';
 import type { Channel, Sku } from '@/lib/types';
 import LotBreakdown from '@/components/inventory/LotBreakdown';
 import { OutwardRowsPlan, planRowsOutward } from '@/components/inventory/OutwardPlan';
 import RollEntry, { emptyRolls, rollsPayload, rollsTotal } from '@/components/inventory/RollEntry';
+import RubberEntry, { emptyRubber, rubberPayload, rubberTotal } from '@/components/inventory/RubberEntry';
 
 /**
  * One dialog for inward, outward and adjustment, on desktop and phone alike.
@@ -27,6 +28,7 @@ export default function MovementDialog({
 }) {
   const [qty, setQty] = useState('');
   const [rolls, setRolls] = useState(emptyRolls());
+  const [rubber, setRubber] = useState(emptyRubber());
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,10 +37,11 @@ export default function MovementDialog({
   // (poly V belts work the same way, in RIBS × PCS)
   const inRolls = (action === 'inward' || action === 'outward') && isLotType(sku.product_type);
   const unitWord = lotUnitWord(sku.product_type);
-  const rollList = inRolls ? rollsPayload(rolls) : [];
-  const rollProblems = action === 'outward' && inRolls && sku.lot_groups && sku.lot_groups.length > 0
-    ? planRowsOutward(sku.lot_groups, rollList, unitWord).problems : [];
-  const amount = inRolls ? rollsTotal(rollList) : Number(qty || 0);
+  const rub = isRubber(sku.product_type);                 // Open Roll / Rubber: length × width × pcs, stock in area
+  const rollList = inRolls ? (rub ? rubberPayload(rubber) : rollsPayload(rolls)) : [];
+  const rollProblems = action === 'outward' && inRolls && !rub && sku.lot_groups && sku.lot_groups.length > 0
+    ? planRowsOutward(sku.lot_groups, rollList as ReturnType<typeof rollsPayload>, unitWord).problems : [];
+  const amount = inRolls ? (rub ? rubberTotal(rubberPayload(rubber)) : rollsTotal(rollsPayload(rolls))) : Number(qty || 0);
   // For an adjustment the worker types the counted physical stock, not a delta.
   const delta = action === 'adjust' ? amount - sku.current_stock : amount;
   const projected = action === 'inward' ? sku.current_stock + amount
@@ -54,6 +57,7 @@ export default function MovementDialog({
     (action !== 'adjust' && amount <= 0) ||
     (action === 'outward' && amount > sku.current_stock) ||
     rollProblems.length > 0 ||
+    (rub && action === 'adjust') ||
     (action === 'adjust' && (delta === 0 || !notes.trim()));
 
   async function submit(e: React.FormEvent) {
@@ -114,7 +118,15 @@ export default function MovementDialog({
             )}
           </div>
 
-          {inRolls ? (
+          {rub && action === 'adjust' ? (
+            <p className="text-[14px] text-ink-2 bg-subtle rounded-lg px-3 py-2.5">
+              Open Roll stock is corrected roll by roll: add a roll with <strong>Inward</strong> (width × length), take a piece with
+              <strong> Outward</strong>, or mark a damaged roll as <strong>waste</strong> from its stock list.
+            </p>
+          ) : inRolls && rub ? (
+            <RubberEntry rows={rubber} onChange={setRubber} mode={action === 'outward' ? 'cut' : 'rolls'}
+              maxArea={action === 'outward' ? sku.current_stock : undefined} />
+          ) : inRolls ? (
             <RollEntry rows={rolls} onChange={setRolls} mode={action === 'outward' ? 'out' : 'in'} unit={unitWord} />
           ) : (
           <div>
@@ -161,8 +173,8 @@ export default function MovementDialog({
             </div>
           )}
 
-          {action === 'outward' && inRolls && (
-            <OutwardRowsPlan groups={sku.lot_groups} rows={rollList} unit={sku.unit_code} />
+          {action === 'outward' && inRolls && !rub && (
+            <OutwardRowsPlan groups={sku.lot_groups} rows={rollList as ReturnType<typeof rollsPayload>} unit={sku.unit_code} />
           )}
 
           {action === 'outward' && amount > sku.current_stock && (

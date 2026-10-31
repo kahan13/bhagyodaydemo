@@ -89,8 +89,9 @@ export function receiptLines(m: ReceiptModel, chars: number = PAPER.chars): RLin
     wrap(head, chars).forEach((s) => text(s, { bold: true }));
     if (it.parts.length > 0) {
       for (const p of it.parts) {
-        text(`   ${ascii(p.text)}`);
-        text(`     [ ${ascii(p.from)} ]`, { bold: true });
+        // "2.5 m x 25 mm x 4 pcs (0.25 sq m total)" is wider than a 42-character slip: let it wrap
+        wrap(ascii(p.text), chars - 3).forEach((s, k) => text(`${k === 0 ? '   ' : '     '}${s}`));
+        wrap(`[ ${ascii(p.from)} ]`, chars - 5).forEach((s) => text(`     ${s}`, { bold: true }));
       }
     } else {
       const w = it.unit.toUpperCase() === 'RIB' ? 'ribs' : 'mm';

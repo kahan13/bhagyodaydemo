@@ -15,8 +15,9 @@ import type {
 import { useListNav } from '@/lib/useListNav';
 import { onDataChanged } from '@/lib/dataSync';
 import { takeAction } from '@/lib/keytips';
-import { fmtQty } from '@/lib/format';
-import { isLotType, lotUnitWord } from '@/lib/lotUnit';
+import { fmtQty, fmtArea, fmtLenM, fmtRollSize } from '@/lib/format';
+import { isLotType, isRubber, lotUnitWord } from '@/lib/lotUnit';
+import { mFromTyped } from '@/components/inventory/RubberEntry';
 import { makeMatcher, hasQuery } from '@/lib/search';
 import { loadSkus, peekSkus, invalidateSkuCache, getSkuVersion, type SkuWithAtp, type SkuPick } from './skuCache';
 import { buildMessage, openWhatsApp, partLine, fromTag, totalLine, type AllocPart } from './poShared';
@@ -39,6 +40,7 @@ const DELIVERY_MODES: DeliveryMode[] = ['Hand', 'Porter', 'Courier', 'Transporta
 
 const CATEGORY_PILLS: [ProductType, string][] = [
   ['TIMING_BELT', 'Timing Belt'], ['V_BELT', 'V-Belt'], ['CONVEYOR_BELT', 'Conveyor'], ['POLY_V_BELT', 'Poly V Belt'],
+  ['OPEN_ROLL', 'Open Roll / Rubber'],
 ];
 
 /** The category last picked on any order line — the next new line starts there. */
@@ -58,14 +60,19 @@ interface Roll {
   /** what is left after OTHER orders' plans (this form's own entries are taken off on screen) */
   free_qty: number;
   roll_length_mm: number;
+  /** Open Roll / Rubber: the roll's width (mm). Its qty is an AREA, so its length = qty ÷ width. */
+  width_mm?: number | null;
 }
-const rollLabel = (r: Roll) => (r.status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs');
+const rollLabel = (r: Roll) => (r.width_mm ? 'Open Roll' : r.status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs');
+/** Open Roll: how long the roll is now / how much length is free, in mm (null for every other product). */
+const rollLen  = (r: Roll): number | null => (r.width_mm ? r.current_qty / r.width_mm : null);
+const rollFreeLen = (r: Roll, usedSlab = 0): number | null => (r.width_mm ? Math.max(0, r.free_qty - usedSlab) / r.width_mm : null);
 /**
  * How the shop names a roll: "Cut Pcs of 230 mm", "Full Sleeve of 450 mm" — no lot numbers.
  * Two rolls that read the same get (1), (2) so they can still be told apart in the list.
  */
 function rollNames(rolls: Roll[], unit: string): Record<string, string> {
-  const base = (r: Roll) => `${rollLabel(r)} of ${fmtQty(r.current_qty, unit)}`;
+  const base = (r: Roll) => (r.width_mm ? `Open Roll ${fmtRollSize(r.width_mm, rollLen(r))}` : `${rollLabel(r)} of ${fmtQty(r.current_qty, unit)}`);
   const total: Record<string, number> = {};
   for (const r of rolls) total[base(r)] = (total[base(r)] ?? 0) + 1;
   const seen: Record<string, number> = {};
@@ -83,13 +90,14 @@ async function fetchRolls(skuIds: string[]): Promise<Record<string, Roll[]>> {
   if (skuIds.length === 0) return out;
   const { data } = await supabaseBrowser()
     .from('v_lot_free')
-    .select('id,lot_no,sku_id,status,current_qty,free_qty,roll_length_mm,created_at')
+    .select('id,lot_no,sku_id,status,current_qty,free_qty,roll_length_mm,width_mm,created_at')
     .in('sku_id', skuIds)
     .in('status', ['FULL_SLEEVE', 'CUT_PCS'])
     .order('created_at', { ascending: true });
   for (const r of (data ?? []) as unknown as (Roll & { created_at: string })[]) {
     (out[r.sku_id] ??= []).push({
       ...r, current_qty: Number(r.current_qty), free_qty: Number(r.free_qty), roll_length_mm: Number(r.roll_length_mm),
+      width_mm: r.width_mm != null ? Number(r.width_mm) : null,
     });
   }
   // opened rolls (Cut Pcs) first, then new ones; oldest first inside each
@@ -272,6 +280,9 @@ interface Segment {
   mm: string;
   pcs: string;
   lotId: string;
+  /** Open Roll / Rubber: `mm` then holds LENGTH IN METRES as typed, and this is the piece WIDTH in mm */
+  wid: string;
+  rub: boolean;
 }
 
 interface LineItem {
@@ -288,7 +299,7 @@ interface LineItem {
   manualUnit: 'MM' | 'PCS';
 }
 
-const makeSeg = (): Segment => ({ id: newId(), mm: '', pcs: '', lotId: '' });
+const makeSeg = (rub = false): Segment => ({ id: newId(), mm: '', pcs: '', lotId: '', wid: '', rub });
 
 function makeLineItem(): LineItem {
   return {
@@ -304,9 +315,14 @@ function makeLineItem(): LineItem {
 }
 
 const segPcs = (s: Segment) => Math.floor(Number(s.pcs)) || 0;
-const segMm = (s: Segment) => Number(s.mm) || 0;
-const segQty = (s: Segment) => Math.round(segMm(s) * segPcs(s) * 100) / 100;
-const segFilled = (s: Segment) => segMm(s) > 0 && segPcs(s) > 0;
+/** length of each piece in mm (an Open Roll length is typed in metres) */
+const segMm = (s: Segment) => (s.rub ? mFromTyped(s.mm) : Number(s.mm) || 0);
+const segWid = (s: Segment) => Number(s.wid) || 0;
+/** quantity of the entry: mm × pcs, or for Open Roll the piece AREA  length × width × pcs (mm²) */
+const segQty = (s: Segment) => (s.rub ? segMm(s) * segPcs(s) * segWid(s) : Math.round(segMm(s) * segPcs(s) * 100) / 100);
+const segFilled = (s: Segment) => segMm(s) > 0 && segPcs(s) > 0 && (!s.rub || segWid(s) > 0);
+/** what the entry reserves on its roll: the whole width of the roll over its length (Open Roll), else the quantity */
+const segSlab = (s: Segment, roll?: Roll) => (s.rub && roll?.width_mm ? segMm(s) * segPcs(s) * roll.width_mm : segQty(s));
 
 /** Pieces × MM shown on a direct line. */
 function lineQM(li: { quantity: string; pieces: string; mm: string }): { pieces: string; mm: string } {
@@ -348,10 +364,10 @@ function makeEmptyForm() {
 }
 
 /** How much of a roll the entries on this screen already use (optionally leaving one entry out). */
-function usedOnRoll(items: LineItem[], lotId: string, exceptSegId?: string): number {
+function usedOnRoll(items: LineItem[], lotId: string, exceptSegId?: string, roll?: Roll): number {
   let sum = 0;
   for (const li of items) for (const s of li.segs) {
-    if (s.lotId === lotId && s.id !== exceptSegId) sum += segQty(s);
+    if (s.lotId === lotId && s.id !== exceptSegId) sum += segSlab(s, roll);
   }
   return sum;
 }
@@ -360,13 +376,23 @@ function usedOnRoll(items: LineItem[], lotId: string, exceptSegId?: string): num
 function segStatus(items: LineItem[], rolls: Roll[], s: Segment) {
   const roll = rolls.find((r) => r.id === s.lotId);
   const need = segQty(s);
-  const avail = roll ? Math.max(0, roll.free_qty - usedOnRoll(items, roll.id, s.id)) : 0;
+  const avail = roll ? Math.max(0, roll.free_qty - usedOnRoll(items, roll.id, s.id, roll)) : 0;
   let problem = '';
+  if (roll?.width_mm && s.rub) {
+    // Open Roll: the entry must fit across the roll's width, and its length must fit in what is free of the roll's length
+    const slab = segMm(s) * segPcs(s);
+    const freeLen = avail / roll.width_mm;
+    if (segFilled(s)) {
+      if (segWid(s) > roll.width_mm) problem = `a ${segWid(s)} mm wide piece is wider than this roll (${roll.width_mm} mm)`;
+      else if (slab > freeLen + 1e-6) problem = `only ${fmtLenM(freeLen)} of length is free on this roll, but ${fmtLenM(slab)} is needed`;
+    }
+    return { roll, need, avail, left: avail - slab * roll.width_mm, problem, availLen: freeLen, leftLen: freeLen - slab };
+  }
   if (roll && segFilled(s)) {
     if (segMm(s) > roll.current_qty) problem = `a ${segMm(s)} piece is longer than this roll (${roll.current_qty})`;
     else if (need > avail) problem = `only ${avail} free on this roll`;
   }
-  return { roll, need, avail, left: avail - need, problem };
+  return { roll, need, avail, left: avail - need, problem, availLen: null as number | null, leftLen: null as number | null };
 }
 
 /** The entries of a line as "parts" (for the message): FROM <roll> … */
@@ -377,7 +403,8 @@ function partsOf(li: LineItem, rolls: Roll[]): AllocPart[] {
     if (!roll || !segFilled(s)) return;
     out.push({
       seg_no: i + 1, mm: segMm(s), pcs: segPcs(s), qty: segQty(s),
-      size: roll.current_qty, lot_no: roll.lot_no, status: roll.status, label: rollLabel(roll),
+      size: rollLen(roll) ?? roll.current_qty, lot_no: roll.lot_no, status: roll.status, label: rollLabel(roll),
+      width_mm: s.rub ? segWid(s) : null, size_w: roll.width_mm ?? null,
     });
   });
   return out;
@@ -394,7 +421,7 @@ function lineProblems(items: LineItem[], li: LineItem, rolls: Roll[]): string[] 
   const out: string[] = [];
   li.segs.forEach((s, i) => {
     const tag = li.segs.length > 1 ? `${code} (entry ${i + 1})` : code;
-    if (!segFilled(s)) { out.push(`${tag}: enter ${lotUnitWord(sku.product_type).toUpperCase()} × PCS`); return; }
+    if (!segFilled(s)) { out.push(`${tag}: enter ${isRubber(sku.product_type) ? 'LENGTH × WIDTH' : lotUnitWord(sku.product_type).toUpperCase()} × PCS`); return; }
     if (!s.lotId) { out.push(`${tag}: pick the roll to take it from`); return; }
     const st = segStatus(items, rolls, s);
     if (!st.roll) { out.push(`${tag}: the roll you picked is no longer available — pick again`); return; }
@@ -556,7 +583,7 @@ export default function ProductionOrdersView({
   function addSeg(itemId: string) {
     setForm((f) => ({
       ...f,
-      items: f.items.map((li) => li.id !== itemId ? li : { ...li, segs: [...li.segs, makeSeg()] }),
+      items: f.items.map((li) => li.id !== itemId ? li : { ...li, segs: [...li.segs, makeSeg(li.segs[0]?.rub ?? false)] }),
     }));
   }
   function removeSeg(itemId: string, segId: string) {
@@ -651,7 +678,7 @@ export default function ProductionOrdersView({
           return {
             sku_id: sku.id,
             display_name: sku.display_name,
-            segments: li.segs.map((s) => ({ mm: segMm(s), pcs: segPcs(s), lot_id: s.lotId })),
+            segments: li.segs.map((s) => ({ mm: segMm(s), pcs: segPcs(s), lot_id: s.lotId, ...(s.rub ? { width: segWid(s) } : {}) })),
           };
         }
         return { sku_id: sku.id, display_name: sku.display_name, quantity: Number(li.quantity) };
@@ -886,6 +913,7 @@ export default function ProductionOrdersView({
 
                 const sku = li.skuSearch.sku;
                 const isLot = isLotType(sku?.product_type);
+                const isRub = isRubber(sku?.product_type);                    // Open Roll / Rubber: width × length
                 const uWord = lotUnitWord(sku?.product_type);                 // mm / ribs
                 const skuRolls = sku ? (rolls[sku.id] ?? null) : null;         // null = still loading
                 const otherQty = sku && !isLot
@@ -904,7 +932,7 @@ export default function ProductionOrdersView({
                       onChange={(val) => updateItem(li.id, {
                         skuSearch: val,
                         // a different product starts the line afresh
-                        ...(val.sku?.id !== li.skuSearch.sku?.id ? { segs: [makeSeg()], quantity: '' } : {}),
+                        ...(val.sku?.id !== li.skuSearch.sku?.id ? { segs: [makeSeg(isRubber(val.sku?.product_type))], quantity: '' } : {}),
                       })}
                       cacheVersion={skuVersion}
                       placeholder="Search size, brand or code (h100 = h-100)"
@@ -934,9 +962,25 @@ export default function ProductionOrdersView({
                           ) : (
                             <ul className="space-y-1">
                               {skuRolls.map((r) => {
-                                const usedHere = usedOnRoll(form.items, r.id);
+                                const usedHere = usedOnRoll(form.items, r.id, undefined, r);
                                 const free = Math.max(0, r.free_qty - usedHere);
                                 const reservedElsewhere = r.current_qty - r.free_qty;
+                                if (r.width_mm) {
+                                  // Open Roll: everything in length, the width stays the roll's width
+                                  return (
+                                    <li key={r.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[14px]">
+                                      <span className="num font-medium">{rollNames(skuRolls, sku.unit_code)[r.id]}</span>
+                                      {reservedElsewhere > 0 && (
+                                        <span className="text-warn text-[13px]">· {fmtLenM(reservedElsewhere / r.width_mm)} of length reserved by other orders</span>
+                                      )}
+                                      {usedHere > 0 && (
+                                        <span className="text-[13px] text-ink-2">
+                                          · this order takes {fmtLenM(usedHere / r.width_mm)} of length → <b className={free === 0 ? 'text-warn' : 'text-ok'}>{fmtLenM(free / r.width_mm)} left</b>
+                                        </span>
+                                      )}
+                                    </li>
+                                  );
+                                }
                                 return (
                                   <li key={r.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[14px]">
                                     <span className="num font-medium">{rollNames(skuRolls, sku.unit_code)[r.id]}</span>
@@ -1012,10 +1056,21 @@ export default function ProductionOrdersView({
                                   </span>
                                   <input
                                     className={`field w-24 text-center ${st.problem ? 'border-danger' : ''}`}
-                                    inputMode="decimal" placeholder={uWord.toUpperCase()} aria-label={uWord.toUpperCase()}
+                                    inputMode="decimal" placeholder={isRub ? 'LENGTH m' : uWord.toUpperCase()} aria-label={isRub ? 'Length in metres' : uWord.toUpperCase()}
                                     value={s.mm}
                                     onChange={(e) => updateSeg(li.id, s.id, { mm: e.target.value.replace(/[^0-9.]/g, '') })}
                                   />
+                                  {isRub && (
+                                    <>
+                                      <span className="mt-2 text-ink-3 font-semibold">×</span>
+                                      <input
+                                        className={`field w-24 text-center ${st.problem ? 'border-danger' : ''}`}
+                                        inputMode="decimal" placeholder="WIDTH mm" aria-label="Width in mm"
+                                        value={s.wid}
+                                        onChange={(e) => updateSeg(li.id, s.id, { wid: e.target.value.replace(/[^0-9.]/g, '') })}
+                                      />
+                                    </>
+                                  )}
                                   <span className="mt-2 text-ink-3 font-semibold">×</span>
                                   <input
                                     className={`field w-16 text-center ${st.problem ? 'border-danger' : ''}`}
@@ -1024,7 +1079,7 @@ export default function ProductionOrdersView({
                                     onChange={(e) => updateSeg(li.id, s.id, { pcs: e.target.value.replace(/[^0-9]/g, '') })}
                                   />
                                   <span className="mt-2 text-[14px] num font-semibold q-total whitespace-nowrap min-w-[78px]">
-                                    {!incomplete ? `= ${fmtQty(st.need, sku.unit_code)}` : ''}
+                                    {!incomplete ? `= ${isRub ? fmtArea(st.need) : fmtQty(st.need, sku.unit_code)}` : ''}
                                   </span>
                                   <div className="flex items-center gap-1.5 min-w-[230px] flex-1">
                                     <span className="eyebrow whitespace-nowrap">Take from</span>
@@ -1037,7 +1092,17 @@ export default function ProductionOrdersView({
                                       <option value="">Select roll…</option>
                                       {skuRolls.map((r) => {
                                         // what is free on this roll for THIS entry: after every OTHER entry on the form
-                                        const freeFor = Math.max(0, r.free_qty - usedOnRoll(form.items, r.id, s.id));
+                                        const freeFor = Math.max(0, r.free_qty - usedOnRoll(form.items, r.id, s.id, r));
+                                        if (r.width_mm) {
+                                          const freeLen = freeFor / r.width_mm;
+                                          const slab = segMm(s) * segPcs(s);
+                                          const fitsRub = s.lotId === r.id || (freeLen > 0 && (!segFilled(s) || (slab <= freeLen + 1e-6 && segWid(s) <= r.width_mm)));
+                                          return (
+                                            <option key={r.id} value={r.id} disabled={!fitsRub}>
+                                              {rollNames(skuRolls, sku.unit_code)[r.id]} · {fmtLenM(freeLen)} free{!fitsRub && segFilled(s) ? (segWid(s) > r.width_mm ? ' (too narrow)' : ' (too short)') : ''}
+                                            </option>
+                                          );
+                                        }
                                         const fits = s.lotId === r.id || (freeFor > 0 && (st.need === 0 || (freeFor >= st.need && segMm(s) <= r.current_qty)));
                                         return (
                                           <option key={r.id} value={r.id} disabled={!fits}>
@@ -1064,7 +1129,9 @@ export default function ProductionOrdersView({
                                     {st.problem ? (
                                       <><AlertTriangle size={12} /> Can&apos;t be filled — {st.problem}.</>
                                     ) : (
-                                      <>{rollNames(skuRolls, sku.unit_code)[st.roll.id]}: {fmtQty(st.avail, sku.unit_code)} free → <b className={st.left === 0 ? 'text-warn' : 'text-ok'}>{fmtQty(st.left, sku.unit_code)} left</b> after this</>
+                                      st.availLen != null && st.leftLen != null
+                                        ? <>{rollNames(skuRolls, sku.unit_code)[st.roll.id]}: {fmtLenM(st.availLen)} of length free → <b className={st.leftLen <= 0 ? 'text-warn' : 'text-ok'}>{fmtLenM(Math.max(0, st.leftLen))} left</b> after this{segWid(s) > 0 && st.roll.width_mm && segWid(s) < st.roll.width_mm ? <> · leaves a {fmtRollSize(st.roll.width_mm - segWid(s), segMm(s) * segPcs(s))} side strip in stock</> : null}</>
+                                        : <>{rollNames(skuRolls, sku.unit_code)[st.roll.id]}: {fmtQty(st.avail, sku.unit_code)} free → <b className={st.left === 0 ? 'text-warn' : 'text-ok'}>{fmtQty(st.left, sku.unit_code)} left</b> after this</>
                                     )}
                                   </p>
                                 )}
@@ -1077,7 +1144,7 @@ export default function ProductionOrdersView({
                             type="button"
                             className="btn btn-secondary btn-sm"
                             onClick={() => addSeg(li.id)}
-                            title="Another MM × PCS of this same product, from another roll"
+                            title={isRub ? 'Another LENGTH × WIDTH × PCS of this same product, from another roll' : 'Another MM × PCS of this same product, from another roll'}
                           >
                             <Plus size={12} /> Extend this SKU
                           </button>

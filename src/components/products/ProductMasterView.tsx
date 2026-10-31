@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Search, Plus, Pencil, ToggleLeft, ToggleRight, X } from 'lucide-react';
 import { PRODUCT_TYPE_LABEL, type Permission, type ProductType } from '@/lib/types';
 import { PRODUCT_TYPES, TYPE_META, UNSPECIFIED, buildIdentity, isIdentityError } from '@/lib/sheet-config';
-import { isLotType, lotUnitHead, lotUnitWord } from '@/lib/lotUnit';
+import { isLotType, isRubber, lotUnitHead, lotUnitWord } from '@/lib/lotUnit';
 import { fmtMsl } from '@/lib/format';
 import { makeMatcher } from '@/lib/search';
 import RollEntry, { emptyRolls, rollsPayload, rollsTotal, type RollRows } from '@/components/inventory/RollEntry';
+import RubberEntry, { emptyRubber, rubberPayload, rubberTotal, type RubberRows } from '@/components/inventory/RubberEntry';
+import { fmtArea } from '@/lib/format';
 
 interface Product {
   id: string; sku_code: string; product_type: ProductType;
@@ -68,6 +70,7 @@ export default function ProductMasterView({
   // optional existing inventory when adding: timing belts as MM × PCS rows, others as a quantity
   const [hasStock, setHasStock] = useState(false);
   const [openRolls, setOpenRolls] = useState<RollRows>(emptyRolls());
+  const [openRubber, setOpenRubber] = useState<RubberRows>(emptyRubber());
   const [openQty, setOpenQty] = useState('');
   const [err, setErr] = useState('');
 
@@ -98,7 +101,7 @@ export default function ProductMasterView({
 
   const openAdd = () => {
     setForm({ ...EMPTY, product_type: typeFilter === 'ALL' ? 'TIMING_BELT' : typeFilter });
-    setHasStock(false); setOpenRolls(emptyRolls()); setOpenQty('');
+    setHasStock(false); setOpenRolls(emptyRolls()); setOpenRubber(emptyRubber()); setOpenQty('');
     setEditing(null); setErr(''); setDialog('add');
   };
   const openEdit = (p: Product) => {
@@ -129,13 +132,15 @@ export default function ProductMasterView({
   const save = async () => {
     setSaving(true); setErr('');
     const adding = dialog === 'add';
-    const rollList = rollsPayload(openRolls);
+    const rollList = isRubber(form.product_type) ? rubberPayload(openRubber) : rollsPayload(openRolls);
     const opening = !adding || !hasStock ? undefined
       : isLotType(form.product_type) ? { rows: rollList } : { qty: Number(openQty) || 0 };
     if (adding && hasStock && ((isLotType(form.product_type) && rollList.length === 0) || (!isLotType(form.product_type) && !(Number(openQty) > 0)))) {
       setSaving(false);
       setErr(isLotType(form.product_type)
-        ? `Enter ${lotUnitHead(form.product_type)} and PCS for at least one row, or switch "existing inventory" off.`
+        ? (isRubber(form.product_type)
+            ? 'Enter width, length and number of rolls for at least one row, or switch "existing inventory" off.'
+            : `Enter ${lotUnitHead(form.product_type)} and PCS for at least one row, or switch "existing inventory" off.`)
         : 'Enter the quantity in stock, or switch "existing inventory" off.');
       return;
     }
@@ -253,7 +258,7 @@ export default function ProductMasterView({
                   <td><Un v={p.section ?? p.colour ?? p.hier_l2} /></td>
                   <td className="whitespace-nowrap"><Un v={p.hier_l3} /></td>
                   <td><Un v={p.brand_name} /></td>
-                  <td className="num whitespace-nowrap">{p.current_stock} {unitLabel(p)}</td>
+                  <td className="num whitespace-nowrap">{p.unit_code === 'MM2' ? fmtArea(p.current_stock) : `${p.current_stock} ${unitLabel(p)}`}</td>
                   <td className="num whitespace-nowrap">{p.min_stock_level > 0 ? fmtMsl(p.min_stock_level, p.unit_code, p.product_type) : <span className="text-ink-3">—</span>}</td>
                   <td className="text-ink-3 max-w-[200px] truncate" title={p.remarks ?? ''}>{p.remarks ?? '—'}</td>
                   <td className="whitespace-nowrap">
@@ -330,8 +335,8 @@ export default function ProductMasterView({
                 </div>
               ) : (
                 <div>
-                  <label className="label">{form.product_type === 'V_BELT' ? 'Section of V Belt' : form.product_type === 'POLY_V_BELT' ? 'Section of Poly V Belt' : 'Section of Timing Belt'} <span className="text-danger">*</span></label>
-                  <input className="field w-full" disabled={lockedField('Section')} value={form.section} onChange={(e) => set('section', e.target.value)} placeholder={form.product_type === 'POLY_V_BELT' ? 'e.g. PH, PJ, PK, PL, PM' : 'e.g. L, MXL, A, B'} />
+                  <label className="label">{form.product_type === 'V_BELT' ? 'Section of V Belt' : form.product_type === 'POLY_V_BELT' ? 'Section of Poly V Belt' : form.product_type === 'OPEN_ROLL' ? 'Section' : 'Section of Timing Belt'} <span className="text-danger">*</span></label>
+                  <input className="field w-full" disabled={lockedField('Section')} value={form.section} onChange={(e) => set('section', e.target.value)} placeholder={form.product_type === 'POLY_V_BELT' ? 'e.g. PH, PJ, PK, PL, PM' : form.product_type === 'OPEN_ROLL' ? 'e.g. L, XL, XXL' : 'e.g. L, MXL, A, B'} />
                 </div>
               )}
 
@@ -352,10 +357,12 @@ export default function ProductMasterView({
                 </>
               ) : (
                 <>
-                  <div>
-                    <label className="label">Size <span className="text-danger">*</span></label>
-                    <input className="field w-full" disabled={lockedField('Size')} value={form.size} onChange={(e) => set('size', e.target.value)} />
-                  </div>
+                  {!isRubber(form.product_type) && (
+                    <div>
+                      <label className="label">Size <span className="text-danger">*</span></label>
+                      <input className="field w-full" disabled={lockedField('Size')} value={form.size} onChange={(e) => set('size', e.target.value)} />
+                    </div>
+                  )}
                   <div>
                     <label className="label">Make <span className="text-danger">*</span></label>
                     <input className="field w-full" list="pm-brands" disabled={lockedField('Make')} value={form.brand} onChange={(e) => set('brand', e.target.value)} />
@@ -372,7 +379,7 @@ export default function ProductMasterView({
               )}
 
               <div>
-                <label className="label">MSL — minimum stock level ({meta.usesLots ? 'pieces' : 'pcs'})</label>
+                <label className="label">MSL — minimum stock level ({form.product_type === 'OPEN_ROLL' ? 'rolls' : meta.usesLots ? 'pieces' : 'pcs'})</label>
                 <input type="number" className="field w-full" value={form.min_stock_level} onChange={(e) => set('min_stock_level', e.target.value)} />
               </div>
               <div>
@@ -402,7 +409,19 @@ export default function ProductMasterView({
                   </button>
                   {hasStock && (
                     <div className="px-3.5 pb-3.5 pt-1 space-y-2 border-t border-line">
-                      {isLotType(form.product_type) ? (
+                      {isRubber(form.product_type) ? (
+                        <>
+                          <p className="text-[13px] text-ink-3 pt-2">
+                            Type each roll as <strong>WIDTH (mm) × LENGTH (m) × ROLLS</strong>. Add a row for every different size.
+                          </p>
+                          <RubberEntry rows={openRubber} onChange={setOpenRubber} mode="rolls" />
+                          {rubberTotal(rubberPayload(openRubber)) > 0 && (
+                            <p className="text-[13px] text-ink-3">
+                              Stock will start at <strong className="text-ink num">{fmtArea(rubberTotal(rubberPayload(openRubber)))}</strong>.
+                            </p>
+                          )}
+                        </>
+                      ) : isLotType(form.product_type) ? (
                         <>
                           <p className="text-[13px] text-ink-3 pt-2">
                             Type each length as <strong>{lotUnitHead(form.product_type)} × PCS</strong> and pick <strong>Full sleeve</strong> or <strong>Cut pcs</strong> for the row.

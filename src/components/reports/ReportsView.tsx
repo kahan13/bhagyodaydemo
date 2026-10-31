@@ -4,6 +4,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { FileSpreadsheet, FileText, RefreshCw } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { fmtDate, fmtQty, fmtMsl, fmtDateTime, fmtMmPcs } from '@/lib/format';
+import { qtySplit, type LotEntry } from '@/lib/lotView';
+
+/** Open Roll / Rubber is kept as area in mm²; reports show it as sq m with its unit. */
+const SQM = (v: unknown): number => +(Number(v ?? 0) / 1_000_000).toFixed(4);
 import { isLotType, lotUnitWord } from '@/lib/lotUnit';
 
 type ReportKind =
@@ -21,9 +25,9 @@ const REPORTS: { id: ReportKind; label: string; note: string; dated: boolean }[]
 ];
 
 const CATEGORY_LABEL: Record<string, string> = {
-  TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt', POLY_V_BELT: 'Poly V Belt',
+  TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt', POLY_V_BELT: 'Poly V Belt', OPEN_ROLL: 'Open Roll / Rubber',
 };
-const CATEGORY_ORDER = ['TIMING_BELT', 'POLY_V_BELT', 'V_BELT', 'CONVEYOR_BELT'];
+const CATEGORY_ORDER = ['TIMING_BELT', 'POLY_V_BELT', 'OPEN_ROLL', 'V_BELT', 'CONVEYOR_BELT'];
 
 /** Every row of a query, a page at a time (the database hands out at most 1000 per request). */
 async function fetchAll<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
@@ -130,7 +134,12 @@ export default function ReportsView({
         ]);
         // Timing belts: MSL (and the reorder figure) count pieces, not mm.
         setRows(((data ?? []) as Record<string, unknown>[]).map((r) =>
-          isLotType(r.product_type as string)
+          r.product_type === 'OPEN_ROLL'
+            // Open Roll: stock in sq m, the minimum counts ROLLS
+            ? { ...r, current_stock: SQM(r.current_stock), unit_code: 'sq m',
+                min_stock_level: fmtMsl(r.min_stock_level as number, 'MM2', 'OPEN_ROLL'),
+                suggested_purchase_qty: fmtMsl(r.suggested_purchase_qty as number, 'MM2', 'OPEN_ROLL') }
+          : isLotType(r.product_type as string)
             ? { ...r,
                 min_stock_level: fmtMsl(r.min_stock_level as number, 'MM', 'TIMING_BELT'),
                 suggested_purchase_qty: fmtMsl(r.suggested_purchase_qty as number, 'MM', 'TIMING_BELT') }
@@ -173,23 +182,24 @@ export default function ReportsView({
         for (const cat of cats) {
           const c = tree.get(cat)!;
           const label = CATEGORY_LABEL[cat] ?? cat;
+          const area = cat === 'OPEN_ROLL';
           const brandsSorted = [...c.brands.entries()].sort((a, b) => b[1].total.qty - a[1].total.qty);
           brandsSorted.forEach(([bn, b], i) => {
             const t = top(b.skus, 3);
             rowsOut.push({
-              category: label, brand: bn, qty: b.total.qty, unit: c.unit, share: pct(b.total.qty, c.total.qty),
+              category: label, brand: bn, qty: area ? SQM(b.total.qty) : b.total.qty, unit: area ? 'sq m' : c.unit, share: pct(b.total.qty, c.total.qty),
               txns: b.total.txns, skus: b.skus.size,
-              top_sku: t[0]?.[0] ?? '—', top_sku_qty: t[0]?.[1].qty ?? 0,
-              top_skus: t.map(([k, v]) => `${k} (${fmtQty(v.qty)})`).join(', '),
+              top_sku: t[0]?.[0] ?? '—', top_sku_qty: area ? SQM(t[0]?.[1].qty) : (t[0]?.[1].qty ?? 0),
+              top_skus: t.map(([k, v]) => `${k} (${area ? fmtQty(v.qty, 'MM2') : fmtQty(v.qty)})`).join(', '),
               rank: i + 1,
             });
           });
           const t5 = top(c.skus, 5);
           rowsOut.push({
-            category: label, brand: `ALL ${label.toUpperCase()} BRANDS`, qty: c.total.qty, unit: c.unit, share: '100%',
+            category: label, brand: `ALL ${label.toUpperCase()} BRANDS`, qty: area ? SQM(c.total.qty) : c.total.qty, unit: area ? 'sq m' : c.unit, share: '100%',
             txns: c.total.txns, skus: c.skus.size,
-            top_sku: t5[0]?.[0] ?? '—', top_sku_qty: t5[0]?.[1].qty ?? 0,
-            top_skus: t5.map(([k, v]) => `${k} (${fmtQty(v.qty)})`).join(', '),
+            top_sku: t5[0]?.[0] ?? '—', top_sku_qty: area ? SQM(t5[0]?.[1].qty) : (t5[0]?.[1].qty ?? 0),
+            top_skus: t5.map(([k, v]) => `${k} (${area ? fmtQty(v.qty, 'MM2') : fmtQty(v.qty)})`).join(', '),
             rank: '', is_total: true,
           });
         }
@@ -251,7 +261,10 @@ export default function ReportsView({
           { key: 'invoice_no',       label: 'Invoice No' },
           { key: 'notes',            label: 'Notes' },
         ]);
-        setRows((data ?? []) as Record<string, unknown>[]);
+        setRows(((data ?? []) as Record<string, unknown>[]).map((r) =>
+          r.product_type === 'OPEN_ROLL'
+            ? { ...r, quantity: SQM(r.quantity), previous_stock: SQM(r.previous_stock), new_stock: SQM(r.new_stock), unit_code: 'sq m' }
+            : r));
       }
     } catch (e) {
       setError((e as Error).message);
@@ -267,6 +280,10 @@ export default function ReportsView({
   function qtyMm(row: Record<string, unknown>): string {
     const b = row.lot_breakdown as { status?: string; qty?: number }[] | null | undefined;
     if (!isLotType(row.product_type as string) || !Array.isArray(b) || b.length === 0) return '—';
+    // Open Roll: "2.5 m × 25 mm × 4 pcs from 45 mm × 30 m" / "25 mm × 10 m × 3 rolls"
+    if (row.product_type === 'OPEN_ROLL') {
+      return qtySplit(b as LotEntry[], 'MM2', row.txn_type === 'INWARD' && row.txn_mode !== 'REVERSAL').map((p) => p.text).join(' + ') || '—';
+    }
     const word = lotUnitWord(row.product_type as string);
     const label: Record<string, string> = { FULL_SLEEVE: 'Full Sleeve', CUT_PCS: 'Cut Pcs', WASTED: 'Waste' };
     const by = new Map<string, { n: number; qty: number; st: string }>();
@@ -288,7 +305,7 @@ export default function ReportsView({
     const value = row[key];
     if (value === null || value === undefined || value === '') return '—';
     if (key === 'occurred_at') return fmtDateTime(String(value));
-    if (key === 'product_type') return ({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt', POLY_V_BELT: 'Poly V Belt' } as Record<string, string>)[String(value)] ?? String(value ?? '—');
+    if (key === 'product_type') return ({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt', POLY_V_BELT: 'Poly V Belt', OPEN_ROLL: 'Open Roll / Rubber' } as Record<string, string>)[String(value)] ?? String(value ?? '—');
     if (key === 'stock_status') return String(value).replace(/_/g, ' ').toLowerCase();
     if (key === 'quantity' && kind === 'waste' && typeof value === 'number') return fmtQty(Math.abs(value));
     if (typeof value === 'number') return fmtQty(value);

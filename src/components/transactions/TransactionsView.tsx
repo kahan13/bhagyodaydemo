@@ -4,9 +4,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState, useTransition } from 'react';
 import { Undo2, X, SlidersHorizontal, Download, Search } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
-import { fmtDate, fmtTime, fmtQty, fmtMmPcs } from '@/lib/format';
+import { fmtDate, fmtTime, fmtQty, fmtMmPcs, fmtLenWidPcs, fmtRollSize } from '@/lib/format';
 import type { Movement } from '@/lib/types';
-import { qtySplit, lotChip, snapTotal, LOT_NAME, type SnapGroup } from '@/lib/lotView';
+import { qtySplit, lotChip, snapTotal, snapRollSize, isAreaUnitCode, LOT_NAME, type SnapGroup } from '@/lib/lotView';
 
 const RANGES: [string, string][] = [
   ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'This week'],
@@ -121,7 +121,7 @@ export default function TransactionsView({
             <Select label="Entry" value={filters.mode} onChange={(v) => setParam({ mode: v })}
               options={[['NORMAL', 'Normal'], ['REVERSAL', 'Reversal']]} />
             <Select label="Product Type" value={filters.product} onChange={(v) => setParam({ product: v })}
-              options={[['TIMING_BELT', 'Timing Belt'], ['V_BELT', 'V-Belt'], ['CONVEYOR_BELT', 'Conveyor Belt'], ['POLY_V_BELT', 'Poly V Belt']]} width="w-[140px]" />
+              options={[['TIMING_BELT', 'Timing Belt'], ['V_BELT', 'V-Belt'], ['CONVEYOR_BELT', 'Conveyor Belt'], ['POLY_V_BELT', 'Poly V Belt'], ['OPEN_ROLL', 'Open Roll / Rubber']]} width="w-[140px]" />
             <Select label="Brand" value={filters.brand} onChange={(v) => setParam({ brand: v })}
               options={facets.brands.map((b) => [b, b])} width="w-[150px]" />
             <Select label="Family" value={filters.family} onChange={(v) => setParam({ family: v })}
@@ -177,7 +177,7 @@ export default function TransactionsView({
                     <p className="text-[13px] text-ink-3 mt-0.5">
                       {m.brand_name}
                       {' · '}
-                      {({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt', POLY_V_BELT: 'Poly V Belt' } as Record<string, string>)[m.product_type] ?? '—'}
+                      {({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor Belt', POLY_V_BELT: 'Poly V Belt', OPEN_ROLL: 'Open Roll' } as Record<string, string>)[m.product_type] ?? '—'}
                     </p>
                   </td>
                   <td>
@@ -261,6 +261,12 @@ function lotLines(m: Movement): string[] {
   const b = m.lot_breakdown;
   if (!b || b.length === 0) return [];
   return b.map((e) => {
+    // Open Roll / Rubber: say it as width × length
+    if (isAreaUnitCode(m.unit_code) && e.status !== 'WASTED' && e.width_mm && e.len_mm) {
+      if (m.txn_type === 'INWARD' && m.txn_mode !== 'REVERSAL') return `new roll ${fmtRollSize(e.width_mm, e.len_mm)} · ${e.lot_no}`;
+      if (e.pcs && e.from_width_mm && e.from_len_mm)
+        return `${fmtLenWidPcs(e.len_mm, e.width_mm, e.pcs)} cut from the ${fmtRollSize(e.from_width_mm, e.from_len_mm)} roll · ${e.lot_no}${e.strip_width_mm && e.strip_len_mm ? ` (side strip ${fmtRollSize(e.strip_width_mm, e.strip_len_mm)} kept in stock)` : ''}`;
+    }
     if (e.status === 'WASTED') return `${fmtQty(e.qty, m.unit_code)} of ${LOT_NAME[e.was ?? ''] ?? 'lot'} goes back into · ${e.lot_no}`;
     if (m.txn_type === 'INWARD' && m.txn_mode !== 'REVERSAL') return `${fmtQty(e.qty, m.unit_code)} new ${e.status === 'CUT_PCS' ? 'Cut Pcs' : 'Full Sleeve'} piece · ${e.lot_no}`;
     return `${fmtQty(e.qty, m.unit_code)} ${m.txn_type === 'OUTWARD' ? 'from' : 'in'} ${LOT_NAME[e.status] ?? e.status} · ${e.lot_no}`;
@@ -322,9 +328,16 @@ function StateBlock({ m, which }: { m: Movement; which: 'before' | 'after' }) {
         <div className="flex flex-wrap gap-1">
           {g.length === 0 && <span className="text-[14px] text-ink-3">no stock in lots</span>}
           {g.map((x) => (
-            <span key={x.status + x.each} className={`chip ${lotChip(x.status)}`} title={LOT_NAME[x.status]}>
-              {fmtMmPcs(x.each, x.count, m.unit_code === 'RIB' ? 'ribs' : 'mm')} {SHORT[x.status]}
-            </span>
+            x.width_mm && isAreaUnitCode(m.unit_code)
+              ? (
+                <span key={`${x.status}${x.width_mm}x${x.each}`} className="chip chip-plain" title="Open Roll">
+                  {snapRollSize(x)} × {x.count}
+                </span>
+              ) : (
+                <span key={x.status + x.each} className={`chip ${lotChip(x.status)}`} title={LOT_NAME[x.status]}>
+                  {fmtMmPcs(x.each, x.count, m.unit_code === 'RIB' ? 'ribs' : 'mm')} {SHORT[x.status]}
+                </span>
+              )
           ))}
         </div>
         <p className="num text-[14px] text-ink-2 mt-0.5">Total {fmtQty(snapTotal(g), m.unit_code)}</p>

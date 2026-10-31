@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { PackageX, RefreshCw, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { supabaseBrowser } from '@/lib/supabase-browser';
-import { fmtQty } from '@/lib/format';
+import { fmtQty, fmtRollSize, fmtArea } from '@/lib/format';
 import type { Permission } from '@/lib/types';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -22,6 +22,8 @@ interface SkuLot {
   wasted_at: string | null;
   waste_reason: string | null;
   wasted_by_name: string | null;
+  /** Open Roll / Rubber only: width of the roll (mm); the quantity is then its area */
+  width_mm: number | null;
 }
 
 // ── Status badge ──────────────────────────────────────────────────────────────
@@ -96,10 +98,12 @@ function WasteModal({
       }
     >
       <div className="bg-danger-soft border border-danger-line rounded-lg px-3 py-2.5 text-[14px]">
-        <p className="font-medium text-danger">{lot.lot_no} — <StatusBadge status={lot.status} /></p>
+        <p className="font-medium text-danger">{lot.width_mm ? 'Open Roll' : lot.lot_no} — <StatusBadge status={lot.status} /></p>
         <p className="text-danger mt-1">
-          {fmtQty(lot.current_qty, lot.unit_code)} remaining of {fmtQty(lot.roll_length_mm, lot.unit_code)} roll will be written off.
-          This action is <strong>permanent</strong> and cannot be undone.
+          {lot.width_mm
+            ? <>{fmtRollSize(lot.width_mm, lot.current_qty / Number(lot.width_mm))} ({fmtArea(lot.current_qty)}) will be written off.</>
+            : <>{fmtQty(lot.current_qty, lot.unit_code)} remaining of {fmtQty(lot.roll_length_mm, lot.unit_code)} roll will be written off.</>}
+          {' '}This action is <strong>permanent</strong> and cannot be undone.
         </p>
       </div>
 
@@ -145,7 +149,7 @@ export default function SkuLotsPanel({
     setLoading(true); setErr('');
     const { data, error } = await supabaseBrowser()
       .from('v_sku_lots')
-      .select('id,lot_no,roll_length_mm,inward_qty,current_qty,status,unit_code,pct_remaining,created_at,wasted_at,waste_reason,wasted_by_name')
+      .select('id,lot_no,roll_length_mm,inward_qty,current_qty,status,unit_code,pct_remaining,created_at,wasted_at,waste_reason,wasted_by_name,width_mm')
       .eq('sku_id', skuId)
       .order('created_at', { ascending: true });
 
@@ -174,6 +178,7 @@ export default function SkuLotsPanel({
 
   // Summary numbers
   const totalActive = active.reduce((s, l) => s + l.current_qty, 0);
+  const rubberSku   = lots.some((l) => l.width_mm != null);
   const fullCount   = active.filter((l) => l.status === 'FULL_SLEEVE').length;
   const cutCount    = active.filter((l) => l.status === 'CUT_PCS').length;
 
@@ -202,13 +207,19 @@ export default function SkuLotsPanel({
       {/* ── Summary row ── */}
       <div className="flex items-center gap-3 text-[14px] text-ink-2 flex-wrap">
         <span className="font-medium text-ink">{fmtQty(totalActive, unitCode)} active</span>
-        {fullCount > 0 && (
+        {rubberSku && (
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-brand inline-block" />
+            {active.length} roll{active.length === 1 ? '' : 's'} / piece{active.length === 1 ? '' : 's'}
+          </span>
+        )}
+        {!rubberSku && fullCount > 0 && (
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-ok inline-block" />
             {fullCount} full sleeve{fullCount > 1 ? 's' : ''}
           </span>
         )}
-        {cutCount > 0 && (
+        {!rubberSku && cutCount > 0 && (
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-warn inline-block" />
             {cutCount} cut pcs
@@ -300,6 +311,8 @@ function LotRow({
   onWaste?: () => void;
 }) {
   const isInactive = lot.status === 'EXHAUSTED' || lot.status === 'WASTED';
+  const rub = lot.width_mm != null;                                   // Open Roll / Rubber
+  const curLen = rub ? lot.current_qty / Number(lot.width_mm) : 0;     // mm still on the roll
 
   return (
     <div className={`rounded-lg border px-3 py-2.5 text-[15px] ${
@@ -307,17 +320,30 @@ function LotRow({
     }`}>
       {/* line 1: lot number + status */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <span className="font-mono text-[14px] font-semibold text-ink-2 break-all">{lot.lot_no}</span>
-        <StatusBadge status={lot.status} />
+        {rub
+          ? <span className="text-[14px] font-semibold text-ink-2">Open Roll</span>
+          : <span className="font-mono text-[14px] font-semibold text-ink-2 break-all">{lot.lot_no}</span>}
+        {(!rub || isInactive) && <StatusBadge status={lot.status} />}
       </div>
 
       {/* line 2: quantity + mark-waste plate */}
       <div className="flex items-center justify-between gap-2 mt-1.5 flex-wrap">
         <div>
-          <span className="num text-[17px]">{fmtQty(lot.current_qty, unitCode)}</span>
-          <span className="text-ink-2 ml-1.5">
-            {lot.current_qty !== lot.inward_qty ? 'of' : 'full'} {fmtQty(lot.roll_length_mm, unitCode)} roll
-          </span>
+          {rub ? (
+            <>
+              <span className="num text-[17px]">{fmtRollSize(lot.width_mm, curLen)}</span>
+              <span className="text-ink-2 ml-1.5">
+                {lot.current_qty !== lot.inward_qty ? `of ${fmtRollSize(lot.width_mm, lot.roll_length_mm)} roll` : 'full'} · {fmtArea(lot.current_qty)}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="num text-[17px]">{fmtQty(lot.current_qty, unitCode)}</span>
+              <span className="text-ink-2 ml-1.5">
+                {lot.current_qty !== lot.inward_qty ? 'of' : 'full'} {fmtQty(lot.roll_length_mm, unitCode)} roll
+              </span>
+            </>
+          )}
         </div>
 
         {canWaste && onWaste && (
@@ -332,7 +358,7 @@ function LotRow({
       </div>
 
       {/* Progress bar for cut pieces */}
-      {lot.status === 'CUT_PCS' && lot.pct_remaining !== null && (
+      {(rub ? (lot.status === 'CUT_PCS' && lot.current_qty < lot.inward_qty) : lot.status === 'CUT_PCS') && lot.pct_remaining !== null && (
         <div className="mt-1.5">
           <div className="h-2 bg-warn-soft rounded-full overflow-hidden">
             <div

@@ -20,7 +20,7 @@ export type ImportKind = 'SKU' | 'INVENTORY' | 'MSL';
 export type FieldKey =
   | 'family' | 'section' | 'size' | 'colour' | 'brand'
   | 'length' | 'width' | 'thickness'
-  | 'lot_type' | 'uom_mm' | 'qty' | 'location' | 'remarks' | 'msl';
+  | 'lot_type' | 'uom_mm' | 'roll_w' | 'roll_l' | 'qty' | 'location' | 'remarks' | 'msl';
 
 export interface FieldDef {
   key: FieldKey;
@@ -39,7 +39,7 @@ export interface TypeMeta {
   /** SKU code prefix: TB-L-165-OPTI */
   prefix: string;
   /** Unit stock is counted in. Timing belts are tracked in millimetres, poly V belts in ribs. */
-  unit: 'MM' | 'PCS' | 'RIB';
+  unit: 'MM' | 'PCS' | 'RIB' | 'MM2';
   /** Timing belts and poly V belts have Cut Pcs / Full Sleeve lots; the others are plain stock. */
   usesLots: boolean;
   /** Words that identify this type from a sheet/tab name. */
@@ -50,7 +50,7 @@ export interface TypeMeta {
   leafColumns: [string, string];
 }
 
-export const PRODUCT_TYPES: ProductType[] = ['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT', 'POLY_V_BELT'];
+export const PRODUCT_TYPES: ProductType[] = ['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT', 'POLY_V_BELT', 'OPEN_ROLL'];
 
 export const TYPE_META: Record<ProductType, TypeMeta> = {
   TIMING_BELT: {
@@ -77,13 +77,20 @@ export const TYPE_META: Record<ProductType, TypeMeta> = {
     levels: ['Product Family', 'Section', 'Size · Make'],
     leafColumns: ['Size', 'Make'],
   },
+  // Rubber on rolls: stock is an area (MM2); each roll / leftover carries its own width and length.
+  OPEN_ROLL: {
+    label: 'Open Roll / Rubber', short: 'Open Roll', prefix: 'RB', unit: 'MM2', usesLots: true,
+    sheetHints: ['rubber', 'open roll', 'openroll'],
+    levels: ['Product Family', 'Section', 'Make'],
+    leafColumns: ['Section', 'Make'],
+  },
 };
 
 /** Guess the product type from a sheet/tab name (returns null if unsure). */
 export function detectProductType(sheetName: string): ProductType | null {
   const s = sheetName.toLowerCase();
   // "Poly V belt" also contains "v belt", so it has to be checked before V-belt
-  const order: ProductType[] = ['POLY_V_BELT', ...PRODUCT_TYPES.filter((t) => t !== 'POLY_V_BELT')];
+  const order: ProductType[] = ['OPEN_ROLL', 'POLY_V_BELT', ...PRODUCT_TYPES.filter((t) => t !== 'POLY_V_BELT' && t !== 'OPEN_ROLL')];
   for (const t of order) {
     if (TYPE_META[t].sheetHints.some((h) => s.includes(h))) return t;
   }
@@ -130,6 +137,8 @@ const IDENTITY: Record<ProductType, FieldDef[]> = {
     F.size,
     F.brand,
   ],
+  // Rubber has no "size": every roll has its own width and length (read with the stock, not here)
+  OPEN_ROLL: [F.family, sectionField('Section', []), F.brand],
 };
 
 /** Product (SKU) import: identity only. No stock, no cut/full, no location. */
@@ -138,6 +147,7 @@ export const SKU_FIELDS: Record<ProductType, FieldDef[]> = {
   V_BELT: [...IDENTITY.V_BELT, F.msl],
   CONVEYOR_BELT: [...IDENTITY.CONVEYOR_BELT, F.msl],
   POLY_V_BELT: [...IDENTITY.POLY_V_BELT, F.msl],
+  OPEN_ROLL: [...IDENTITY.OPEN_ROLL, F.msl],
 };
 
 /** Inventory import: identity (to find the SKU) + what is physically in stock. */
@@ -177,6 +187,18 @@ export const INVENTORY_FIELDS: Record<ProductType, FieldDef[]> = {
       hint: 'How many such pieces / sleeves' },
     F.location, F.remarks, F.msl,
   ],
+  // One row = QTY rolls, each WIDTH mm wide and LENGTH metres long
+  OPEN_ROLL: [
+    ...IDENTITY.OPEN_ROLL,
+    { key: 'roll_w', label: 'WIDTH mm', required: true, aliases: ['width mm', 'width in mm', 'width', 'w'],
+      hint: 'Width of ONE roll in mm' },
+    { key: 'roll_l', label: 'Length Mtrs', required: true,
+      aliases: ['length mtrs', 'length mtr', 'length m', 'length in m', 'length in mtrs', 'length (m)', 'length', 'l'],
+      hint: 'Length of ONE roll in metres' },
+    { key: 'qty', label: 'QTY', required: true, aliases: ['qty', 'quantity'],
+      hint: 'How many such rolls' },
+    F.location, F.remarks, F.msl,
+  ],
 };
 
 /** MSL-only import: identity columns (to find the product) + the MSL column. Nothing else is read. */
@@ -185,6 +207,7 @@ export const MSL_FIELDS: Record<ProductType, FieldDef[]> = {
   V_BELT: [...IDENTITY.V_BELT, { ...F.msl, required: true }],
   CONVEYOR_BELT: [...IDENTITY.CONVEYOR_BELT, { ...F.msl, required: true }],
   POLY_V_BELT: [...IDENTITY.POLY_V_BELT, { ...F.msl, required: true }],
+  OPEN_ROLL: [...IDENTITY.OPEN_ROLL, { ...F.msl, required: true }],
 };
 
 export const fieldsFor = (kind: ImportKind, type: ProductType): FieldDef[] =>
@@ -217,6 +240,8 @@ export function autoMap(headers: string[], fields: FieldDef[]): Record<string, s
 /** Work out the product type from a sheet's column headings (more reliable than the tab name). */
 export function detectTypeFromHeaders(headers: string[]): ProductType | null {
   const n = headers.map(normHeader);
+  // Rubber rolls: a WIDTH mm column and a Length Mtrs column
+  if (n.some((h) => h === 'widthmm') && n.some((h) => h.startsWith('lengthm'))) return 'OPEN_ROLL';
   // Poly V first: its sheet also starts with "CUT PCS / FULL SLEEVE", like the timing sheet
   if (n.some((h) => h.includes('sectionofpolyvbelt') || h.startsWith('noofrib') || h === 'ribs')) return 'POLY_V_BELT';
   if (n.some((h) => h.includes('sectionoftimingbelt') || h.startsWith('cutpcs') || h === 'uominmm')) return 'TIMING_BELT';
@@ -322,6 +347,23 @@ export function buildIdentity(type: ProductType, raw: RawIdentity): Identity | {
       exactSize: sizeLabel,
       displayName: `${colour} ${sizeLabel} ${brand}`,
       codeBase: [meta.prefix, slug(family), slug(colour), slug(sizeLabel), slug(brand)].join('-'),
+      missing,
+    };
+  }
+
+  if (type === 'OPEN_ROLL') {
+    const family = part(raw.family, 'Product Family');
+    const brand = part(raw.brand, 'Make');
+    const section = part(raw.section, 'Section');
+    if (missing.length >= 3) return { error: 'No product details in this row' };
+    return {
+      type, family, section, colour: null, brand, sizeLabel: '',
+      lengthMm: null, widthMm: null, thicknessMm: null,
+      key: [type, family, section, brand].map(keyPart).join('|'),
+      hier: [family, section, brand],
+      exactSize: section,
+      displayName: `${family} ${section} ${brand}`,
+      codeBase: [meta.prefix, slug(section), slug(brand)].join('-'),
       missing,
     };
   }

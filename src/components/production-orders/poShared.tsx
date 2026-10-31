@@ -10,7 +10,7 @@ import type {
   MismatchOrderItem,
   PendingAdjustment,
 } from '@/lib/types';
-import { fmtMmPcs, fmtLineQty, fmtQty } from '@/lib/format';
+import { fmtMmPcs, fmtLineQty, fmtQty, fmtLenWidPcs } from '@/lib/format';
 import Modal from '@/components/ui/Modal';
 import { loadItemParts, partLine, partMain, partTotal, fromTag, totalLine, type AllocPart } from '@/lib/orderParts';
 
@@ -62,7 +62,7 @@ export function formatDateTime(iso: string): string {
 /** "from Cut Pcs of 230 mm" as a coloured chip — green for a full sleeve, amber for cut pieces. Never confused with a total. */
 export function FromChip({ p, unit }: { p: AllocPart; unit?: string | null }) {
   return (
-    <span className={`badge ${p.status === 'FULL_SLEEVE' ? 'badge-ok' : 'badge-warn'} !h-[22px] !text-[12.5px] mt-0.5`}>
+    <span className={`badge ${(unit ?? '').toUpperCase() === 'MM2' ? 'badge-brand' : p.status === 'FULL_SLEEVE' ? 'badge-ok' : 'badge-warn'} !h-[22px] !text-[12.5px] mt-0.5`}>
       {fromTag(p, unit)}
     </span>
   );
@@ -76,6 +76,8 @@ export function buildMessage(fields: {
   customer_name: string;
   items: Array<{
     display_name: string; quantity: string; unit_code: string; pieces?: string; mm?: string;
+    /** Open Roll / Rubber without parts: width of each piece (mm) */
+    wid?: string;
     /** roll-tracked lines: the whole line ("250 mm") — only given when it has more than one entry */
     total?: string;
     /** roll-tracked lines: each entry and where it is cut from: { text: "25 mm × 9 pcs (225 mm total)", from: "from Cut Pcs of 230 mm" } */
@@ -103,7 +105,10 @@ export function buildMessage(fields: {
         ];
       }
       const isMmPcs = i.pieces && i.mm && Number(i.pieces) * Number(i.mm) === Number(i.quantity);
-      const qty = isMmPcs
+      const isLenWid = i.pieces && i.mm && i.wid && Number(i.pieces) * Number(i.mm) * Number(i.wid) === Number(i.quantity);
+      const qty = isLenWid
+        ? `${fmtLenWidPcs(i.mm, i.wid, i.pieces)} (${fmtQty(i.quantity, i.unit_code)} total)`
+        : isMmPcs
         ? `${fmtMmPcs(i.mm, i.pieces, i.unit_code.toUpperCase() === 'RIB' ? 'ribs' : 'mm')} (${fmtQty(i.quantity, i.unit_code)} total)`
         : i.quantity ? fmtQty(i.quantity, i.unit_code) : '';
       return [`  ${idx + 1}. ${i.display_name}${qty ? ` — ${qty}` : ''}`];
@@ -135,13 +140,16 @@ export function ItemBlock({
 }: {
   name: string;
   badge?: React.ReactNode;
-  item: { quantity: number | string; unit_code?: string | null; pieces?: number | null; length_mm?: number | null };
+  item: { quantity: number | string; unit_code?: string | null; pieces?: number | null; length_mm?: number | null; width_mm?: number | null };
   parts?: AllocPart[];
   big?: boolean;
 }) {
   const list = parts ?? [];
   const sz = big ? 'text-[15px]' : 'text-[14px]';
   const legacy = Number(item.pieces) > 0 && Number(item.length_mm) > 0 && Number(item.pieces) * Number(item.length_mm) === Number(item.quantity);
+  // Open Roll / Rubber line without parts: length × width × pcs
+  const rubLegacy = Number(item.pieces) > 0 && Number(item.length_mm) > 0 && Number(item.width_mm) > 0
+    && Number(item.pieces) * Number(item.length_mm) * Number(item.width_mm) === Number(item.quantity);
   return (
     <div>
       <p className={`${big ? 'text-[16px]' : 'text-[15px]'} font-medium text-ink flex items-baseline gap-x-2 flex-wrap`}>
@@ -163,8 +171,9 @@ export function ItemBlock({
         </div>
       ) : (
         <p className={`${sz} num text-ink mt-0.5`}>
-          {legacy ? fmtMmPcs(item.length_mm, item.pieces, (item.unit_code ?? '').toUpperCase() === 'RIB' ? 'ribs' : 'mm') : fmtQty(Number(item.quantity), item.unit_code)}
-          {legacy && <span className="text-[12px] text-ink-3 ml-2">{fmtQty(Number(item.quantity), item.unit_code)} total</span>}
+          {rubLegacy ? fmtLenWidPcs(item.length_mm, item.width_mm, item.pieces)
+            : legacy ? fmtMmPcs(item.length_mm, item.pieces, (item.unit_code ?? '').toUpperCase() === 'RIB' ? 'ribs' : 'mm') : fmtQty(Number(item.quantity), item.unit_code)}
+          {(legacy || rubLegacy) && <span className="text-[12px] text-ink-3 ml-2">{fmtQty(Number(item.quantity), item.unit_code)} total</span>}
         </p>
       )}
     </div>
@@ -541,6 +550,7 @@ export function openWhatsApp(order: ProductionOrder, fallbackNumber: string) {
       unit_code: i.unit_code,
       pieces: i.pieces ? String(i.pieces) : undefined,
       mm: i.length_mm ? String(i.length_mm) : undefined,
+      wid: i.width_mm ? String(i.width_mm) : undefined,
     })),
     time_tag: order.time_tag ?? '',
     delivery_mode: order.delivery_mode ?? '',

@@ -5,13 +5,14 @@ import { X, Check, Search, ChevronDown } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
 import { fmtQty } from '@/lib/format';
-import { isLotType, lotUnitWord } from '@/lib/lotUnit';
+import { isLotType, lotUnitWord, isRubber } from '@/lib/lotUnit';
 import type { ProductType, Sku } from '@/lib/types';
 import LotBreakdown, { groupsInline } from '@/components/inventory/LotBreakdown';
 import { OutwardRowsPlan, planRowsOutward } from '@/components/inventory/OutwardPlan';
 import { useListNav } from '@/lib/useListNav';
 import { makeMatcher } from '@/lib/search';
 import RollEntry, { emptyRolls, rollsPayload, rollsTotal, type RollRows } from '@/components/inventory/RollEntry';
+import RubberEntry, { emptyRubber, rubberPayload, rubberTotal, type RubberRows } from '@/components/inventory/RubberEntry';
 
 interface User { id: string; full_name: string; }
 
@@ -32,6 +33,7 @@ export default function DashboardEntryDialog({
   const [sku, setSku] = useState<Sku | null>(null);
   const [qty, setQty] = useState('');
   const [rolls, setRolls] = useState<RollRows>(emptyRolls());
+  const [rubber, setRubber] = useState<RubberRows>(emptyRubber());
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [invoiceNo, setInvoiceNo] = useState('');
@@ -62,7 +64,7 @@ export default function DashboardEntryDialog({
 
   const selectSku = (s: Sku) => {
     setSku(s);
-    setRolls(emptyRolls());
+    setRolls(emptyRolls()); setRubber(emptyRubber());
     setSearch(`${s.exact_size} — ${s.brand_name}`);
     setDropOpen(false);
     // keyboard flow: straight on to the quantity / roll box
@@ -87,10 +89,11 @@ export default function DashboardEntryDialog({
   // (poly V belts the same way, as RIBS × PCS)
   const inRolls = isLotType(sku?.product_type);
   const unitWord = lotUnitWord(sku?.product_type);
-  const rollList = inRolls ? rollsPayload(rolls) : [];
-  const rollProblems = action === 'outward' && inRolls && sku?.lot_groups && sku.lot_groups.length > 0
-    ? planRowsOutward(sku.lot_groups, rollList, unitWord).problems : [];
-  const amount = inRolls ? rollsTotal(rollList) : Number(qty || 0);
+  const rub = isRubber(sku?.product_type);          // Open Roll / Rubber: length × width × pcs
+  const rollList = inRolls ? (rub ? rubberPayload(rubber) : rollsPayload(rolls)) : [];
+  const rollProblems = action === 'outward' && inRolls && !rub && sku?.lot_groups && sku.lot_groups.length > 0
+    ? planRowsOutward(sku.lot_groups, rollList as ReturnType<typeof rollsPayload>, unitWord).problems : [];
+  const amount = inRolls ? (rub ? rubberTotal(rubberPayload(rubber)) : rollsTotal(rollsPayload(rolls))) : Number(qty || 0);
   const projected = action === 'inward' ? (sku?.current_stock ?? 0) + amount
     : (sku?.current_stock ?? 0) - amount;
 
@@ -152,7 +155,7 @@ export default function DashboardEntryDialog({
 
           {/* Product type */}
           <div className="flex gap-1 p-1 bg-subtle rounded-lg">
-            {(['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT', 'POLY_V_BELT'] as ProductType[]).map((t) => (
+            {(['TIMING_BELT', 'V_BELT', 'CONVEYOR_BELT', 'POLY_V_BELT', 'OPEN_ROLL'] as ProductType[]).map((t) => (
               <button
                 key={t} type="button"
                 onClick={() => { setProductType(t); clearSku(); }}
@@ -160,7 +163,7 @@ export default function DashboardEntryDialog({
                   productType === t ? 'bg-surface shadow-sm text-ink' : 'text-ink-3 hover:text-ink'
                 }`}
               >
-                {({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor', POLY_V_BELT: 'Poly V' } as Record<string, string>)[t]}
+                {({ TIMING_BELT: 'Timing Belt', V_BELT: 'V-Belt', CONVEYOR_BELT: 'Conveyor', POLY_V_BELT: 'Poly V', OPEN_ROLL: 'Open Roll' } as Record<string, string>)[t]}
               </button>
             ))}
           </div>
@@ -246,7 +249,9 @@ export default function DashboardEntryDialog({
           {/* Quantity */}
           {inRolls ? (
             <div>
-              <RollEntry rows={rolls} onChange={setRolls} mode={action === 'outward' ? 'out' : 'in'} unit={unitWord} />
+              {rub
+                ? <RubberEntry rows={rubber} onChange={setRubber} mode={action === 'outward' ? 'cut' : 'rolls'} maxArea={action === 'outward' ? sku?.current_stock : undefined} />
+                : <RollEntry rows={rolls} onChange={setRolls} mode={action === 'outward' ? 'out' : 'in'} unit={unitWord} />}
               {amount > 0 && sku && (
                 <p className="text-[14px] text-ink-3 mt-1 num">
                   After: <span className="font-medium">{fmtQty(projected, sku.unit_code)}</span>
@@ -277,8 +282,8 @@ export default function DashboardEntryDialog({
             )}
           </div>
           )}
-          {action === 'outward' && sku && inRolls && (
-            <OutwardRowsPlan groups={sku.lot_groups} rows={rollList} unit={sku.unit_code} />
+          {action === 'outward' && sku && inRolls && !rub && (
+            <OutwardRowsPlan groups={sku.lot_groups} rows={rollList as ReturnType<typeof rollsPayload>} unit={sku.unit_code} />
           )}
 
           {/* Reference */}
