@@ -10,6 +10,8 @@ import { makeMatcher } from '@/lib/search';
 import { HIERARCHY, type ProductType } from '@/lib/types';
 import InventoryTabs from './InventoryTabs';
 import MismatchWindow from '@/components/production-orders/MismatchWindow';
+import { usePendingCuts, physicalGroups } from '@/lib/rubberCuts';
+import { rubberStockText } from '@/components/inventory/LotBreakdown';
 
 /**
  * Physical inventory — what is actually on the shelf.
@@ -32,7 +34,9 @@ export default function PhysicalInventory() {
   const [onlyGap, setOnlyGap] = useState(false);
   // products that have at least one mismatch (by SKU id), and the window that explains them
   const [mismatchIds, setMismatchIds] = useState<Set<string>>(new Set());
-  const [window_, setWindow] = useState<null | { skuId?: string; title: string }>(null);
+  const [window_, setWindow] = useState<null | { skuId?: string; title: string; tab?: 'cuts' }>(null);
+  // Open Roll cut pieces created on the shelf but not reconciled with the book yet
+  const { cuts: pendingCuts } = usePendingCuts();
 
   const loadMismatch = useCallback(async () => {
     const db = supabaseBrowser();
@@ -65,6 +69,7 @@ export default function PhysicalInventory() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => onDataChanged(() => { load(); }), [load]);
 
+  const allMismatchIds = useMemo(() => new Set([...mismatchIds, ...pendingCuts.map((c) => c.sku_id)]), [mismatchIds, pendingCuts]);
   const list = useMemo(() => {
     const match = makeMatcher(query);
     return skus
@@ -73,14 +78,14 @@ export default function PhysicalInventory() {
       .map((s) => {
         const r = rows[s.sku_code];
         const book = Number(r.current_stock), phys = Number(r.physical_prod_stock);
-        return { s, book, phys, mismatch: mismatchIds.has(s.id) };
+        return { s, book, phys, mismatch: allMismatchIds.has(s.id) };
       })
       .filter((x) => !onlyGap || x.mismatch);
-  }, [skus, rows, type, query, onlyGap, mismatchIds]);
+  }, [skus, rows, type, query, onlyGap, allMismatchIds]);
 
   const mismatchCount = useMemo(
-    () => skus.filter((s) => rows[s.sku_code] && mismatchIds.has(s.id)).length,
-    [skus, rows, mismatchIds]);
+    () => skus.filter((s) => rows[s.sku_code] && allMismatchIds.has(s.id)).length,
+    [skus, rows, allMismatchIds]);
 
   return (
     <div className="p-4 lg:p-6 max-w-[1100px] mx-auto space-y-4">
@@ -161,14 +166,23 @@ export default function PhysicalInventory() {
               <tr key={s.sku_code}>
                 <td className="font-medium whitespace-nowrap">{s.exact_size}</td>
                 <td className="text-ink-2">{s.brand_name}</td>
-                <td className="num text-right font-semibold whitespace-nowrap">{fmtQty(phys, s.unit_code)}</td>
-                <td className="num text-right text-ink-2 whitespace-nowrap">{fmtQty(book, s.unit_code)}</td>
+                {s.unit_code === 'MM2' ? (
+                  <>
+                    <td className="num text-right font-semibold">{rubberStockText(physicalGroups(s.lot_groups ?? [], pendingCuts.filter((c) => c.sku_id === s.id)))}</td>
+                    <td className="num text-right text-ink-2">{rubberStockText(s.lot_groups)}</td>
+                  </>
+                ) : (
+                  <>
+                    <td className="num text-right font-semibold whitespace-nowrap">{fmtQty(phys, s.unit_code)}</td>
+                    <td className="num text-right text-ink-2 whitespace-nowrap">{fmtQty(book, s.unit_code)}</td>
+                  </>
+                )}
                 <td className="whitespace-nowrap">
                   {mismatch ? (
                     <span className="inline-flex items-center gap-2">
                       <span className="badge badge-warn inline-flex items-center gap-1"><AlertTriangle size={12} /> Mismatch detected</span>
                       <button type="button" className="btn btn-secondary btn-sm h-7"
-                        onClick={() => setWindow({ skuId: s.id, title: `Mismatches · ${s.sku_code}` })}>View</button>
+                        onClick={() => setWindow({ skuId: s.id, title: `Mismatches · ${s.sku_code}`, tab: !mismatchIds.has(s.id) && s.unit_code === 'MM2' ? 'cuts' : undefined })}>View</button>
                     </span>
                   ) : <span className="text-ink-3">—</span>}
                 </td>
@@ -179,7 +193,7 @@ export default function PhysicalInventory() {
       </div>
 
       {window_ && (
-        <MismatchWindow skuId={window_.skuId} title={window_.title} onClose={() => { setWindow(null); loadMismatch(); }} />
+        <MismatchWindow skuId={window_.skuId} title={window_.title} initialTab={window_.tab} onClose={() => { setWindow(null); loadMismatch(); }} />
       )}
     </div>
   );

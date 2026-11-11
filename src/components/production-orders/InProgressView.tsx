@@ -15,6 +15,7 @@ import {
   DeleteConfirmModal, RecordOutwardModal, MismatchPane, MovementsPane, STATUS_LABEL,
   openWhatsApp, type MovementRow,
 } from './poShared';
+import MismatchTabs from './MismatchTabs';
 import OrderCard from './OrderCard';
 import { loadItemParts, type AllocPart } from '@/lib/orderParts';
 import StaffInbox from './StaffInbox';
@@ -479,6 +480,7 @@ export default function InProgressView({
       {/* ── Mismatch ── */}
       {tab === 'mismatch' && (
         <section className="rounded-xl border border-line bg-surface overflow-hidden">
+          <MismatchTabs>
           <p className="px-4 py-2.5 text-[14px] text-ink-3 border-b border-line">
             Book stock against physical production stock, traced to its cause. An order stays here — even after
             it is completed — until its outward is recorded.
@@ -494,6 +496,7 @@ export default function InProgressView({
               resolvingId={resolvingId} loadingMismatches={false} searching={!!search.mismatch}
             />
           )}
+          </MismatchTabs>
         </section>
       )}
     </div>

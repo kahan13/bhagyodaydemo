@@ -107,7 +107,7 @@ export function buildMessage(fields: {
       const isMmPcs = i.pieces && i.mm && Number(i.pieces) * Number(i.mm) === Number(i.quantity);
       const isLenWid = i.pieces && i.mm && i.wid && Number(i.pieces) * Number(i.mm) * Number(i.wid) === Number(i.quantity);
       const qty = isLenWid
-        ? `${fmtLenWidPcs(i.mm, i.wid, i.pieces)} (${fmtQty(i.quantity, i.unit_code)} total)`
+        ? fmtLenWidPcs(i.mm, i.wid, i.pieces)
         : isMmPcs
         ? `${fmtMmPcs(i.mm, i.pieces, i.unit_code.toUpperCase() === 'RIB' ? 'ribs' : 'mm')} (${fmtQty(i.quantity, i.unit_code)} total)`
         : i.quantity ? fmtQty(i.quantity, i.unit_code) : '';
@@ -173,7 +173,7 @@ export function ItemBlock({
         <p className={`${sz} num text-ink mt-0.5`}>
           {rubLegacy ? fmtLenWidPcs(item.length_mm, item.width_mm, item.pieces)
             : legacy ? fmtMmPcs(item.length_mm, item.pieces, (item.unit_code ?? '').toUpperCase() === 'RIB' ? 'ribs' : 'mm') : fmtQty(Number(item.quantity), item.unit_code)}
-          {(legacy || rubLegacy) && <span className="text-[12px] text-ink-3 ml-2">{fmtQty(Number(item.quantity), item.unit_code)} total</span>}
+          {legacy && !rubLegacy && <span className="text-[12px] text-ink-3 ml-2">{fmtQty(Number(item.quantity), item.unit_code)} total</span>}
         </p>
       )}
     </div>
@@ -372,10 +372,14 @@ export function MismatchPane({
                   <span className="font-mono text-brand font-medium">{p.skus?.sku_code}</span>
                   <span className="text-ink ml-1.5">{p.skus?.display_name}</span>
                   <div className="text-[13px] text-ink-3 mt-0.5">
-                    <span className={`font-semibold ${removed ? 'text-danger' : 'text-ok'}`}>
-                      {removed ? '' : '+'}{p.delta} {unit}
-                    </span>
-                    {' · '}{p.source === 'WASTE'
+                    {unit.toUpperCase() !== 'MM2' && (
+                      <>
+                        <span className={`font-semibold ${removed ? 'text-danger' : 'text-ok'}`}>
+                          {removed ? '' : '+'}{p.delta} {unit}
+                        </span>
+                        {' · '}
+                      </>
+                    )}{p.source === 'WASTE'
                       ? (p.lot_no ? 'Roll marked as waste' : 'Marked as waste')
                       : 'Stock adjustment'}
                     {p.reason && (p.source !== 'WASTE' || !p.lot_no) ? ` — ${p.reason.replace(/^Marked as waste\s*·\s*/i, '')}` : ''}
@@ -408,6 +412,13 @@ export function MismatchPane({
                 <p className="text-[15px] font-semibold">
                   <span className="font-mono text-brand">{m.sku_code}</span>{' – '}{m.display_name}
                 </p>
+                {m.unit_code.toUpperCase() === 'MM2' ? (
+                  <div className="mt-1 text-[14px]">
+                    <span className="rounded-full bg-warn/20 text-warn px-2 py-0.5 font-semibold">
+                      {m.stock_gap > 0 ? 'outward not posted' : 'physical stock is above book'}
+                    </span>
+                  </div>
+                ) : (
                 <div className="flex items-center gap-3 mt-1 text-[14px] flex-wrap">
                   <span className="text-ink-3">
                     Book: <span className="font-medium text-ink">{m.current_stock} {m.unit_code}</span>
@@ -419,6 +430,7 @@ export function MismatchPane({
                     {m.stock_gap > 0 ? `−${m.stock_gap} ${m.unit_code} outward not posted` : `+${-m.stock_gap} ${m.unit_code} physical above book`}
                   </span>
                 </div>
+                )}
               </div>
 
               {m.open_order_items.length > 0 && (
@@ -514,7 +526,7 @@ export function MovementsPane({ rows, loading, pendingMovementIds, searching = f
               <div className="text-[13px] text-ink-3 truncate">
                 {m.txn_no} · {m.user_name} · {formatDateTime(m.occurred_at)}{m.notes ? ` · ${m.notes}` : ''}
               </div>
-              {m.lot_breakdown && m.lot_breakdown.length > 0 && (
+              {m.unit_code?.toUpperCase() !== 'MM2' && m.lot_breakdown && m.lot_breakdown.length > 0 && (
                 <div className="flex gap-1 flex-wrap mt-1">
                   {m.lot_breakdown.map((b, k) => (
                     <span key={k} className={`badge ${b.status === 'FULL_SLEEVE' ? 'badge-ok' : 'badge-warn'}`}>
@@ -525,7 +537,7 @@ export function MovementsPane({ rows, loading, pendingMovementIds, searching = f
               )}
             </div>
             <div className="text-right shrink-0">
-              <div className="font-medium">{tag} {m.quantity} {m.unit_code}</div>
+              <div className="font-medium">{m.unit_code?.toUpperCase() === 'MM2' ? (m.reference?.startsWith('CUT-') ? 'Cut piece' : tag) : `${tag} ${m.quantity} ${m.unit_code}`}</div>
               <div className={`text-[13px] ${sync === 'Awaiting production' ? 'text-warn font-semibold' : 'text-ink-3'}`}>{sync}</div>
             </div>
           </div>

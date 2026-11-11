@@ -1,4 +1,5 @@
 import { fmtQty, fmtMmPcs, fmtRolls, fmtLenWidPcs, fmtRollSize } from '@/lib/format';
+import { cutSentence } from '@/lib/rubberCuts';
 
 export type LotEntry = {
   lot_no?: string; status: string; qty: number; new_lot?: boolean; was?: string; restored?: boolean;
@@ -6,6 +7,10 @@ export type LotEntry = {
   width_mm?: number; len_mm?: number; pcs?: number;
   from_width_mm?: number; from_len_mm?: number; left_len_mm?: number;
   strip_lot_no?: string; strip_width_mm?: number; strip_len_mm?: number;
+  /** cut piece reconcile summary (first entry of that movement) */
+  cut?: boolean; reversed?: boolean; cut_no?: string; piece?: 'CUT_PIECE' | 'PARTIAL_ROLL';
+  src_width_mm?: number; src_len_mm?: number; cut_width_mm?: number; cut_len_mm?: number;
+  partial_width_mm?: number | null; partial_len_mm?: number | null;
 };
 export type SnapGroup = { status: 'CUT_PCS' | 'FULL_SLEEVE'; each: number; count: number; width_mm?: number };
 
@@ -31,14 +36,20 @@ function rubberSplit(entries: LotEntry[], unit: string, isNewRolls: boolean) {
     return [...by.entries()].map(([k, v]) => ({ key: `r${k}`, status: 'OPEN_ROLL', text: fmtRolls(v.w, v.l, v.n) }));
   }
   entries.forEach((e, i) => {
-    if (e.width_mm && e.len_mm && e.pcs && e.from_width_mm && e.from_len_mm) {
+    if (e.cut && e.src_width_mm && e.src_len_mm && e.cut_width_mm && e.cut_len_mm) {
+      // a cut piece reconcile: one line says it all, the new pieces are not listed again
+      out.push({ key: `k${i}`, status: 'OPEN_ROLL',
+        text: e.reversed
+          ? `Cut reversed: back to ${fmtRollSize(e.src_width_mm, e.src_len_mm)} roll (was ${cutSentence({ src_width_mm: e.src_width_mm, src_len_mm: e.src_len_mm, cut_width_mm: e.cut_width_mm, cut_len_mm: e.cut_len_mm, pcs: e.pcs ?? 1, partial_width_mm: e.partial_width_mm ?? null, partial_len_mm: e.partial_len_mm ?? null }).split('→')[1].trim()})`
+          : `Cut piece: ${cutSentence({ src_width_mm: e.src_width_mm, src_len_mm: e.src_len_mm, cut_width_mm: e.cut_width_mm, cut_len_mm: e.cut_len_mm, pcs: e.pcs ?? 1, partial_width_mm: e.partial_width_mm ?? null, partial_len_mm: e.partial_len_mm ?? null })}` });
+    } else if (e.new_lot && e.piece) {
+      /* listed inside the cut summary above */
+    } else if (e.width_mm && e.len_mm && e.pcs && e.from_width_mm && e.from_len_mm) {
       out.push({ key: `c${i}`, status: 'OPEN_ROLL',
         text: `${fmtLenWidPcs(e.len_mm, e.width_mm, e.pcs)} from ${fmtRollSize(e.from_width_mm, e.from_len_mm)}` });
-      if (e.strip_width_mm && e.strip_len_mm)
-        out.push({ key: `s${i}`, status: 'OPEN_ROLL', text: `side strip ${fmtRollSize(e.strip_width_mm, e.strip_len_mm)} kept` });
     } else {
       const st = e.status === 'WASTED' ? 'WASTED' : 'OPEN_ROLL';
-      out.push({ key: `o${i}`, status: st, text: `${fmtQty(e.qty, unit)} ${st === 'WASTED' ? 'Waste' : 'Open Roll'}` });
+      out.push({ key: `o${i}`, status: st, text: e.width_mm && e.len_mm ? `${fmtRollSize(e.width_mm, e.len_mm)} ${st === 'WASTED' ? 'Waste' : 'Roll'}` : st === 'WASTED' ? 'Waste' : 'Roll' });
     }
   });
   return out;

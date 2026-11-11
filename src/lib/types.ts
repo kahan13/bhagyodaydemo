@@ -56,6 +56,8 @@ export interface LotGroup {
   total_qty: number;
   /** Open Roll only: the width (mm) of these rolls */
   width_mm?: number | null;
+  /** Open Roll only: ROLL / CUT_PIECE / PARTIAL_ROLL */
+  piece_kind?: string | null;
 }
 
 export interface Sku {
@@ -313,3 +315,30 @@ export const PRODUCT_TYPE_LABEL: Record<ProductType, string> = {
   POLY_V_BELT: 'Poly V Belt',
   OPEN_ROLL: 'Open Roll / Rubber',
 };
+
+
+/** Open Roll: a cut piece planned from a roll. PENDING = physical only; RECONCILED = the book follows. */
+export interface RubberCut {
+  id: string;
+  cut_no: string;
+  sku_id: string;
+  source_lot_id: string;
+  src_width_mm: number;
+  src_len_mm: number;
+  cut_width_mm: number;
+  cut_len_mm: number;
+  pcs: number;
+  partial_width_mm: number | null;
+  partial_len_mm: number | null;
+  status: 'PENDING' | 'RECONCILED' | 'CANCELLED' | 'REVERSED';
+  notes: string | null;
+  created_by_name: string | null;
+  created_at: string;
+  reconciled_by_name: string | null;
+  reconciled_at: string | null;
+  movement_id: string | null;
+  sku_code: string;
+  display_name: string;
+  source_lot_no: string;
+  reconcile_txn_no: string | null;
+}

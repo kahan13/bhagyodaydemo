@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
-import { Plus, Pencil, Search, X, Loader, Send, ArrowRight, AlertTriangle } from 'lucide-react';
+import { Plus, Pencil, Search, X, Loader, Send, ArrowRight, AlertTriangle, Scissors, ArrowRightCircle } from 'lucide-react';
 import { supabaseBrowser } from '@/lib/supabase-browser';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
 import type {
@@ -15,11 +15,15 @@ import type {
 import { useListNav } from '@/lib/useListNav';
 import { onDataChanged } from '@/lib/dataSync';
 import { takeAction } from '@/lib/keytips';
-import { fmtQty, fmtArea, fmtLenM, fmtRollSize } from '@/lib/format';
+import { fmtQty, fmtLenM, fmtRollSize, fmtWidMm } from '@/lib/format';
+import { usePendingCuts, pieceKindLabel, cutSentence } from '@/lib/rubberCuts';
+import CutPieceDialog from './CutPieceDialog';
+import RubberCutsPane from './RubberCutsPane';
 import { isLotType, isRubber, lotUnitWord } from '@/lib/lotUnit';
 import { mFromTyped } from '@/components/inventory/RubberEntry';
 import { makeMatcher, hasQuery } from '@/lib/search';
 import { loadSkus, peekSkus, invalidateSkuCache, getSkuVersion, type SkuWithAtp, type SkuPick } from './skuCache';
+import SkuCombobox from './SkuCombobox';
 import { buildMessage, openWhatsApp, partLine, fromTag, totalLine, type AllocPart } from './poShared';
 
 /**
@@ -38,14 +42,6 @@ import { buildMessage, openWhatsApp, partLine, fromTag, totalLine, type AllocPar
 const TIME_TAGS: TimeTag[] = ['15-20 min', '30-40 min', '1 hour', '2 hours'];
 const DELIVERY_MODES: DeliveryMode[] = ['Hand', 'Porter', 'Courier', 'Transportation'];
 
-const CATEGORY_PILLS: [ProductType, string][] = [
-  ['TIMING_BELT', 'Timing Belt'], ['V_BELT', 'V-Belt'], ['CONVEYOR_BELT', 'Conveyor'], ['POLY_V_BELT', 'Poly V Belt'],
-  ['OPEN_ROLL', 'Open Roll / Rubber'],
-];
-
-/** The category last picked on any order line — the next new line starts there. */
-let lastCategory: ProductType = 'TIMING_BELT';
-
 const newId = () => Math.random().toString(36).slice(2);
 
 // ─── Rolls (live, from the database) ──────────────────────────────────────────
@@ -60,10 +56,12 @@ interface Roll {
   /** what is left after OTHER orders' plans (this form's own entries are taken off on screen) */
   free_qty: number;
   roll_length_mm: number;
-  /** Open Roll / Rubber: the roll's width (mm). Its qty is an AREA, so its length = qty ÷ width. */
+  /** Open Roll / Rubber: the roll's width (mm). Its qty is an AREA (never shown), so its length = qty ÷ width. */
   width_mm?: number | null;
+  /** Open Roll: ROLL / CUT_PIECE / PARTIAL_ROLL */
+  piece_kind?: string | null;
 }
-const rollLabel = (r: Roll) => (r.width_mm ? 'Open Roll' : r.status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs');
+const rollLabel = (r: Roll) => (r.width_mm ? pieceKindLabel(r.piece_kind) : r.status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs');
 /** Open Roll: how long the roll is now / how much length is free, in mm (null for every other product). */
 const rollLen  = (r: Roll): number | null => (r.width_mm ? r.current_qty / r.width_mm : null);
 const rollFreeLen = (r: Roll, usedSlab = 0): number | null => (r.width_mm ? Math.max(0, r.free_qty - usedSlab) / r.width_mm : null);
@@ -72,7 +70,7 @@ const rollFreeLen = (r: Roll, usedSlab = 0): number | null => (r.width_mm ? Math
  * Two rolls that read the same get (1), (2) so they can still be told apart in the list.
  */
 function rollNames(rolls: Roll[], unit: string): Record<string, string> {
-  const base = (r: Roll) => (r.width_mm ? `Open Roll ${fmtRollSize(r.width_mm, rollLen(r))}` : `${rollLabel(r)} of ${fmtQty(r.current_qty, unit)}`);
+  const base = (r: Roll) => (r.width_mm ? `${rollLabel(r)} ${fmtRollSize(r.width_mm, rollLen(r))}` : `${rollLabel(r)} of ${fmtQty(r.current_qty, unit)}`);
   const total: Record<string, number> = {};
   for (const r of rolls) total[base(r)] = (total[base(r)] ?? 0) + 1;
   const seen: Record<string, number> = {};
@@ -90,7 +88,7 @@ async function fetchRolls(skuIds: string[]): Promise<Record<string, Roll[]>> {
   if (skuIds.length === 0) return out;
   const { data } = await supabaseBrowser()
     .from('v_lot_free')
-    .select('id,lot_no,sku_id,status,current_qty,free_qty,roll_length_mm,width_mm,created_at')
+    .select('id,lot_no,sku_id,status,current_qty,free_qty,roll_length_mm,width_mm,piece_kind,created_at')
     .in('sku_id', skuIds)
     .in('status', ['FULL_SLEEVE', 'CUT_PCS'])
     .order('created_at', { ascending: true });
@@ -109,172 +107,11 @@ async function fetchRolls(skuIds: string[]): Promise<Record<string, Roll[]>> {
 
 // ─── SKU search ───────────────────────────────────────────────────────────────
 
-function SkuCombobox({
-  value,
-  onChange,
-  cacheVersion,
-  placeholder = 'Search size, brand or code (h100 = h-100)',
-  lead,
-  headerRight,
-}: {
-  value: SkuPick;
-  onChange: (val: SkuPick) => void;
-  cacheVersion: number;
-  placeholder?: string;
-  /** shown before the category pills (the line number) */
-  lead?: React.ReactNode;
-  /** shown at the far right of the pill row (remove button) */
-  headerRight?: React.ReactNode;
-}) {
-  const [skus, setSkus] = useState<SkuWithAtp[]>(peekSkus() ?? []);
-  const [loadingSkus, setLoadingSkus] = useState(!peekSkus());
-  const [open, setOpen] = useState(false);
-  // Which kind of belt is being searched. A new line starts on whatever was used last,
-  // so ten V-belt lines in a row don't need ten clicks.
-  const [category, setCategory] = useState<ProductType>(value.sku?.product_type ?? lastCategory);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setLoadingSkus(true);
-    loadSkus().then((s) => { setSkus(s); setLoadingSkus(false); });
-  }, [cacheVersion]);
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (
-        dropdownRef.current && !dropdownRef.current.contains(e.target as Node) &&
-        inputRef.current && !inputRef.current.contains(e.target as Node)
-      ) setOpen(false);
-    }
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  // Only the chosen category is searched, so "A-38" can never turn up a conveyor or a timing belt.
-  const inCategory = skus.filter((s) => s.product_type === category);
-  const match = makeMatcher(value.query);
-  const found = !hasQuery(value.query)
-    ? inCategory
-    : inCategory.filter((s) => match([s.sku_code, s.display_name, s.exact_size, s.brand_name, s.search_text]));
-  // Nothing to give (no free rolls / none on the shelf): struck out and kept at the end of the list.
-  const noStock = (s: SkuWithAtp) =>
-    isLotType(s.product_type)
-      ? (s.lot_groups ?? []).reduce((a, g) => a + g.total_qty, 0) <= 0
-      : s.atp_stock <= 0;
-  const options = [...found.filter((s) => !noStock(s)), ...found.filter(noStock)].slice(0, 40);
-
-  function selectOption(sku: SkuWithAtp) {
-    onChange({ sku, query: sku.display_name });
-    setOpen(false);
-  }
-
-  const nav = useListNav({
-    count: options.length,
-    open: open && options.length > 0,
-    setOpen,
-    onPick: (i) => { const o = options[i]; if (o) selectOption(o); },
-  });
-
-  function pickCategory(next: ProductType) {
-    if (next === category) return;
-    setCategory(next);
-    lastCategory = next;
-    // the chosen product belongs to the old category, so start the line afresh
-    onChange({ sku: null, query: '' });
-    inputRef.current?.focus();
-  }
-
-  return (
-    <div>
-      <div className="flex items-center gap-2 mb-1.5">
-        {lead}
-        <div className="flex gap-1 flex-wrap" role="group" aria-label="Product category">
-          {CATEGORY_PILLS.map(([t, label]) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => pickCategory(t)}
-              aria-pressed={category === t}
-              className={`px-2.5 py-0.5 rounded-full text-[13px] font-medium border transition-colors ${
-                category === t ? 'bg-brand text-white border-brand' : 'bg-surface border-line text-ink-2 hover:border-brand hover:text-brand'
-              }`}
-            >{label}</button>
-          ))}
-        </div>
-        {headerRight && <div className="ml-auto">{headerRight}</div>}
-      </div>
-
-      <div className="relative">
-        <div className="relative flex items-center">
-          <Search size={13} className="absolute left-2.5 text-ink-3 pointer-events-none" />
-          <input
-            ref={inputRef}
-            className="field pl-7 pr-7"
-            placeholder={loadingSkus ? 'Loading SKUs…' : placeholder}
-            value={value.query}
-            onChange={(e) => { onChange({ sku: null, query: e.target.value }); setOpen(true); }}
-            onFocus={() => setOpen(true)}
-            onKeyDown={nav.onKeyDown}
-            role="combobox"
-            aria-expanded={open}
-            autoComplete="off"
-          />
-          {value.query && (
-            <button
-              className="absolute right-2 text-ink-3 hover:text-ink"
-              onClick={() => { onChange({ sku: null, query: '' }); inputRef.current?.focus(); setOpen(true); }}
-              tabIndex={-1}
-              type="button"
-              aria-label="Clear"
-            >
-              <X size={13} />
-            </button>
-          )}
-        </div>
-
-        {/* one plain list: just the SKU name — what is in stock is shown once a SKU is picked */}
-        {open && options.length > 0 && (
-          <div
-            ref={(el) => { (dropdownRef as React.MutableRefObject<HTMLDivElement | null>).current = el; (nav.listRef as React.MutableRefObject<HTMLDivElement | null>).current = el; }}
-            className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg max-h-72 overflow-y-auto"
-          >
-            {options.map((sku, idx) => (
-              <button
-                key={sku.id}
-                data-nav-idx={idx}
-                tabIndex={-1}
-                onMouseEnter={() => nav.setCursor(idx)}
-                className={`w-full text-left px-3 py-2 text-[15px] font-medium truncate transition-colors ${
-                  idx === nav.cursor ? 'bg-brand-soft' : 'hover:bg-subtle'
-                } ${noStock(sku) ? 'line-through text-ink-3' : ''}`}
-                onClick={() => selectOption(sku)}
-                title={noStock(sku) ? 'Out of stock' : undefined}
-                type="button"
-              >
-                <span className={`font-mono ${noStock(sku) ? '' : 'text-brand'}`}>{sku.sku_code}</span>{' – '}{sku.display_name}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {open && !loadingSkus && options.length === 0 && value.query.length > 0 && (
-          <div
-            ref={dropdownRef}
-            className="absolute z-50 top-full mt-1 left-0 right-0 rounded-lg border border-line bg-surface shadow-lg px-3 py-4 text-center text-[14px] text-ink-3"
-          >
-            No SKUs match &quot;{value.query}&quot;
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 
 // ─── Line item model ──────────────────────────────────────────────────────────
 
-/** One "MM × PCS from this roll" entry. The first is the line itself; the rest are extensions. */
+/** One "MM × PCS from this roll" entry (Open Roll: WIDTH mm × LENGTH m × PCS). The first is the line itself; the rest are extensions. */
 interface Segment {
   id: string;
   mm: string;
@@ -297,6 +134,10 @@ interface LineItem {
   mm: string;
   manualName: string;
   manualUnit: 'MM' | 'PCS';
+  /** the category pill active on this line */
+  cat: ProductType | null;
+  /** Open Roll: 'continue' once "Continue without cut piece" was chosen (or a product was picked) */
+  rubMode: '' | 'continue';
 }
 
 const makeSeg = (rub = false): Segment => ({ id: newId(), mm: '', pcs: '', lotId: '', wid: '', rub });
@@ -311,6 +152,8 @@ function makeLineItem(): LineItem {
     mm: '',
     manualName: '',
     manualUnit: 'MM',
+    cat: null,
+    rubMode: '',
   };
 }
 
@@ -379,11 +222,12 @@ function segStatus(items: LineItem[], rolls: Roll[], s: Segment) {
   const avail = roll ? Math.max(0, roll.free_qty - usedOnRoll(items, roll.id, s.id, roll)) : 0;
   let problem = '';
   if (roll?.width_mm && s.rub) {
-    // Open Roll: the entry must fit across the roll's width, and its length must fit in what is free of the roll's length
+    // Open Roll: the order's width must be exactly the roll's width (cut a piece of that width first),
+    // and its length must fit in what is free of the roll's length
     const slab = segMm(s) * segPcs(s);
     const freeLen = avail / roll.width_mm;
     if (segFilled(s)) {
-      if (segWid(s) > roll.width_mm) problem = `a ${segWid(s)} mm wide piece is wider than this roll (${roll.width_mm} mm)`;
+      if (segWid(s) !== roll.width_mm) problem = `this ${pieceKindLabel(roll.piece_kind).toLowerCase()} is ${fmtWidMm(roll.width_mm)} wide but the order is ${fmtWidMm(segWid(s))} — create a ${fmtWidMm(segWid(s))} cut piece first`;
       else if (slab > freeLen + 1e-6) problem = `only ${fmtLenM(freeLen)} of length is free on this roll, but ${fmtLenM(slab)} is needed`;
     }
     return { roll, need, avail, left: avail - slab * roll.width_mm, problem, availLen: freeLen, leftLen: freeLen - slab };
@@ -403,7 +247,7 @@ function partsOf(li: LineItem, rolls: Roll[]): AllocPart[] {
     if (!roll || !segFilled(s)) return;
     out.push({
       seg_no: i + 1, mm: segMm(s), pcs: segPcs(s), qty: segQty(s),
-      size: rollLen(roll) ?? roll.current_qty, lot_no: roll.lot_no, status: roll.status, label: rollLabel(roll),
+      size: rollLen(roll) ?? roll.current_qty, lot_no: roll.lot_no, status: roll.status, label: rollLabel(roll) as AllocPart['label'],
       width_mm: s.rub ? segWid(s) : null, size_w: roll.width_mm ?? null,
     });
   });
@@ -421,7 +265,7 @@ function lineProblems(items: LineItem[], li: LineItem, rolls: Roll[]): string[] 
   const out: string[] = [];
   li.segs.forEach((s, i) => {
     const tag = li.segs.length > 1 ? `${code} (entry ${i + 1})` : code;
-    if (!segFilled(s)) { out.push(`${tag}: enter ${isRubber(sku.product_type) ? 'LENGTH × WIDTH' : lotUnitWord(sku.product_type).toUpperCase()} × PCS`); return; }
+    if (!segFilled(s)) { out.push(`${tag}: enter ${isRubber(sku.product_type) ? 'WIDTH × LENGTH' : lotUnitWord(sku.product_type).toUpperCase()} × PCS`); return; }
     if (!s.lotId) { out.push(`${tag}: pick the roll to take it from`); return; }
     const st = segStatus(items, rolls, s);
     if (!st.roll) { out.push(`${tag}: the roll you picked is no longer available — pick again`); return; }
@@ -448,6 +292,9 @@ export default function ProductionOrdersView({
   const [error, setError] = useState<string | null>(null);
   const [createdOrder, setCreatedOrder] = useState<ProductionOrder | null>(null);
   const [skuVersion, setSkuVersion] = useState(0);
+  // Open Roll cut pieces (live): a product with a pending cut cannot be ordered until it is reconciled
+  const { cuts: pendingCuts, loading: cutsLoading, reload: reloadCuts } = usePendingCuts();
+  const [cutDialog, setCutDialog] = useState<{ itemId: string | null } | null>(null);
   const [rolls, setRolls] = useState<Record<string, Roll[]>>({});
 
   const { refresh: refreshCatalog } = useCatalog();
@@ -708,6 +555,10 @@ export default function ProductionOrdersView({
     refreshAll();
   }
 
+  // an Open Roll product on this order whose cut piece is not reconciled yet locks Create Order
+  const pendingSkuIds = new Set(pendingCuts.map((c) => c.sku_id));
+  const lockedByCut = !form.isDirect && form.items.some((li) => li.skuSearch.sku && isRubber(li.skuSearch.sku.product_type) && pendingSkuIds.has(li.skuSearch.sku.id));
+
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -933,7 +784,10 @@ export default function ProductionOrdersView({
                         skuSearch: val,
                         // a different product starts the line afresh
                         ...(val.sku?.id !== li.skuSearch.sku?.id ? { segs: [makeSeg(isRubber(val.sku?.product_type))], quantity: '' } : {}),
+                        ...(val.sku && isRubber(val.sku.product_type) ? { rubMode: 'continue' as const } : {}),
                       })}
+                      onCategory={(c) => { if (li.cat !== c) updateItem(li.id, { cat: c, rubMode: '' }); }}
+                      hideSearch={li.cat === 'OPEN_ROLL' && !sku && li.rubMode !== 'continue'}
                       cacheVersion={skuVersion}
                       placeholder="Search size, brand or code (h100 = h-100)"
                       lead={<span className="text-[13px] text-ink-3 font-mono w-4 text-center">{idx + 1}</span>}
@@ -949,6 +803,32 @@ export default function ProductionOrdersView({
                         </button>
                       }
                     />
+
+                    {/* ── Open Roll: first choice — a cut piece, or carry on with a roll as it is ── */}
+                    {li.cat === 'OPEN_ROLL' && !sku && li.rubMode !== 'continue' && (
+                      <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                        <button type="button" onClick={() => setCutDialog({ itemId: li.id })}
+                          className="rounded-lg border border-line bg-surface px-3 py-3 text-left hover:border-brand hover:bg-brand-soft transition-colors">
+                          <span className="flex items-center gap-2 text-[15px] font-semibold text-brand"><Scissors size={15} /> Create cut piece</span>
+                          <span className="block text-[13px] text-ink-3 mt-0.5">Cut a custom width × length out of a roll first, then order from it.</span>
+                        </button>
+                        <button type="button" onClick={() => { updateItem(li.id, { rubMode: 'continue' }); focusFirst(); }}
+                          className="rounded-lg border border-line bg-surface px-3 py-3 text-left hover:border-brand hover:bg-brand-soft transition-colors">
+                          <span className="flex items-center gap-2 text-[15px] font-semibold text-ink"><ArrowRightCircle size={15} /> Continue without cut piece</span>
+                          <span className="block text-[13px] text-ink-3 mt-0.5">Order from a roll or cut piece already in stock.</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* ── Open Roll: a cut piece of this product is waiting — reconcile it before ordering ── */}
+                    {sku && isRub && pendingCuts.some((c) => c.sku_id === sku.id) && (
+                      <div className="mt-2 rounded-lg border border-warn/40 bg-warn/5 p-2.5">
+                        <p className="text-[13.5px] font-semibold text-warn flex items-center gap-1.5 mb-1.5">
+                          <AlertTriangle size={13} /> Reconcile the cut piece to continue — the order can be created once it is reconciled.
+                        </p>
+                        <RubberCutsPane compact cuts={pendingCuts.filter((c) => c.sku_id === sku.id)} loading={cutsLoading} onChanged={() => { reloadCuts(); refreshAll(); }} />
+                      </div>
+                    )}
 
                     {sku && (
                       /* ── what is in stock for this SKU, now ── */
@@ -1054,23 +934,23 @@ export default function ProductionOrdersView({
                                   <span className={`text-[12px] font-semibold uppercase tracking-wide mt-2.5 w-[74px] ${si === 0 ? 'text-ink-3' : 'text-brand'}`}>
                                     {si === 0 ? 'Entry' : `Extension ${si}`}
                                   </span>
-                                  <input
-                                    className={`field w-24 text-center ${st.problem ? 'border-danger' : ''}`}
-                                    inputMode="decimal" placeholder={isRub ? 'LENGTH m' : uWord.toUpperCase()} aria-label={isRub ? 'Length in metres' : uWord.toUpperCase()}
-                                    value={s.mm}
-                                    onChange={(e) => updateSeg(li.id, s.id, { mm: e.target.value.replace(/[^0-9.]/g, '') })}
-                                  />
                                   {isRub && (
                                     <>
-                                      <span className="mt-2 text-ink-3 font-semibold">×</span>
                                       <input
                                         className={`field w-24 text-center ${st.problem ? 'border-danger' : ''}`}
                                         inputMode="decimal" placeholder="WIDTH mm" aria-label="Width in mm"
                                         value={s.wid}
                                         onChange={(e) => updateSeg(li.id, s.id, { wid: e.target.value.replace(/[^0-9.]/g, '') })}
                                       />
+                                      <span className="mt-2 text-ink-3 font-semibold">×</span>
                                     </>
                                   )}
+                                  <input
+                                    className={`field w-24 text-center ${st.problem ? 'border-danger' : ''}`}
+                                    inputMode="decimal" placeholder={isRub ? 'LENGTH m' : uWord.toUpperCase()} aria-label={isRub ? 'Length in metres' : uWord.toUpperCase()}
+                                    value={s.mm}
+                                    onChange={(e) => updateSeg(li.id, s.id, { mm: e.target.value.replace(/[^0-9.]/g, '') })}
+                                  />
                                   <span className="mt-2 text-ink-3 font-semibold">×</span>
                                   <input
                                     className={`field w-16 text-center ${st.problem ? 'border-danger' : ''}`}
@@ -1079,7 +959,7 @@ export default function ProductionOrdersView({
                                     onChange={(e) => updateSeg(li.id, s.id, { pcs: e.target.value.replace(/[^0-9]/g, '') })}
                                   />
                                   <span className="mt-2 text-[14px] num font-semibold q-total whitespace-nowrap min-w-[78px]">
-                                    {!incomplete ? `= ${isRub ? fmtArea(st.need) : fmtQty(st.need, sku.unit_code)}` : ''}
+                                    {!incomplete && !isRub ? `= ${fmtQty(st.need, sku.unit_code)}` : ''}
                                   </span>
                                   <div className="flex items-center gap-1.5 min-w-[230px] flex-1">
                                     <span className="eyebrow whitespace-nowrap">Take from</span>
@@ -1096,10 +976,11 @@ export default function ProductionOrdersView({
                                         if (r.width_mm) {
                                           const freeLen = freeFor / r.width_mm;
                                           const slab = segMm(s) * segPcs(s);
-                                          const fitsRub = s.lotId === r.id || (freeLen > 0 && (!segFilled(s) || (slab <= freeLen + 1e-6 && segWid(s) <= r.width_mm)));
+                                          const sameW = segWid(s) <= 0 || segWid(s) === r.width_mm;
+                                          const fitsRub = s.lotId === r.id || (freeLen > 0 && sameW && (!segFilled(s) || slab <= freeLen + 1e-6));
                                           return (
                                             <option key={r.id} value={r.id} disabled={!fitsRub}>
-                                              {rollNames(skuRolls, sku.unit_code)[r.id]} · {fmtLenM(freeLen)} free{!fitsRub && segFilled(s) ? (segWid(s) > r.width_mm ? ' (too narrow)' : ' (too short)') : ''}
+                                              {rollNames(skuRolls, sku.unit_code)[r.id]} · {fmtLenM(freeLen)} free{!fitsRub && segWid(s) > 0 && !sameW ? ' (different width)' : !fitsRub && segFilled(s) ? ' (too short)' : ''}
                                             </option>
                                           );
                                         }
@@ -1130,7 +1011,7 @@ export default function ProductionOrdersView({
                                       <><AlertTriangle size={12} /> Can&apos;t be filled — {st.problem}.</>
                                     ) : (
                                       st.availLen != null && st.leftLen != null
-                                        ? <>{rollNames(skuRolls, sku.unit_code)[st.roll.id]}: {fmtLenM(st.availLen)} of length free → <b className={st.leftLen <= 0 ? 'text-warn' : 'text-ok'}>{fmtLenM(Math.max(0, st.leftLen))} left</b> after this{segWid(s) > 0 && st.roll.width_mm && segWid(s) < st.roll.width_mm ? <> · leaves a {fmtRollSize(st.roll.width_mm - segWid(s), segMm(s) * segPcs(s))} side strip in stock</> : null}</>
+                                        ? <>{rollNames(skuRolls, sku.unit_code)[st.roll.id]}: {fmtLenM(st.availLen)} of length free → <b className={st.leftLen <= 0 ? 'text-warn' : 'text-ok'}>{fmtLenM(Math.max(0, st.leftLen))} left</b> after this</>
                                         : <>{rollNames(skuRolls, sku.unit_code)[st.roll.id]}: {fmtQty(st.avail, sku.unit_code)} free → <b className={st.left === 0 ? 'text-warn' : 'text-ok'}>{fmtQty(st.left, sku.unit_code)} left</b> after this</>
                                     )}
                                   </p>
@@ -1144,11 +1025,17 @@ export default function ProductionOrdersView({
                             type="button"
                             className="btn btn-secondary btn-sm"
                             onClick={() => addSeg(li.id)}
-                            title={isRub ? 'Another LENGTH × WIDTH × PCS of this same product, from another roll' : 'Another MM × PCS of this same product, from another roll'}
+                            title={isRub ? 'Another WIDTH × LENGTH × PCS of this same product, from another roll' : 'Another MM × PCS of this same product, from another roll'}
                           >
                             <Plus size={12} /> Extend this SKU
                           </button>
-                          {lineTotal > 0 && (
+                          {isRub && (
+                            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setCutDialog({ itemId: li.id })}
+                              title="Cut a piece of a custom width × length out of a roll">
+                              <Scissors size={12} /> Create cut piece
+                            </button>
+                          )}
+                          {lineTotal > 0 && !isRub && (
                             <p className="text-[14px]">
                               <span className="eyebrow mr-1.5">Total</span>
                               <span className="num font-semibold q-total">{fmtQty(lineTotal, sku.unit_code)}</span>
@@ -1235,13 +1122,35 @@ export default function ProductionOrdersView({
 
           <div className="flex justify-end gap-2">
             <button className="btn btn-secondary" onClick={resetForm}>Clear</button>
-            <button className="btn btn-primary" onClick={handleCreate} disabled={saving}>
+            {lockedByCut && (
+              <span className="self-center text-[13.5px] text-warn font-medium flex items-center gap-1.5">
+                <AlertTriangle size={13} /> Reconcile the cut piece first
+              </span>
+            )}
+            <button className="btn btn-primary" onClick={handleCreate} disabled={saving || lockedByCut}
+              title={lockedByCut ? 'A cut piece of an Open Roll product on this order is waiting to be reconciled' : undefined}>
               {saving ? <Loader size={14} className="animate-spin" /> : <Plus size={14} />}
               Create Order
             </button>
           </div>
         </div>
       </section>
+
+      {cutDialog && (
+        <CutPieceDialog
+          cacheVersion={skuVersion}
+          initialSku={cutDialog.itemId ? form.items.find((x) => x.id === cutDialog.itemId)?.skuSearch.sku ?? null : null}
+          onClose={() => setCutDialog(null)}
+          onCreated={(_no, picked) => {
+            const target = cutDialog.itemId;
+            setCutDialog(null);
+            if (target && picked) {
+              updateItem(target, { skuSearch: { sku: picked, query: picked.display_name }, segs: [makeSeg(true)], rubMode: 'continue' });
+            }
+            reloadCuts(); refreshAll();
+          }}
+        />
+      )}
     </div>
   );
 }

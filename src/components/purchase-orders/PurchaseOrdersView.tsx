@@ -6,7 +6,7 @@ import {
   ChevronRight, Loader2, ArrowDownLeft, ClipboardCheck, Trash2, FileSpreadsheet, FileDown,
 } from 'lucide-react';
 import { useCatalog } from '@/components/catalog/CatalogProvider';
-import { fmtQty, fmtDateTime, fmtMmPcs, fmtRolls, fmtArea } from '@/lib/format';
+import { fmtQty, fmtDateTime, fmtMmPcs, fmtRolls } from '@/lib/format';
 import Modal from '@/components/ui/Modal';
 import { exportPoExcel, exportPoPdf, type PoExportOrder } from '@/lib/poExport';
 import { isLotType, isRubber, lotUnitHead, lotUnitWord } from '@/lib/lotUnit';
@@ -128,7 +128,7 @@ function toExport(order: Order): PoExportOrder {
         brand: i.skus?.brand_name ?? '—',
         category: i.skus?.product_type ? (TYPE_LABEL[i.skus.product_type] ?? '') : '',
         quantity: isRub(i) && lot
-          ? `${fmtRolls(Number(i.ordered_width_mm), Number(i.ordered_length_mm), i.ordered_pieces)} — ${fmtArea(Number(i.ordered_qty))} total`
+          ? fmtRolls(Number(i.ordered_width_mm), Number(i.ordered_length_mm), i.ordered_pieces)
           : lot
           ? `${fmtMmPcs(Number(i.ordered_length_mm), i.ordered_pieces, wordOf(i))} (${sleeve}) — ${fmtQty(i.ordered_qty, unit)} total`
           : fmtQty(i.ordered_qty, unit),
@@ -247,7 +247,7 @@ function SkuPicker({ onSelect, selected }: { onSelect: (s: Sku) => void; selecte
                       s.stock_status === 'OUT_OF_STOCK' ? 'text-danger' :
                       s.stock_status === 'LOW_STOCK'    ? 'text-warn'   : 'text-ink-3'
                     }`}>
-                      {fmtQty(s.current_stock, s.unit_code)}
+                      {s.unit_code === 'MM2' ? '' : fmtQty(s.current_stock, s.unit_code)}
                     </span>
                   </button>
                 );
@@ -654,8 +654,7 @@ function CreateOrderDialog({
                   {l.sku.brand_name}
                   <span className="mx-1.5">·</span>
                   <span className="text-brand">{TYPE_LABEL[l.sku.product_type]}</span>
-                  <span className="mx-1.5">·</span>
-                  in stock: {fmtQty(l.sku.current_stock, l.sku.unit_code)}
+                  {l.sku.unit_code !== 'MM2' && <><span className="mx-1.5">·</span>in stock: {fmtQty(l.sku.current_stock, l.sku.unit_code)}</>}
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
@@ -675,9 +674,6 @@ function CreateOrderDialog({
                       className="field num h-11 w-20 text-[16px]" inputMode="numeric"
                       value={l.qty} onChange={(e) => setQty(i, e.target.value.replace(/[^0-9]/g, ''))}
                       placeholder="ROLLS" aria-label="Number of rolls" />
-                    {lineTotal(l) > 0 && (
-                      <span className="text-[14px] num q-total font-semibold whitespace-nowrap">= {fmtArea(lineTotal(l))}</span>
-                    )}
                   </>
                 ) : isTiming(l) ? (
                   <>
@@ -910,7 +906,7 @@ function OrderCard({
                           </span>
                           <span className="text-[13px] text-ink-3 num">
                             Received <strong className="q-in">{item.received_pieces ?? 0} of {item.ordered_pieces} {isRub(item) ? 'rolls' : 'pcs'}</strong>
-                            {Number(item.received_qty) > 0 && <span> · {fmtQty(item.received_qty, unit ?? 'MM')}</span>}
+                            {Number(item.received_qty) > 0 && !isRub(item) && <span> · {fmtQty(item.received_qty, unit ?? 'MM')}</span>}
                           </span>
                         </>
                       ) : (
@@ -933,16 +929,16 @@ function OrderCard({
                       {Number(item.received_qty) > 0 && (itemPending > 0 ? (
                         view === 'received' ? (
                           <span className="text-[13px] text-brand num font-medium">
-                            {fmtQty(itemPending, unit)} waiting to be recorded
+                            {isRub(item) ? 'Delivery' : fmtQty(itemPending, unit)} waiting to be recorded
                           </span>
                         ) : (
                           <span className="text-[13px] text-ink-3">
-                            {fmtQty(itemPending, unit)} received — record inward in the Received tab
+                            {isRub(item) ? 'Delivery' : fmtQty(itemPending, unit)} received — record inward in the Received tab
                           </span>
                         )
                       ) : (
                         <span className="text-[13px] text-ok num font-medium">
-                          Inward recorded · in stock {fmtQty(recorded, unit)}
+                          Inward recorded{isRub(item) ? '' : <> · in stock {fmtQty(recorded, unit)}</>}
                         </span>
                       ))}
                     </div>
@@ -1276,7 +1272,7 @@ export default function PurchaseOrdersView({
                     <span className="text-ink-3 ml-1.5">{item.skus?.brand_name ?? '—'}</span>
                   </div>
                   <span className="num font-semibold text-ok shrink-0">
-                    +{fmtQty(pendingInward(item), item.skus?.unit_code)}
+                    {isRub(item) ? 'new rolls' : `+${fmtQty(pendingInward(item), item.skus?.unit_code)}`}
                   </span>
                 </div>
               ))}

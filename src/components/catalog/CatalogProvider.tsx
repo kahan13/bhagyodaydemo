@@ -46,7 +46,10 @@ async function load(force = false): Promise<Sku[]> {
           .order('hier_l1')
           .order('hier_l2')
           .order('hier_l3'),
-        sb.from('v_sku_lot_groups').select('sku_id,status,piece_qty,pieces,total_qty,width_mm'),
+        (async () => {
+          const r = await sb.from('v_sku_lot_groups').select('sku_id,status,piece_qty,pieces,total_qty,width_mm,piece_kind');
+          return r.error ? sb.from('v_sku_lot_groups').select('sku_id,status,piece_qty,pieces,total_qty,width_mm') : r;   // before database step 044
+        })(),
       ]);
 
       if (skuRes.error) throw new Error(skuRes.error.message);
@@ -56,7 +59,7 @@ async function load(force = false): Promise<Sku[]> {
       const bySku = new Map<string, LotGroup[]>();
       for (const g of (groupRes.data ?? []) as unknown as (LotGroup & { sku_id: string })[]) {
         const list = bySku.get(g.sku_id) ?? [];
-        list.push({ status: g.status, piece_qty: Number(g.piece_qty), pieces: Number(g.pieces), total_qty: Number(g.total_qty), width_mm: g.width_mm == null ? null : Number(g.width_mm) });
+        list.push({ status: g.status, piece_qty: Number(g.piece_qty), pieces: Number(g.pieces), total_qty: Number(g.total_qty), width_mm: g.width_mm == null ? null : Number(g.width_mm), piece_kind: g.piece_kind ?? null });
         bySku.set(g.sku_id, list);
       }
       for (const r of rows) {

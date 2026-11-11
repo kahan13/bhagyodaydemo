@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/auth';
 import { supabaseService } from '@/lib/supabase-server';
 import type { ProductType } from '@/lib/types';
-import { fmtRolls, fmtArea } from '@/lib/format';
+import { fmtRolls } from '@/lib/format';
 import {
   INVENTORY_FIELDS, TYPE_META, cleanText, parseLotType, toNumber,
   type Identity, type LotType,
@@ -216,7 +216,7 @@ async function handle(req: Request) {
         family: built.family, sectionOrColour: built.section ?? built.colour ?? '',
         size: built.sizeLabel, brand: built.brand,
         lot: lot ? (lot === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs') : '',
-        load: qty === 0 ? 'no stock' : sh.type === 'OPEN_ROLL' ? `${fmtRolls(wid, uom, qty)} = ${fmtArea(load)}` : meta.usesLots ? `${uom} ${meta.unit === 'RIB' ? 'ribs' : 'mm'} × ${qty} pcs = ${load} ${meta.unit === 'RIB' ? 'ribs' : 'mm'}` : `+${load} pcs`,
+        load: qty === 0 ? 'no stock' : sh.type === 'OPEN_ROLL' ? fmtRolls(wid, uom, qty) : meta.usesLots ? `${uom} ${meta.unit === 'RIB' ? 'ribs' : 'mm'} × ${qty} pcs = ${load} ${meta.unit === 'RIB' ? 'ribs' : 'mm'}` : `+${load} pcs`,
         msl: msl === null ? '' : String(msl),
         note: notes.join(' · ') || (sku ? 'Matched to existing SKU' : 'SKU not in Product Master — will be created'),
       });

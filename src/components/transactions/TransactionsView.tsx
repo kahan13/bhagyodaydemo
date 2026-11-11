@@ -6,6 +6,7 @@ import { Undo2, X, SlidersHorizontal, Download, Search } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { fmtDate, fmtTime, fmtQty, fmtMmPcs, fmtLenWidPcs, fmtRollSize } from '@/lib/format';
 import type { Movement } from '@/lib/types';
+import { cutSentence } from '@/lib/rubberCuts';
 import { qtySplit, lotChip, snapTotal, snapRollSize, isAreaUnitCode, LOT_NAME, type SnapGroup } from '@/lib/lotView';
 
 const RANGES: [string, string][] = [
@@ -262,22 +263,30 @@ function lotLines(m: Movement): string[] {
   if (!b || b.length === 0) return [];
   return b.map((e) => {
     // Open Roll / Rubber: say it as width × length
+    if (e.cut && e.src_width_mm && e.src_len_mm && e.cut_width_mm && e.cut_len_mm) {
+      return cutSentence({ src_width_mm: e.src_width_mm, src_len_mm: e.src_len_mm, cut_width_mm: e.cut_width_mm, cut_len_mm: e.cut_len_mm,
+        pcs: e.pcs ?? 1, partial_width_mm: e.partial_width_mm ?? null, partial_len_mm: e.partial_len_mm ?? null });
+    }
+    if (e.new_lot && e.piece) return '';
     if (isAreaUnitCode(m.unit_code) && e.status !== 'WASTED' && e.width_mm && e.len_mm) {
       if (m.txn_type === 'INWARD' && m.txn_mode !== 'REVERSAL') return `new roll ${fmtRollSize(e.width_mm, e.len_mm)} · ${e.lot_no}`;
       if (e.pcs && e.from_width_mm && e.from_len_mm)
-        return `${fmtLenWidPcs(e.len_mm, e.width_mm, e.pcs)} cut from the ${fmtRollSize(e.from_width_mm, e.from_len_mm)} roll · ${e.lot_no}${e.strip_width_mm && e.strip_len_mm ? ` (side strip ${fmtRollSize(e.strip_width_mm, e.strip_len_mm)} kept in stock)` : ''}`;
+        return `${fmtLenWidPcs(e.len_mm, e.width_mm, e.pcs)} taken from the ${fmtRollSize(e.from_width_mm, e.from_len_mm)} roll · ${e.lot_no}`;
     }
     if (e.status === 'WASTED') return `${fmtQty(e.qty, m.unit_code)} of ${LOT_NAME[e.was ?? ''] ?? 'lot'} goes back into · ${e.lot_no}`;
     if (m.txn_type === 'INWARD' && m.txn_mode !== 'REVERSAL') return `${fmtQty(e.qty, m.unit_code)} new ${e.status === 'CUT_PCS' ? 'Cut Pcs' : 'Full Sleeve'} piece · ${e.lot_no}`;
     return `${fmtQty(e.qty, m.unit_code)} ${m.txn_type === 'OUTWARD' ? 'from' : 'in'} ${LOT_NAME[e.status] ?? e.status} · ${e.lot_no}`;
-  });
+  }).filter(Boolean);
 }
+
+const isCutMovement = (m: Movement) => (m.reference ?? '').startsWith('CUT-');
 
 const isWaste = (m: Movement) =>
   m.txn_type === 'ADJUSTMENT' &&
   (m.lot_breakdown?.some((e) => e.status === 'WASTED' || e.restored) || /wasted:/i.test(m.notes ?? ''));
 
 function typeLabel(m: Movement): string {
+  if (isCutMovement(m)) return m.txn_mode === 'REVERSAL' ? 'cut piece reversed' : 'cut piece reconciled';
   if (m.txn_mode === 'REVERSAL' && m.txn_type === 'ADJUSTMENT' && isWaste(m)) return 'waste put back';
   if (isWaste(m)) return 'marked as waste';
   return m.txn_type.toLowerCase();
@@ -289,14 +298,15 @@ const SHORT: Record<string, string> = { FULL_SLEEVE: 'Full', CUT_PCS: 'Cut' };
 function QtyCell({ m }: { m: Movement }) {
   const sign = m.txn_type === 'OUTWARD' ? '−' : m.txn_type === 'INWARD' ? '+'
     : m.quantity < 0 ? '−' : '+';
-  const total = `${sign}${fmtQty(Math.abs(m.quantity), m.unit_code)}`;
+  const area = isAreaUnitCode(m.unit_code);        // Open Roll is never shown as a quantity — only width × length
+  const total = area ? '' : `${sign}${fmtQty(Math.abs(m.quantity), m.unit_code)}`;
   const newRolls = m.txn_type === 'INWARD' && m.txn_mode !== 'REVERSAL';
   const parts = m.lot_tracked ? qtySplit(m.lot_breakdown, m.unit_code, newRolls) : [];
   const note = m.txn_mode === 'REVERSAL' && m.txn_type === 'INWARD' ? 'put back'
     : m.txn_mode === 'REVERSAL' && m.txn_type === 'OUTWARD' ? 'closed' : '';
   return (
     <div className="space-y-1.5">
-      <p className="num text-[16px] text-ink">{total}</p>
+      {total && <p className="num text-[16px] text-ink">{total}</p>}
       {parts.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {parts.map((p) => (
@@ -317,7 +327,7 @@ function StateBlock({ m, which }: { m: Movement; which: 'before' | 'after' }) {
     return (
       <div className="flex items-baseline gap-2">
         <span className="text-[12px] uppercase tracking-wide text-ink-3 w-[46px] shrink-0">{label}</span>
-        <span className="num text-[15px]">{fmtQty(stock, m.unit_code)}</span>
+        <span className="num text-[15px]">{isAreaUnitCode(m.unit_code) ? '—' : fmtQty(stock, m.unit_code)}</span>
       </div>
     );
   }
@@ -340,7 +350,7 @@ function StateBlock({ m, which }: { m: Movement; which: 'before' | 'after' }) {
               )
           ))}
         </div>
-        <p className="num text-[14px] text-ink-2 mt-0.5">Total {fmtQty(snapTotal(g), m.unit_code)}</p>
+        {!isAreaUnitCode(m.unit_code) && <p className="num text-[14px] text-ink-2 mt-0.5">Total {fmtQty(snapTotal(g), m.unit_code)}</p>}
       </div>
     </div>
   );
@@ -398,20 +408,23 @@ function ReverseDialog({ movement, onClose, onDone }: {
     >
 
           <p className="text-[15px] text-ink-2 leading-relaxed">
-            The original stays in the history untouched. A linked {opposite} of{' '}
-            {fmtQty(Math.abs(movement.quantity), movement.unit_code)} is created to cancel it out.
+            {isCutMovement(movement)
+              ? 'The original stays in the history untouched. The cut pieces and the partial roll are put back together into the original roll — blocked if any of them has been used.'
+              : isAreaUnitCode(movement.unit_code)
+              ? `The original stays in the history untouched. A linked ${opposite} entry is created to cancel it out.`
+              : <>The original stays in the history untouched. A linked {opposite} of{' '}{fmtQty(Math.abs(movement.quantity), movement.unit_code)} is created to cancel it out.</>}
           </p>
           <div className="bg-subtle rounded-lg px-3.5 py-3 text-[14px]">
             <p className="font-medium text-[15px]">{movement.exact_size} · {movement.brand_name}</p>
             <p className="text-ink-3 num mt-1">
-              {movement.txn_type.toLowerCase()} {fmtQty(Math.abs(movement.quantity), movement.unit_code)} ·{' '}
+              {isCutMovement(movement) ? 'cut piece' : movement.txn_type.toLowerCase()} {isAreaUnitCode(movement.unit_code) ? '' : fmtQty(Math.abs(movement.quantity), movement.unit_code)} ·{' '}
               {fmtDate(movement.occurred_at)} {fmtTime(movement.occurred_at)} · {movement.user_name}
             </p>
           </div>
           {(movement.lot_tracked || movement.txn_type === 'ADJUSTMENT') && lotLines(movement).length > 0 && (
             <div className="bg-brand-soft/40 rounded-lg px-3.5 py-2.5">
               <p className="text-[13px] font-semibold text-ink-2 mb-1">
-                {movement.txn_type === 'INWARD' ? 'These lots will be closed' : 'Will be put back into these lots'}
+                {isCutMovement(movement) ? 'This cut will be undone' : movement.txn_type === 'INWARD' ? 'These lots will be closed' : 'Will be put back into these lots'}
               </p>
               {lotLines(movement).map((l, i) => <p key={i} className="text-[14px] text-ink-2 num">{l}</p>)}
               {movement.txn_type === 'INWARD' && (

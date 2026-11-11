@@ -6,9 +6,10 @@ import { supabaseBrowser } from '@/lib/supabase-browser';
 import { fmtDate, fmtQty, fmtMsl, fmtDateTime, fmtMmPcs } from '@/lib/format';
 import { qtySplit, type LotEntry } from '@/lib/lotView';
 
-/** Open Roll / Rubber is kept as area in mm²; reports show it as sq m with its unit. */
-const SQM = (v: unknown): number => +(Number(v ?? 0) / 1_000_000).toFixed(4);
 import { isLotType, lotUnitWord } from '@/lib/lotUnit';
+import { groupText } from '@/components/inventory/LotBreakdown';
+import type { LotGroup } from '@/lib/types';
+// Open Roll / Rubber is never reported as an area: stock is "width × length × pieces", sales are counted in transactions.
 
 type ReportKind =
   | 'current_stock' | 'needs_ordering' | 'movements' | 'inward' | 'outward'
@@ -110,7 +111,7 @@ export default function ReportsView({
     try {
       if (kind === 'current_stock' || kind === 'needs_ordering') {
         let q = db.from('v_sku_status')
-          .select('sku_code,product_type,exact_size,brand_name,family_code,unit_code,current_stock,min_stock_level,supplier_moq,suggested_purchase_qty,rack_location,stock_status')
+          .select('id,sku_code,product_type,exact_size,brand_name,family_code,unit_code,current_stock,min_stock_level,supplier_moq,suggested_purchase_qty,rack_location,stock_status')
           .eq('is_active', true);
         if (kind === 'needs_ordering') q = q.gt('min_stock_level', 0).in('stock_status', ['LOW_STOCK', 'OUT_OF_STOCK']);
         if (brand) q = q.eq('brand_name', brand);
@@ -133,10 +134,19 @@ export default function ReportsView({
           { key: 'stock_status', label: 'Status' },
         ]);
         // Timing belts: MSL (and the reorder figure) count pieces, not mm.
+        // Open Roll: stock as "width × length × pieces" lines; the minimum counts ROLLS
+        const rubIds = ((data ?? []) as Record<string, unknown>[]).filter((r) => r.product_type === 'OPEN_ROLL').map((r) => String(r.id));
+        const groupsBySku = new Map<string, string[]>();
+        if (rubIds.length > 0) {
+          let g = await db.from('v_sku_lot_groups').select('sku_id,status,piece_qty,pieces,total_qty,width_mm,piece_kind').in('sku_id', rubIds);
+          if (g.error) g = await db.from('v_sku_lot_groups').select('sku_id,status,piece_qty,pieces,total_qty,width_mm').in('sku_id', rubIds);
+          for (const x of (g.data ?? []) as unknown as (LotGroup & { sku_id: string })[]) {
+            (groupsBySku.get(x.sku_id) ?? groupsBySku.set(x.sku_id, []).get(x.sku_id)!).push(groupText({ ...x, piece_qty: Number(x.piece_qty), pieces: Number(x.pieces), width_mm: x.width_mm == null ? null : Number(x.width_mm) }));
+          }
+        }
         setRows(((data ?? []) as Record<string, unknown>[]).map((r) =>
           r.product_type === 'OPEN_ROLL'
-            // Open Roll: stock in sq m, the minimum counts ROLLS
-            ? { ...r, current_stock: SQM(r.current_stock), unit_code: 'sq m',
+            ? { ...r, current_stock: (groupsBySku.get(String(r.id)) ?? []).join(' + ') || 'none', unit_code: '',
                 min_stock_level: fmtMsl(r.min_stock_level as number, 'MM2', 'OPEN_ROLL'),
                 suggested_purchase_qty: fmtMsl(r.suggested_purchase_qty as number, 'MM2', 'OPEN_ROLL') }
           : isLotType(r.product_type as string)
@@ -187,19 +197,19 @@ export default function ReportsView({
           brandsSorted.forEach(([bn, b], i) => {
             const t = top(b.skus, 3);
             rowsOut.push({
-              category: label, brand: bn, qty: area ? SQM(b.total.qty) : b.total.qty, unit: area ? 'sq m' : c.unit, share: pct(b.total.qty, c.total.qty),
+              category: label, brand: bn, qty: area ? '' : b.total.qty, unit: area ? '' : c.unit, share: pct(b.total.qty, c.total.qty),
               txns: b.total.txns, skus: b.skus.size,
-              top_sku: t[0]?.[0] ?? '—', top_sku_qty: area ? SQM(t[0]?.[1].qty) : (t[0]?.[1].qty ?? 0),
-              top_skus: t.map(([k, v]) => `${k} (${area ? fmtQty(v.qty, 'MM2') : fmtQty(v.qty)})`).join(', '),
+              top_sku: t[0]?.[0] ?? '—', top_sku_qty: area ? '' : (t[0]?.[1].qty ?? 0),
+              top_skus: t.map(([k, v]) => (area ? k : `${k} (${fmtQty(v.qty)})`)).join(', '),
               rank: i + 1,
             });
           });
           const t5 = top(c.skus, 5);
           rowsOut.push({
-            category: label, brand: `ALL ${label.toUpperCase()} BRANDS`, qty: area ? SQM(c.total.qty) : c.total.qty, unit: area ? 'sq m' : c.unit, share: '100%',
+            category: label, brand: `ALL ${label.toUpperCase()} BRANDS`, qty: area ? '' : c.total.qty, unit: area ? '' : c.unit, share: '100%',
             txns: c.total.txns, skus: c.skus.size,
-            top_sku: t5[0]?.[0] ?? '—', top_sku_qty: area ? SQM(t5[0]?.[1].qty) : (t5[0]?.[1].qty ?? 0),
-            top_skus: t5.map(([k, v]) => `${k} (${area ? fmtQty(v.qty, 'MM2') : fmtQty(v.qty)})`).join(', '),
+            top_sku: t5[0]?.[0] ?? '—', top_sku_qty: area ? '' : (t5[0]?.[1].qty ?? 0),
+            top_skus: t5.map(([k, v]) => (area ? k : `${k} (${fmtQty(v.qty)})`)).join(', '),
             rank: '', is_total: true,
           });
         }
@@ -263,7 +273,7 @@ export default function ReportsView({
         ]);
         setRows(((data ?? []) as Record<string, unknown>[]).map((r) =>
           r.product_type === 'OPEN_ROLL'
-            ? { ...r, quantity: SQM(r.quantity), previous_stock: SQM(r.previous_stock), new_stock: SQM(r.new_stock), unit_code: 'sq m' }
+            ? { ...r, quantity: '', previous_stock: '', new_stock: '', unit_code: '' }
             : r));
       }
     } catch (e) {

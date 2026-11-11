@@ -9,7 +9,7 @@ import { HIERARCHY, type Movement, type Permission, type ProductType, type Sku }
 import MovementDialog from '@/components/inventory/MovementDialog';
 import SkuLotsPanel from '@/components/inventory/SkuLotsPanel';
 import StockWastePanel from '@/components/inventory/StockWastePanel';
-import LotBreakdown, { groupsInline, groupText } from '@/components/inventory/LotBreakdown';
+import LotBreakdown, { groupsInline, groupText, rubberStockText } from '@/components/inventory/LotBreakdown';
 import { TYPE_META } from '@/lib/sheet-config';
 import { isLotType, lotUnitWord } from '@/lib/lotUnit';
 import { useListNav } from '@/lib/useListNav';
@@ -323,7 +323,7 @@ export default function InventoryBrowser({
                       {s.hier_l1} › {sectionOf(s)}
                       {s.lot_groups && s.lot_groups.length > 0
                         ? <span className="text-ink-2"> · {groupsInline(s.lot_groups, lotUnitWord(s.product_type))}</span>
-                        : <span className="text-ink-2"> · {fmtQty(s.current_stock, s.unit_code)}</span>}
+                        : <span className="text-ink-2"> · {s.unit_code === 'MM2' ? 'none' : fmtQty(s.current_stock, s.unit_code)}</span>}
                     </div>
                   </button>
                 ))}
@@ -455,7 +455,7 @@ export default function InventoryBrowser({
                         {type === 'OPEN_ROLL' ? (
                           <td className="px-2 py-2 num">
                             {(s.lot_groups ?? []).length
-                              ? (s.lot_groups ?? []).map((g) => <div key={`${g.width_mm}-${g.piece_qty}`}>{groupText(g)}</div>)
+                              ? (s.lot_groups ?? []).map((g) => <div key={`${g.width_mm}-${g.piece_qty}-${g.piece_kind}`}>{groupText(g)}</div>)
                               : <span className="text-ink-3">—</span>}
                           </td>
                         ) : (<>
@@ -472,7 +472,7 @@ export default function InventoryBrowser({
                           <span className="inline-flex items-center gap-1.5 justify-end">
                             {s.stock_status === 'OUT_OF_STOCK' && <span className="badge badge-danger">Out</span>}
                             {s.stock_status === 'LOW_STOCK' && <span className="badge badge-warn">Low</span>}
-                            <span className="num font-medium">{fmtQty(s.current_stock, s.unit_code)}</span>
+                            <span className="num font-medium">{s.unit_code === 'MM2' ? rubberStockText(s.lot_groups) : fmtQty(s.current_stock, s.unit_code)}</span>
                           </span>
                         </td>
                       </tr>
@@ -612,7 +612,7 @@ export default function InventoryBrowser({
                           <span className="flex items-center gap-1.5 justify-end">
                             {s.stock_status === 'OUT_OF_STOCK' && <span className="badge badge-danger">Out</span>}
                             {s.stock_status === 'LOW_STOCK' && <span className="badge badge-warn">Low</span>}
-                            <span className="num font-medium">{fmtQty(s.current_stock, s.unit_code)}</span>
+                            <span className="num font-medium">{s.unit_code === 'MM2' ? rubberStockText(s.lot_groups) : fmtQty(s.current_stock, s.unit_code)}</span>
                             <button
                               className="text-ink-3 hover:text-ink p-0.5"
                               onClick={(e) => { e.stopPropagation(); setExpandedL3(isExpanded ? null : s.sku_code); }}
@@ -797,8 +797,8 @@ function DetailPanel({
         <div className="px-5 py-4 border-b border-line">
           <p className="eyebrow">In stock</p>
           <div className="flex items-end justify-between mt-1">
-            <p className="num text-[32px] font-semibold tracking-[-0.025em] leading-none">
-              {fmtQty(sku.current_stock, sku.unit_code)}
+            <p className={`num font-semibold tracking-[-0.025em] leading-none ${sku.unit_code === 'MM2' ? 'text-[22px]' : 'text-[32px]'}`}>
+              {sku.unit_code === 'MM2' ? rubberStockText(sku.lot_groups) : fmtQty(sku.current_stock, sku.unit_code)}
             </p>
             {sku.stock_status === 'OUT_OF_STOCK' && <span className="badge badge-danger mb-1">Out of stock</span>}
             {sku.stock_status === 'LOW_STOCK' && <span className="badge badge-warn mb-1">Below minimum</span>}
@@ -832,7 +832,7 @@ function DetailPanel({
           <Field label="Unit" value={sku.unit_code} />
           <Field label="Minimum" value={fmtMsl(sku.min_stock_level, sku.unit_code, sku.product_type)} />
           <Field label="Location" value={sku.rack_location} />
-          <Field label="Opening stock" value={fmtQty(sku.opening_stock, sku.unit_code)} />
+          <Field label="Opening stock" value={sku.unit_code === 'MM2' ? '—' : fmtQty(sku.opening_stock, sku.unit_code)} />
           {specs.filter(([, v]) => v).map(([k, v]) => <Field key={k} label={k} value={v} />)}
         </dl>
 
@@ -878,11 +878,11 @@ function DetailPanel({
                   </span>
                   <span className="num font-medium">
                     {m.txn_type === 'OUTWARD' ? '−' : m.txn_type === 'INWARD' ? '+' : '±'}
-                    {fmtQty(Math.abs(m.quantity), m.unit_code)}
+                    {m.unit_code === 'MM2' ? '' : fmtQty(Math.abs(m.quantity), m.unit_code)}
                   </span>
                 </div>
                 <p className="text-ink-3 num mt-1">
-                  {fmtQty(m.previous_stock)} → {fmtQty(m.new_stock)} · {fmtRelative(m.occurred_at)}
+                  {m.unit_code === 'MM2' ? '' : `${fmtQty(m.previous_stock)} → ${fmtQty(m.new_stock)} · `}{fmtRelative(m.occurred_at)}
                 </p>
                 <p className="text-ink-3 truncate">
                   {m.user_name} · {CHANNEL_LABEL[m.channel] ?? m.channel}

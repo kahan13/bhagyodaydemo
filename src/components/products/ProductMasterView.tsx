@@ -8,8 +8,7 @@ import { isLotType, isRubber, lotUnitHead, lotUnitWord } from '@/lib/lotUnit';
 import { fmtMsl } from '@/lib/format';
 import { makeMatcher } from '@/lib/search';
 import RollEntry, { emptyRolls, rollsPayload, rollsTotal, type RollRows } from '@/components/inventory/RollEntry';
-import RubberEntry, { emptyRubber, rubberPayload, rubberTotal, type RubberRows } from '@/components/inventory/RubberEntry';
-import { fmtArea } from '@/lib/format';
+import RubberEntry, { emptyRubber, rubberPayload, rubberTotal, rubberText, type RubberRows } from '@/components/inventory/RubberEntry';
 
 interface Product {
   id: string; sku_code: string; product_type: ProductType;
@@ -258,7 +257,7 @@ export default function ProductMasterView({
                   <td><Un v={p.section ?? p.colour ?? p.hier_l2} /></td>
                   <td className="whitespace-nowrap"><Un v={p.hier_l3} /></td>
                   <td><Un v={p.brand_name} /></td>
-                  <td className="num whitespace-nowrap">{p.unit_code === 'MM2' ? fmtArea(p.current_stock) : `${p.current_stock} ${unitLabel(p)}`}</td>
+                  <td className="num whitespace-nowrap">{p.unit_code === 'MM2' ? (Number(p.current_stock) > 0 ? 'in stock' : '0') : `${p.current_stock} ${unitLabel(p)}`}</td>
                   <td className="num whitespace-nowrap">{p.min_stock_level > 0 ? fmtMsl(p.min_stock_level, p.unit_code, p.product_type) : <span className="text-ink-3">—</span>}</td>
                   <td className="text-ink-3 max-w-[200px] truncate" title={p.remarks ?? ''}>{p.remarks ?? '—'}</td>
                   <td className="whitespace-nowrap">
@@ -417,7 +416,7 @@ export default function ProductMasterView({
                           <RubberEntry rows={openRubber} onChange={setOpenRubber} mode="rolls" />
                           {rubberTotal(rubberPayload(openRubber)) > 0 && (
                             <p className="text-[13px] text-ink-3">
-                              Stock will start at <strong className="text-ink num">{fmtArea(rubberTotal(rubberPayload(openRubber)))}</strong>.
+                              Stock will start with <strong className="text-ink num">{rubberPayload(openRubber).map((g) => rubberText(g, 'rolls')).join(' + ')}</strong>.
                             </p>
                           )}
                         </>

@@ -1,13 +1,13 @@
 'use client';
 
 import { X } from 'lucide-react';
-import { fmtArea, fmtLenWidPcs, fmtRolls } from '@/lib/format';
+import { fmtLenWidPcs, fmtRolls } from '@/lib/format';
 
 /**
- * Entry for Open Roll / Rubber — two directions, so every row has a length AND a width:
+ * Entry for Open Roll / Rubber — two directions, so every row has a width AND a length, always in this order:
  *
  *   mode "rolls"  (inward, purchase, opening stock)   WIDTH mm  ×  LENGTH m  ×  ROLLS
- *   mode "cut"    (outward, production)               LENGTH m  ×  WIDTH mm  ×  PCS
+ *   mode "cut"    (outward, production)               WIDTH mm  ×  LENGTH m  ×  PCS
  *
  * The person types the length in metres (2.5 for 2 m 500 mm) and the width in mm — the same units on the
  * stock sheet. The database keeps both in mm, so a row is turned into
@@ -75,8 +75,7 @@ export default function RubberEntry({
         const filled = (Math.floor(Number(r.n) || 0) > 0) && mFromTyped(r.len) > 0 && Number(r.wid) > 0;
         return (
           <div key={i} className="flex flex-wrap items-end gap-2">
-            {cut ? <>{lenField(r, i)}<span className="pb-2.5 text-[18px] text-ink-3 font-semibold">×</span>{widField(r, i, i === 0)}</>
-                 : <>{widField(r, i, i === 0)}<span className="pb-2.5 text-[18px] text-ink-3 font-semibold">×</span>{lenField(r, i)}</>}
+            {widField(r, i, i === 0)}<span className="pb-2.5 text-[18px] text-ink-3 font-semibold">×</span>{lenField(r, i)}
             <span className="pb-2.5 text-[18px] text-ink-3 font-semibold">×</span>
             <div className="w-24">
               <label className="label">{cut ? 'PCS' : 'ROLLS'} <span className="text-danger">*</span></label>
@@ -84,11 +83,6 @@ export default function RubberEntry({
                 value={r.n} onChange={(e) => set(i, { n: digits(e.target.value) })}
                 onKeyDown={(e) => { if (e.key === 'Enter' && i === rows.length - 1 && filled) { e.preventDefault(); addRow(); } }} />
             </div>
-            {filled && (
-              <span className="pb-2.5 text-[13px] text-ink-3 num">
-                {fmtArea(Math.floor(Number(r.n)) * mFromTyped(r.len) * Number(r.wid))}
-              </span>
-            )}
             {rows.length > 1 && (
               <button type="button" className="btn btn-ghost h-9 w-9 p-0 mb-1" aria-label="Remove row"
                 onClick={() => onChange(rows.filter((_, j) => j !== i))}>
@@ -100,16 +94,15 @@ export default function RubberEntry({
       })}
 
       <button type="button" className="text-[14px] text-brand font-medium" onClick={addRow}>
-        + Add another {cut ? 'LENGTH × WIDTH × PCS' : 'WIDTH × LENGTH × ROLLS'} row
+        + Add another {cut ? 'WIDTH × LENGTH × PCS' : 'WIDTH × LENGTH × ROLLS'} row
       </button>
 
       {total > 0 && (
         <div className="bg-ok-soft/30 rounded-lg px-3 py-2 text-[14px]">
           {cut ? 'Taking' : 'Adding'} {count} {cut ? 'piece' : 'roll'}{count === 1 ? '' : 's'}
           <span className="text-ink-3"> = {payload.map((g) => rubberText(g, mode)).join(' + ')}</span>
-          <span className="num font-semibold"> · {fmtArea(total)}</span>
           {maxArea !== undefined && total > maxArea && (
-            <span className="text-danger font-medium"> · only {fmtArea(maxArea)} is in stock</span>
+            <span className="text-danger font-medium"> · more than is in stock</span>
           )}
         </div>
       )}

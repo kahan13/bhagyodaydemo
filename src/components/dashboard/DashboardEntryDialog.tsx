@@ -89,7 +89,7 @@ export default function DashboardEntryDialog({
   // (poly V belts the same way, as RIBS × PCS)
   const inRolls = isLotType(sku?.product_type);
   const unitWord = lotUnitWord(sku?.product_type);
-  const rub = isRubber(sku?.product_type);          // Open Roll / Rubber: length × width × pcs
+  const rub = isRubber(sku?.product_type);          // Open Roll / Rubber: width × length × pcs
   const rollList = inRolls ? (rub ? rubberPayload(rubber) : rollsPayload(rolls)) : [];
   const rollProblems = action === 'outward' && inRolls && !rub && sku?.lot_groups && sku.lot_groups.length > 0
     ? planRowsOutward(sku.lot_groups, rollList as ReturnType<typeof rollsPayload>, unitWord).problems : [];
@@ -239,7 +239,7 @@ export default function DashboardEntryDialog({
                     sku.stock_status === 'OUT_OF_STOCK' ? 'text-danger' :
                     sku.stock_status === 'LOW_STOCK' ? 'text-warn' : 'text-ink-2'
                   }`}>
-                    {fmtQty(sku.current_stock, sku.unit_code)} in stock
+                    {rub ? 'No stock' : `${fmtQty(sku.current_stock, sku.unit_code)} in stock`}
                   </span>
                 )}
               </div>
@@ -270,14 +270,14 @@ export default function DashboardEntryDialog({
               placeholder="0"
               autoFocus={!!sku}
             />
-            {sku && qty && amount > 0 && (
+            {sku && !rub && qty && amount > 0 && (
               <p className="text-[14px] text-ink-3 mt-1 num">
                 After: <span className={projected < 0 ? 'text-danger' : 'font-medium'}>
                   {fmtQty(projected, sku.unit_code)}
                 </span>
               </p>
             )}
-            {action === 'outward' && sku && amount > sku.current_stock && (
+            {action === 'outward' && sku && !rub && amount > sku.current_stock && (
               <p className="text-[14px] text-danger mt-1">Only {fmtQty(sku.current_stock, sku.unit_code)} available.</p>
             )}
           </div>

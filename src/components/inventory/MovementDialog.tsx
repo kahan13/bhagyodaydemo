@@ -37,7 +37,7 @@ export default function MovementDialog({
   // (poly V belts work the same way, in RIBS × PCS)
   const inRolls = (action === 'inward' || action === 'outward') && isLotType(sku.product_type);
   const unitWord = lotUnitWord(sku.product_type);
-  const rub = isRubber(sku.product_type);                 // Open Roll / Rubber: length × width × pcs, stock in area
+  const rub = isRubber(sku.product_type);                 // Open Roll / Rubber: width × length × pcs (stock is never shown as an area)
   const rollList = inRolls ? (rub ? rubberPayload(rubber) : rollsPayload(rolls)) : [];
   const rollProblems = action === 'outward' && inRolls && !rub && sku.lot_groups && sku.lot_groups.length > 0
     ? planRowsOutward(sku.lot_groups, rollList as ReturnType<typeof rollsPayload>, unitWord).problems : [];
@@ -113,7 +113,7 @@ export default function MovementDialog({
               <LotBreakdown groups={sku.lot_groups} unit={unitWord} className="mt-1.5" />
             ) : (
               <p className="num text-[14px] text-ink-2 mt-1.5">
-                In stock {fmtQty(sku.current_stock, sku.unit_code)}
+                {rub ? 'No stock' : <>In stock {fmtQty(sku.current_stock, sku.unit_code)}</>}
               </p>
             )}
           </div>
@@ -158,7 +158,7 @@ export default function MovementDialog({
             />
           </div>
 
-          {amount > 0 && (
+          {amount > 0 && !rub && (
             <div className="rounded-lg border border-line px-3.5 py-2.5 text-[15px] num space-y-1">
               <div className="flex justify-between text-ink-2">
                 <span>Current</span><span>{fmtQty(sku.current_stock, sku.unit_code)}</span>
@@ -177,7 +177,7 @@ export default function MovementDialog({
             <OutwardRowsPlan groups={sku.lot_groups} rows={rollList as ReturnType<typeof rollsPayload>} unit={sku.unit_code} />
           )}
 
-          {action === 'outward' && amount > sku.current_stock && (
+          {action === 'outward' && !rub && amount > sku.current_stock && (
             <p className="text-[14px] text-danger">
               Only {fmtQty(sku.current_stock, sku.unit_code)} available.
             </p>

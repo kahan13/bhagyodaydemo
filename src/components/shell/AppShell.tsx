@@ -96,7 +96,7 @@ export default function AppShell({
     const TABLES = [
       'production_orders', 'production_order_items', 'lot_allocations', 'sku_lots', 'skus',
       'inventory_movements', 'purchase_orders', 'purchase_order_items', 'purchase_order_receipts',
-      'prod_pending_adjustments',
+      'prod_pending_adjustments', 'rubber_cuts',
     ];
     let rt: ReturnType<ReturnType<typeof supabaseBrowser>['channel']> | null = null;
     try {

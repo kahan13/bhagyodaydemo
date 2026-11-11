@@ -46,6 +46,7 @@ const TYPE_ORDER: Record<string, number> = { TIMING_BELT: 0, V_BELT: 1, CONVEYOR
 const stockLabel = (r: Row): string =>
   !isLotType(r.product_type)
     ? fmtQty(r.current_stock, r.unit_code)
+    : r.product_type === 'OPEN_ROLL' ? fmtMsl(r.stock_pieces ?? 0, r.unit_code, r.product_type)
     : `${fmtMsl(r.stock_pieces ?? 0, r.unit_code, r.product_type)} (${fmtQty(r.current_stock)} ${lotUnitWord(r.product_type)})`;
 
 export default function ReorderList({ canTick }: { canTick: boolean }) {

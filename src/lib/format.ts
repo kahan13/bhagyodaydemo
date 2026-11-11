@@ -8,18 +8,18 @@ const IST = 'Asia/Kolkata';
 
 export function fmtQty(value: number | string | null | undefined, unit?: string | null): string {
   const n = Number(value ?? 0);
-  if ((unit ?? '').toUpperCase() === 'MM2') return fmtArea(n);
+  if ((unit ?? '').toUpperCase() === 'MM2') return '';      // Open Roll is never shown as an area — only width × length
   const text = Number.isInteger(n) ? String(n) : n.toFixed(2);
   if (!unit) return text;
   const u = unit.toUpperCase();
   return `${text} ${u === 'MTR' ? 'm' : u === 'RIB' ? 'ribs' : unit.toLowerCase()}`;
 }
 
-/** Open Roll stock is an area kept in square millimetres: shown as sq m ("0.0625 sq m"). */
-export function fmtArea(mm2: number | string | null | undefined): string {
-  const sqm = Number(mm2 ?? 0) / 1_000_000;
-  return `${+sqm.toFixed(4)} sq m`;
-}
+/**
+ * Open Roll stock is kept internally as an area (so the books can add up), but it is NEVER shown:
+ * the shop works only in width (mm) × length (m). This stays only so old imports keep compiling.
+ */
+export function fmtArea(_mm2?: number | string | null): string { return ''; }
 
 /** Strip a trailing ".00" (also used by the helpers below). */
 const trim = (n: number, d = 3): string => (Number.isInteger(n) ? String(n) : String(+n.toFixed(d)));
@@ -31,10 +31,10 @@ export const fmtWidMm = (mm: number | string | null | undefined): string => `${t
 /** The size of one roll or piece, width first as on the stock sheet: "25 mm × 10 m". */
 export const fmtRollSize = (widthMm: number | string | null | undefined, lenMm: number | string | null | undefined): string =>
   `${fmtWidMm(widthMm)} × ${fmtLenM(lenMm)}`;
-/** What a customer takes: length first — "2.5 m × 25 mm × 4 pcs". */
+/** What a customer takes — width first, then length, then pieces: "25 mm × 2.5 m × 4 pcs". (arguments: length, width, pcs) */
 export const fmtLenWidPcs = (
   lenMm: number | string | null | undefined, widthMm: number | string | null | undefined, pcs: number | string | null | undefined,
-): string => `${fmtLenM(lenMm)} × ${fmtWidMm(widthMm)} × ${trim(Number(pcs ?? 0))} pcs`;
+): string => `${fmtWidMm(widthMm)} × ${fmtLenM(lenMm)} × ${trim(Number(pcs ?? 0))} pcs`;
 /** Rolls on a purchase order or at inward: "25 mm × 10 m × 3 rolls". */
 export const fmtRolls = (
   widthMm: number | string | null | undefined, lenMm: number | string | null | undefined, rolls: number | string | null | undefined,

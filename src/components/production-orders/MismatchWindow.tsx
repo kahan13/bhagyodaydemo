@@ -6,6 +6,7 @@ import { supabaseBrowser } from '@/lib/supabase-browser';
 import Modal from '@/components/ui/Modal';
 import type { SkuMismatch, PendingAdjustment, MismatchOrderItem } from '@/lib/types';
 import { MismatchPane, RecordOutwardModal } from './poShared';
+import MismatchTabs from './MismatchTabs';
 
 /**
  * The Mismatch list, in a window — exactly what the Mismatch tab of Production Order in Progress shows:
@@ -14,11 +15,12 @@ import { MismatchPane, RecordOutwardModal } from './poShared';
  * with the same buttons to put it right. Open it for one product, or for all of them.
  */
 export default function MismatchWindow({
-  skuId, title, onClose,
+  skuId, title, initialTab, onClose,
 }: {
   /** only this product's mismatches; leave out for all */
   skuId?: string;
   title?: string;
+  initialTab?: 'stock' | 'cuts';
   onClose: () => void;
 }) {
   const db = supabaseBrowser();
@@ -85,15 +87,17 @@ export default function MismatchWindow({
         bodyClassName="p-0"
         footer={<button type="button" className="btn btn-secondary" onClick={onClose}>Close</button>}
       >
-        <p className="px-4 py-2.5 text-[14px] text-ink-3 border-b border-line">
-          Book stock against physical production stock, traced to its cause. An order stays here — even after it is completed —
-          until its outward is recorded.
-        </p>
-        <MismatchPane
-          mismatches={mismatches} pending={pending}
-          onRecordOutward={setOutwardTarget} onResolve={resolve}
-          resolvingId={resolvingId} loadingMismatches={loading}
-        />
+        <MismatchTabs skuId={skuId} initialTab={initialTab}>
+          <p className="px-4 py-2.5 text-[14px] text-ink-3 border-b border-line">
+            Book stock against physical production stock, traced to its cause. An order stays here — even after it is completed —
+            until its outward is recorded.
+          </p>
+          <MismatchPane
+            mismatches={mismatches} pending={pending}
+            onRecordOutward={setOutwardTarget} onResolve={resolve}
+            resolvingId={resolvingId} loadingMismatches={loading}
+          />
+        </MismatchTabs>
       </Modal>
       {outwardTarget && (
         <RecordOutwardModal

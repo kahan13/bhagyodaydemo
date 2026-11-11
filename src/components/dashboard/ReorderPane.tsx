@@ -41,6 +41,7 @@ const TYPE_ORDER: Record<string, number> = { TIMING_BELT: 0, V_BELT: 1, CONVEYOR
 /** Timing / poly V belts: pieces (what MSL counts), with the length in brackets. Others: their own unit. */
 function stockLabel(r: ReorderRow): string {
   if (!isLotType(r.product_type)) return fmtQty(r.current_stock, r.unit_code);
+  if (r.product_type === 'OPEN_ROLL') return fmtMsl(r.stock_pieces ?? 0, r.unit_code, r.product_type);
   return `${fmtMsl(r.stock_pieces ?? 0, r.unit_code, r.product_type)} (${fmtQty(r.current_stock)} ${lotUnitWord(r.product_type)})`;
 }
 

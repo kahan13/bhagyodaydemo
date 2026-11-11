@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { fmtMmPcs, fmtQty, fmtArea, fmtLenWidPcs, fmtRollSize } from '@/lib/format';
+import { fmtMmPcs, fmtQty, fmtLenWidPcs, fmtRollSize } from '@/lib/format';
 
 /**
  * A production-order line for a roll-tracked product is made of one or more PARTS.
@@ -31,10 +31,10 @@ export interface AllocPart {
   /** only used to find the roll again; never shown */
   lot_no: string;
   status: 'FULL_SLEEVE' | 'CUT_PCS';
-  label: 'Full Sleeve' | 'Cut Pcs' | 'Open Roll';
+  label: 'Full Sleeve' | 'Cut Pcs' | 'Roll' | 'Cut piece' | 'Partial roll';
 }
 
-/** Open Roll / Rubber is kept as AREA (unit MM2): there is no sleeve / cut-pcs split, only width × length. */
+/** Open Roll / Rubber is kept as AREA (unit MM2) inside, but only ever shown as width × length. */
 export const isAreaCode = (unitCode?: string | null): boolean => (unitCode ?? '').toUpperCase() === 'MM2';
 
 export const unitWordOf = (unitCode?: string | null): string => ((unitCode ?? '').toUpperCase() === 'RIB' ? 'ribs' : 'mm');
@@ -47,7 +47,7 @@ export function partMain(p: AllocPart, unitCode?: string | null): string {
 
 /** "225 mm total" — empty when the main text already is the total (older orders) */
 export function partTotal(p: AllocPart, unitCode?: string | null): string {
-  if (isAreaCode(unitCode)) return p.mm && p.pcs && p.width_mm ? `${fmtArea(p.qty)} total` : '';
+  if (isAreaCode(unitCode)) return '';
   return p.mm && p.pcs && p.mm * p.pcs === p.qty ? `${fmtQty(p.qty, unitCode)} total` : '';
 }
 
@@ -60,7 +60,7 @@ export function partLine(p: AllocPart, unitCode?: string | null): string {
 /** "from Cut Pcs of 230 mm" / "from Full Sleeve of 450 mm" */
 export const fromTag = (p: AllocPart, unitCode?: string | null): string =>
   isAreaCode(unitCode)
-    ? `from Open Roll${p.size && p.size_w ? ` of ${fmtRollSize(p.size_w, p.size)}` : ''}`
+    ? `from ${p.label === 'Cut Pcs' || p.label === 'Full Sleeve' ? 'Roll' : p.label}${p.size && p.size_w ? ` ${fmtRollSize(p.size_w, p.size)}` : ''}`
     : `from ${p.label}${p.size ? ` of ${fmtQty(p.size, unitCode)}` : ''}`;
 
 /** The whole line as one figure: "250 mm". */
@@ -77,14 +77,14 @@ export async function loadItemParts(db: SupabaseClient, itemIds: string[]): Prom
   if (itemIds.length === 0) return out;
   const { data } = await db
     .from('lot_allocations')
-    .select('item_id,allocated_qty,lot_status,piece_qty,seg_no,seg_mm,seg_pcs,seg_width_mm,piece_width_mm,created_at,sku_lots(lot_no,status,current_qty,width_mm)')
+    .select('item_id,allocated_qty,lot_status,piece_qty,seg_no,seg_mm,seg_pcs,seg_width_mm,piece_width_mm,created_at,sku_lots(lot_no,status,current_qty,width_mm,piece_kind)')
     .in('item_id', itemIds)
     .order('seg_no', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true });
   type Row = {
     item_id: string; allocated_qty: number; lot_status: string | null; piece_qty: number | null; seg_no: number | null;
     seg_mm: number | null; seg_pcs: number | null; seg_width_mm?: number | null; piece_width_mm?: number | null;
-    sku_lots: { lot_no: string; status: string; current_qty: number; width_mm?: number | null } | { lot_no: string; status: string; current_qty: number; width_mm?: number | null }[] | null;
+    sku_lots: { lot_no: string; status: string; current_qty: number; width_mm?: number | null; piece_kind?: string | null } | { lot_no: string; status: string; current_qty: number; width_mm?: number | null; piece_kind?: string | null }[] | null;
   };
   for (const r of (data ?? []) as unknown as Row[]) {
     const lot = Array.isArray(r.sku_lots) ? r.sku_lots[0] : r.sku_lots;
@@ -104,7 +104,7 @@ export async function loadItemParts(db: SupabaseClient, itemIds: string[]): Prom
       size_w: rollW,
       lot_no: lot?.lot_no ?? '—',
       status,
-      label: rubber ? 'Open Roll' : status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs',
+      label: rubber ? (lot?.piece_kind === 'CUT_PIECE' ? 'Cut piece' : lot?.piece_kind === 'PARTIAL_ROLL' ? 'Partial roll' : 'Roll') : status === 'FULL_SLEEVE' ? 'Full Sleeve' : 'Cut Pcs',
     });
   }
   return out;

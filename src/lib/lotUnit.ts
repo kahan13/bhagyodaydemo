@@ -17,8 +17,8 @@ export const isLotType = (productType?: string | null): boolean =>
 
 /**
  * Open Roll / Rubber is the two-direction kind: every roll and every leftover piece has a WIDTH (mm)
- * and a LENGTH. Stock is kept as area (unit MM2, shown as sq m); lengths and widths are stored in mm
- * and the length is shown in metres.
+ * and a LENGTH. Stock is kept as an area internally (unit MM2) so the books add up, but it is never shown:
+ * everything on screen is WIDTH (mm) × LENGTH (m). Lengths and widths are stored in mm.
  */
 export const isRubber = (productType?: string | null): boolean => productType === 'OPEN_ROLL';
 /** Same question, asked from a unit code. */
